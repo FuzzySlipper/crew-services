@@ -40,11 +40,13 @@ deployment/review ceremony, AWiki runtime/identity, or an AGPL core dependency.
 
 ## Implementation conventions (when implementation begins)
 
-Build one Go module and one binary. Keep the HTTP handler thin, put contract
-and state-machine decisions in a service package, and isolate SQLite behind a
-store interface. Inject the store, clock, and adapter-facing interfaces through
-constructors. Use typed configuration only: loopback listen address, SQLite
-path, and lease/TTL/retention bounds. Prefer ordinary JSON/HTTP and SQLite
+Build one Go module. Keep the runtime-neutral hub in the `crew-messaging`
+binary; runtime-specific adapters may be separate commands in this repository,
+but core packages must never import them. Keep the HTTP handler thin, put
+contract and state-machine decisions in a service package, and isolate SQLite
+behind a store interface. Inject the store, clock, and adapter-facing interfaces
+through constructors. Use typed configuration only: loopback listen address,
+SQLite path, and lease/TTL/retention bounds. Prefer ordinary JSON/HTTP and SQLite
 transactions over platform abstractions or a plugin/UI layer.
 
 The service is a trusted-box loopback process for v1. Do not add public-web
