@@ -66,10 +66,11 @@ Codex child exits or an RPC fails, the adapter waits for its normal poll delay,
 restarts the child, and canonical-rereads history. That replay is safe because
 each projected completed message has a stable adapter operation ID.
 
-This initial projection is deliberately read-only to Codex. It does not call
-`thread/resume`, `turn/start`, `turn/steer`, or approval APIs, and it does not
-treat notifications or deltas as durable facts. Native tool activity, partial
-messages, reasoning, and approvals are omitted pending later adapter/UI work.
+The adapter does not call `thread/resume`, `turn/start`, `turn/steer`, or
+approval APIs. For a DSH workbench prompt it uses `thread/queue/add`, which
+persists the input and lets Codex automatically start it in FIFO order after
+the thread becomes idle. Native tool activity, partial messages, reasoning,
+and approvals remain outside the projected event surface.
 
 With an ordinary logged-in local Codex CLI, an opt-in scratch-DB smoke reads one
 existing native thread and projects it without mutating Codex:

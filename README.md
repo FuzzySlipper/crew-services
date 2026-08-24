@@ -58,9 +58,9 @@ implementation omissions; they are outside the first slice.
 
 `crew-codex` is a separate runtime adapter command. It supervises the ordinary
 local `codex app-server --stdio` child, reads explicitly selected existing
-threads, and projects only their canonical history into the session/event
-surface. It does not start turns, inject prompts, respond to native approvals,
-or install dynamic tools.
+threads, projects their canonical history into the session/event surface, and
+accepts ordinary fabric deliveries through Codex's native FIFO queue. It does
+not steer, interrupt, resume, or alter native approval and tool handling.
 
 Start the fabric first, then run one explicit address-to-thread mapping for
 each Codex thread that should appear in the directory:
@@ -90,3 +90,12 @@ operation IDs, so a full replay is idempotent. It intentionally leaves native
 notifications, partial agent messages, reasoning, tool activity, files, and
 approval requests out of this first durable event projection. Those are later
 adapter/UI slices, not an implied generic transcript format.
+
+For a session advertising `queued-prompt-delivery`, the DSH workbench may send
+an ordinary fabric message to its mapped address. `crew-codex` claims the exact
+binding generation, begins one fabric dispatch, and calls native
+`thread/queue/add` with a delivery-derived `clientUserMessageId`. Codex owns
+the later FIFO start once the thread is idle; an active turn is never steered
+or interrupted. If the adapter loses the queue response, a restart reads both
+the native queue and canonical thread history for that client ID before it
+acknowledges or records `outcome_unknown`; it never sends the prompt again.

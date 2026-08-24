@@ -12,12 +12,14 @@ import (
 	"time"
 )
 
-// AppServer is the small read-only portion of the native protocol this slice
-// needs. It is injectable so adapter behavior can be proven without Codex.
+// AppServer is the small Codex protocol surface owned by this adapter. It is
+// injectable so delivery behavior can be proven without Codex.
 type AppServer interface {
 	Initialize(context.Context) error
 	ListThreads(context.Context) ([]NativeThread, error)
 	ReadThread(context.Context, string) (NativeThread, error)
+	QueueAdd(context.Context, string, string, string) (QueuedSubmission, error)
+	QueueList(context.Context, string) ([]QueuedSubmission, error)
 	Close() error
 }
 
@@ -39,10 +41,18 @@ type NativeTurn struct {
 }
 
 type NativeItem struct {
-	ID      string
-	Type    string
-	Text    string
-	Content []NativeContent
+	ID       string
+	Type     string
+	Text     string
+	ClientID string
+	Content  []NativeContent
+}
+
+// QueuedSubmission is the durable non-interrupting native admission receipt.
+// ClientUserMessageID is adapter-owned and survives App Server restarts.
+type QueuedSubmission struct {
+	ID                  string
+	ClientUserMessageID string
 }
 
 type NativeContent struct {
@@ -165,6 +175,58 @@ func (c *StdioAppServer) ReadThread(ctx context.Context, threadID string) (Nativ
 		return NativeThread{}, err
 	}
 	return response.Thread.native(), nil
+}
+
+// QueueAdd persists a turn for automatic FIFO start once Codex considers the
+// thread idle. It does not steer or interrupt an active turn.
+func (c *StdioAppServer) QueueAdd(ctx context.Context, threadID, text, clientUserMessageID string) (QueuedSubmission, error) {
+	var response struct {
+		QueuedSubmission struct {
+			ID                  string `json:"id"`
+			ClientUserMessageID string `json:"clientUserMessageId"`
+		} `json:"queuedSubmission"`
+	}
+	if err := c.awaitInitialized(ctx); err != nil {
+		return QueuedSubmission{}, err
+	}
+	if err := c.sendRequest(ctx, "thread/queue/add", map[string]any{
+		"threadId": threadID, "input": []map[string]any{{"type": "text", "text": text, "text_elements": []any{}}}, "clientUserMessageId": clientUserMessageID,
+	}, &response); err != nil {
+		return QueuedSubmission{}, err
+	}
+	return QueuedSubmission{ID: response.QueuedSubmission.ID, ClientUserMessageID: response.QueuedSubmission.ClientUserMessageID}, nil
+}
+
+// QueueList rereads all durable queued submissions for one exact thread.
+func (c *StdioAppServer) QueueList(ctx context.Context, threadID string) ([]QueuedSubmission, error) {
+	if err := c.awaitInitialized(ctx); err != nil {
+		return nil, err
+	}
+	var values []QueuedSubmission
+	var cursor *string
+	for {
+		var response struct {
+			Data []struct {
+				ID                  string `json:"id"`
+				ClientUserMessageID string `json:"clientUserMessageId"`
+			} `json:"data"`
+			NextCursor *string `json:"nextCursor"`
+		}
+		params := map[string]any{"threadId": threadID, "limit": 100}
+		if cursor != nil {
+			params["cursor"] = *cursor
+		}
+		if err := c.sendRequest(ctx, "thread/queue/list", params, &response); err != nil {
+			return nil, err
+		}
+		for _, value := range response.Data {
+			values = append(values, QueuedSubmission{ID: value.ID, ClientUserMessageID: value.ClientUserMessageID})
+		}
+		if response.NextCursor == nil || *response.NextCursor == "" {
+			return values, nil
+		}
+		cursor = response.NextCursor
+	}
 }
 
 func (c *StdioAppServer) sendRequest(ctx context.Context, method string, params any, target any) error {
@@ -389,10 +451,11 @@ type nativeTurnWire struct {
 }
 
 type nativeItemWire struct {
-	ID      string              `json:"id"`
-	Type    string              `json:"type"`
-	Text    string              `json:"text"`
-	Content []nativeContentWire `json:"content"`
+	ID       string              `json:"id"`
+	Type     string              `json:"type"`
+	Text     string              `json:"text"`
+	ClientID string              `json:"clientId"`
+	Content  []nativeContentWire `json:"content"`
 }
 
 type nativeContentWire struct {
@@ -413,7 +476,7 @@ func (v nativeThreadWire) native() NativeThread {
 			for _, part := range item.Content {
 				content = append(content, NativeContent{Type: part.Type, Text: part.Text})
 			}
-			items = append(items, NativeItem{ID: item.ID, Type: item.Type, Text: item.Text, Content: content})
+			items = append(items, NativeItem{ID: item.ID, Type: item.Type, Text: item.Text, ClientID: item.ClientID, Content: content})
 		}
 		turns = append(turns, NativeTurn{ID: turn.ID, Status: turn.Status, Items: items})
 	}

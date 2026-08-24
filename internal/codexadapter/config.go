@@ -21,6 +21,7 @@ type Config struct {
 	InstanceID    string
 	LeaseDuration time.Duration
 	PollInterval  time.Duration
+	ClaimDuration time.Duration
 	Command       string
 	CommandArgs   []string
 	Mappings      []Mapping
@@ -41,6 +42,7 @@ func Defaults() Config {
 		InstanceID:    "crew-codex-local",
 		LeaseDuration: 5 * time.Minute,
 		PollInterval:  2 * time.Second,
+		ClaimDuration: 45 * time.Second,
 		Command:       "codex",
 		CommandArgs:   []string{"app-server", "--stdio"},
 	}
@@ -57,6 +59,7 @@ func Parse(args []string) (Config, error) {
 	flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "stable fabric adapter instance ID")
 	flags.DurationVar(&cfg.LeaseDuration, "lease-duration", cfg.LeaseDuration, "fabric adapter lease duration")
 	flags.DurationVar(&cfg.PollInterval, "poll-interval", cfg.PollInterval, "canonical thread reconciliation interval")
+	flags.DurationVar(&cfg.ClaimDuration, "claim-duration", cfg.ClaimDuration, "fabric delivery claim duration")
 	flags.StringVar(&cfg.Command, "codex-command", cfg.Command, "Codex App Server executable")
 	flags.Var(&commandArgs, "codex-arg", "override App Server arguments; repeatable")
 	flags.Var(&mappings, "address", "explicit ADDRESS=THREAD_ID mapping; repeatable")
@@ -91,6 +94,9 @@ func (c Config) Validate() error {
 	}
 	if c.PollInterval <= 0 {
 		return errors.New("poll interval must be greater than zero")
+	}
+	if c.ClaimDuration <= 0 {
+		return errors.New("claim duration must be greater than zero")
 	}
 	if len(c.Mappings) == 0 {
 		return errors.New("at least one -address ADDRESS=THREAD_ID mapping is required")
