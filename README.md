@@ -53,3 +53,40 @@ Start here:
 The project deliberately does not promise Rusty Crew compatibility, remote
 deployment, federation, authentication frameworks, or a UI. Those are not
 implementation omissions; they are outside the first slice.
+
+## Project selected Codex threads
+
+`crew-codex` is a separate runtime adapter command. It supervises the ordinary
+local `codex app-server --stdio` child, reads explicitly selected existing
+threads, and projects only their canonical history into the session/event
+surface. It does not start turns, inject prompts, respond to native approvals,
+or install dynamic tools.
+
+Start the fabric first, then run one explicit address-to-thread mapping for
+each Codex thread that should appear in the directory:
+
+```sh
+go run ./cmd/crew-codex \
+  -fabric-url http://127.0.0.1:8787 \
+  -address crew/scout=YOUR_CODEX_THREAD_ID
+```
+
+Mappings are repeatable. A native thread may occur only once, and an occupied
+address owned by another adapter is rejected rather than rebound. The native
+thread ID is held in the adapter-private session key; the public binding points
+to the fabric-owned `session_id` instead. A session's current label, working
+directory, and runtime status are CAS-updated from `thread/read`; changing the
+display name never changes its identity.
+
+The default `-instance-id crew-codex-local` is intentionally stable so a normal
+process restart renews the same adapter lease. Choose a distinct stable value
+only when running a second independent adapter instance against the same
+fabric.
+
+The adapter rereads canonical `thread/read { includeTurns: true }` history on
+each polling pass and after an App Server restart. It projects completed
+user/agent message entries with stable native entry/turn IDs and stable fabric
+operation IDs, so a full replay is idempotent. It intentionally leaves native
+notifications, partial agent messages, reasoning, tool activity, files, and
+approval requests out of this first durable event projection. Those are later
+adapter/UI slices, not an implied generic transcript format.

@@ -42,6 +42,43 @@ curl --fail http://127.0.0.1:8787/readyz
 
 The SQLite file is the durable state. Keep its directory private to the user running the process, stop the service before making a filesystem-level backup, and use a normal replacement start against the same file to recover after a process crash. A pre-dispatch `claimed` delivery may return to `queued` when reaped; a `dispatching` delivery is reconciled only by the owning adapter and otherwise becomes `outcome_unknown`, never silently resent.
 
+## Optional Codex session projection
+
+`crew-codex` is a second local process which uses the same fabric endpoint. It
+does not replace the native Codex App Server: the adapter owns the managed stdio
+connection and canonical-reads each explicit existing native thread with
+`thread/read { includeTurns: true }`. It does not require a configured thread
+to happen to be on the first page of `thread/list`.
+
+```sh
+cd /home/dev/crew-services
+go build -o "$HOME/.local/bin/crew-codex" ./cmd/crew-codex
+exec "$HOME/.local/bin/crew-codex" \
+  -fabric-url http://127.0.0.1:8787 \
+  -address crew/scout=YOUR_CODEX_THREAD_ID
+```
+
+Repeat `-address` for each selected thread. The command refuses to map the
+same thread twice and will not take over an address bound by another adapter.
+It exposes a fabric-owned public session ID and public binding target; the
+native thread ID remains only in the adapter-private adoption key. If the
+Codex child exits or an RPC fails, the adapter waits for its normal poll delay,
+restarts the child, and canonical-rereads history. That replay is safe because
+each projected completed message has a stable adapter operation ID.
+
+This initial projection is deliberately read-only to Codex. It does not call
+`thread/resume`, `turn/start`, `turn/steer`, or approval APIs, and it does not
+treat notifications or deltas as durable facts. Native tool activity, partial
+messages, reasoning, and approvals are omitted pending later adapter/UI work.
+
+With an ordinary logged-in local Codex CLI, an opt-in scratch-DB smoke reads one
+existing native thread and projects it without mutating Codex:
+
+```sh
+cd /home/dev/crew-services
+CREW_CODEX_LIVE=1 go test ./internal/codexadapter -run TestLiveCurrentCodexAppServerReadProjection -count=1
+```
+
 Run the proportional local checks from the two sibling repositories:
 
 ```sh
