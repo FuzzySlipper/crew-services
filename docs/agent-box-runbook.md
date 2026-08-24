@@ -55,6 +55,7 @@ cd /home/dev/crew-services
 go build -o "$HOME/.local/bin/crew-codex" ./cmd/crew-codex
 exec "$HOME/.local/bin/crew-codex" \
   -fabric-url http://127.0.0.1:8787 \
+  -state "$HOME/.local/state/crew-messaging/crew-codex.json" \
   -address crew/scout=YOUR_CODEX_THREAD_ID
 ```
 
@@ -65,6 +66,12 @@ native thread ID remains only in the adapter-private adoption key. If the
 Codex child exits or an RPC fails, the adapter waits for its normal poll delay,
 restarts the child, and canonical-rereads history. That replay is safe because
 each projected completed message has a stable adapter operation ID.
+
+The optional `-state` file records only successful UI-created threads and their
+public mappings, so the same create operation can be replayed and those threads
+resume projection after process restart. Keep it in the same user-private state
+directory as the SQLite database. Pending approvals and user-input callbacks
+remain process-lifetime App Server requests and disappear if its child restarts.
 
 The adapter does not call `thread/resume`, `turn/start`, `turn/steer`, or
 approval APIs. For a DSH workbench prompt it uses `thread/queue/add`, which

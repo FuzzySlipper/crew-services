@@ -3,11 +3,14 @@ package codexadapter
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -20,7 +23,23 @@ type AppServer interface {
 	ReadThread(context.Context, string) (NativeThread, error)
 	QueueAdd(context.Context, string, string, string) (QueuedSubmission, error)
 	QueueList(context.Context, string) ([]QueuedSubmission, error)
+	StartThread(context.Context, string) (NativeThread, error)
+	Interrupt(context.Context, string, string) error
+	Interactions() []NativeInteraction
+	RespondInteraction(context.Context, string, string, json.RawMessage) error
 	Close() error
+}
+
+// NativeInteraction is an ephemeral server-to-client request. It is valid
+// only for this App Server child and is deliberately never projected as a
+// durable recoverable fact.
+type NativeInteraction struct {
+	ID        string          `json:"id"`
+	Method    string          `json:"method"`
+	ThreadID  string          `json:"thread_id,omitempty"`
+	TurnID    string          `json:"turn_id,omitempty"`
+	Params    json.RawMessage `json:"params"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 // NativeThread is the canonical history shape consumed by the projector.
@@ -67,14 +86,18 @@ type StdioAppServer struct {
 	command *exec.Cmd
 	stdin   io.WriteCloser
 
-	mu      sync.Mutex
-	writeMu sync.Mutex
-	nextID  int64
-	pending map[int64]chan rpcResponse
-	closing bool
-	closed  bool
-	done    chan struct{}
-	err     error
+	mu             sync.Mutex
+	writeMu        sync.Mutex
+	responseMu     sync.Mutex
+	nextID         int64
+	pending        map[string]chan rpcResponse
+	interactions   map[string]pendingInteraction
+	interactionSeq uint64
+	instancePrefix string
+	closing        bool
+	closed         bool
+	done           chan struct{}
+	err            error
 
 	handshakeDone     chan struct{}
 	handshakeComplete bool
@@ -85,6 +108,12 @@ type StdioAppServer struct {
 type rpcResponse struct {
 	result json.RawMessage
 	err    *rpcError
+}
+
+type pendingInteraction struct {
+	id     json.RawMessage
+	method string
+	value  NativeInteraction
 }
 
 type rpcError struct {
@@ -109,10 +138,93 @@ func StartStdioAppServer(command string, args []string) (*StdioAppServer, error)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start Codex App Server: %w", err)
 	}
-	client := &StdioAppServer{command: cmd, stdin: stdin, pending: make(map[int64]chan rpcResponse), done: make(chan struct{}), handshakeDone: make(chan struct{})}
+	prefix := make([]byte, 12)
+	if _, err := rand.Read(prefix); err != nil {
+		_ = stdin.Close()
+		_ = cmd.Process.Kill()
+		return nil, fmt.Errorf("random interaction prefix: %w", err)
+	}
+	client := &StdioAppServer{command: cmd, stdin: stdin, pending: make(map[string]chan rpcResponse), interactions: make(map[string]pendingInteraction), done: make(chan struct{}), handshakeDone: make(chan struct{}), instancePrefix: hex.EncodeToString(prefix)}
 	go client.read(stdout)
 	go client.wait()
 	return client, nil
+}
+
+// StartThread creates a new native Codex thread. The current protocol has no
+// client operation identity for this effect, so a lost response is surfaced to
+// the caller rather than retried into a duplicate thread.
+func (c *StdioAppServer) StartThread(ctx context.Context, cwd string) (NativeThread, error) {
+	var response struct {
+		Thread nativeThreadWire `json:"thread"`
+	}
+	if err := c.awaitInitialized(ctx); err != nil {
+		return NativeThread{}, err
+	}
+	params := map[string]any{}
+	if cwd != "" {
+		params["cwd"] = cwd
+	}
+	if err := c.sendRequest(ctx, "thread/start", params, &response); err != nil {
+		return NativeThread{}, err
+	}
+	return response.Thread.native(), nil
+}
+
+// Interrupt requests cancellation of one exact active native turn.
+func (c *StdioAppServer) Interrupt(ctx context.Context, threadID, turnID string) error {
+	if err := c.awaitInitialized(ctx); err != nil {
+		return err
+	}
+	var ignored map[string]any
+	return c.sendRequest(ctx, "turn/interrupt", map[string]any{"threadId": threadID, "turnId": turnID}, &ignored)
+}
+
+// Interactions returns a snapshot of unresolved server requests for this child.
+func (c *StdioAppServer) Interactions() []NativeInteraction {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	values := make([]NativeInteraction, 0, len(c.interactions))
+	for _, value := range c.interactions {
+		values = append(values, value.value)
+	}
+	return values
+}
+
+// RespondInteraction settles one exact pending server request with its native
+// response payload. A stale, resolved, or wrong-type interaction is rejected.
+func (c *StdioAppServer) RespondInteraction(ctx context.Context, id, method string, response json.RawMessage) error {
+	c.responseMu.Lock()
+	defer c.responseMu.Unlock()
+	c.mu.Lock()
+	pending, found := c.interactions[id]
+	if !found || pending.method != method {
+		c.mu.Unlock()
+		return errors.New("Codex interaction is no longer pending")
+	}
+	c.mu.Unlock()
+	if !json.Valid(response) {
+		return errors.New("Codex interaction response must be JSON")
+	}
+	message, err := json.Marshal(struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Result  json.RawMessage `json:"result"`
+	}{JSONRPC: "2.0", ID: pending.id, Result: response})
+	if err != nil {
+		return err
+	}
+	c.writeMu.Lock()
+	_, err = c.stdin.Write(append(message, '\n'))
+	c.writeMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("write %s interaction response: %w", method, err)
+	}
+	c.mu.Lock()
+	if current, found := c.interactions[id]; found && rpcIDKey(current.id) == rpcIDKey(pending.id) && current.method == method {
+		delete(c.interactions, id)
+	}
+	c.mu.Unlock()
+	return nil
 }
 
 func (c *StdioAppServer) Initialize(ctx context.Context) error {
@@ -238,20 +350,22 @@ func (c *StdioAppServer) sendRequest(ctx context.Context, method string, params 
 	}
 	c.nextID++
 	id := c.nextID
+	idRaw := json.RawMessage(strconv.AppendInt(nil, id, 10))
+	key := rpcIDKey(idRaw)
 	response := make(chan rpcResponse, 1)
-	c.pending[id] = response
+	c.pending[key] = response
 	c.mu.Unlock()
 
 	message, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 	if err != nil {
-		c.removePending(id)
+		c.removePending(key)
 		return fmt.Errorf("encode %s: %w", method, err)
 	}
 	c.writeMu.Lock()
 	_, err = c.stdin.Write(append(message, '\n'))
 	c.writeMu.Unlock()
 	if err != nil {
-		c.removePending(id)
+		c.removePending(key)
 		return fmt.Errorf("write %s: %w", method, err)
 	}
 	select {
@@ -267,7 +381,7 @@ func (c *StdioAppServer) sendRequest(ctx context.Context, method string, params 
 		}
 		return nil
 	case <-ctx.Done():
-		c.removePending(id)
+		c.removePending(key)
 		return ctx.Err()
 	case <-c.done:
 		return c.terminalError()
@@ -343,22 +457,7 @@ func (c *StdioAppServer) read(stdout io.Reader) {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 32*1024), 4*1024*1024)
 	for scanner.Scan() {
-		var envelope struct {
-			ID     *int64          `json:"id"`
-			Result json.RawMessage `json:"result"`
-			Error  *rpcError       `json:"error"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &envelope); err != nil || envelope.ID == nil {
-			continue // Notifications and malformed unsolicited frames are non-authoritative here.
-		}
-		c.mu.Lock()
-		response := c.pending[*envelope.ID]
-		delete(c.pending, *envelope.ID)
-		c.mu.Unlock()
-		if response != nil {
-			response <- rpcResponse{result: envelope.Result, err: envelope.Error}
-			close(response)
-		}
+		c.handleFrame(scanner.Bytes())
 	}
 	if err := scanner.Err(); err != nil {
 		c.fail(fmt.Errorf("read Codex App Server output: %w", err))
@@ -394,7 +493,92 @@ func (c *StdioAppServer) Close() error {
 	return nil
 }
 
-func (c *StdioAppServer) removePending(id int64) {
+func (c *StdioAppServer) handleFrame(frame []byte) {
+	var envelope struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+		Result json.RawMessage `json:"result"`
+		Error  *rpcError       `json:"error"`
+	}
+	if err := json.Unmarshal(frame, &envelope); err != nil {
+		return
+	}
+	if envelope.Method != "" && len(envelope.ID) > 0 && string(envelope.ID) != "null" {
+		if !validRPCID(envelope.ID) {
+			return
+		}
+		interaction := NativeInteraction{Method: envelope.Method, Params: append(json.RawMessage(nil), envelope.Params...), CreatedAt: time.Now().UTC()}
+		var scope struct {
+			ThreadID string `json:"threadId"`
+			TurnID   string `json:"turnId"`
+		}
+		_ = json.Unmarshal(envelope.Params, &scope)
+		interaction.ThreadID, interaction.TurnID = scope.ThreadID, scope.TurnID
+		c.mu.Lock()
+		if !c.closed {
+			c.interactionSeq++
+			interaction.ID = fmt.Sprintf("interaction-%s-%d", c.instancePrefix, c.interactionSeq)
+			c.interactions[interaction.ID] = pendingInteraction{id: append(json.RawMessage(nil), envelope.ID...), method: envelope.Method, value: interaction}
+		}
+		c.mu.Unlock()
+		return
+	}
+	if envelope.Method == "serverRequest/resolved" {
+		var resolved struct {
+			RequestID json.RawMessage `json:"requestId"`
+		}
+		if json.Unmarshal(envelope.Params, &resolved) == nil && validRPCID(resolved.RequestID) {
+			c.responseMu.Lock()
+			c.mu.Lock()
+			for key, pending := range c.interactions {
+				if rpcIDKey(pending.id) == rpcIDKey(resolved.RequestID) {
+					delete(c.interactions, key)
+				}
+			}
+			c.mu.Unlock()
+			c.responseMu.Unlock()
+		}
+		return
+	}
+	if len(envelope.ID) == 0 || !validRPCID(envelope.ID) {
+		return
+	}
+	c.mu.Lock()
+	key := rpcIDKey(envelope.ID)
+	response := c.pending[key]
+	delete(c.pending, key)
+	c.mu.Unlock()
+	if response != nil {
+		response <- rpcResponse{result: envelope.Result, err: envelope.Error}
+		close(response)
+	}
+}
+
+func validRPCID(value json.RawMessage) bool {
+	var stringID string
+	if json.Unmarshal(value, &stringID) == nil {
+		return stringID != ""
+	}
+	var numberID json.Number
+	return json.Unmarshal(value, &numberID) == nil && numberID.String() != ""
+}
+
+// rpcIDKey preserves JSON-RPC's distinct number and string identifier spaces:
+// numeric 1 must never route a response intended for string "1".
+func rpcIDKey(value json.RawMessage) string {
+	var stringID string
+	if json.Unmarshal(value, &stringID) == nil {
+		return "s:" + stringID
+	}
+	var number json.Number
+	if json.Unmarshal(value, &number) == nil {
+		return "n:" + number.String()
+	}
+	return ""
+}
+
+func (c *StdioAppServer) removePending(id string) {
 	c.mu.Lock()
 	delete(c.pending, id)
 	c.mu.Unlock()
@@ -416,6 +600,7 @@ func (c *StdioAppServer) fail(err error) {
 		delete(c.pending, id)
 		close(response)
 	}
+	c.interactions = make(map[string]pendingInteraction)
 	c.closed = true
 	close(c.done)
 	c.mu.Unlock()

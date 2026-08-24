@@ -16,6 +16,7 @@ const promptDeliveryCapability = "queued-prompt-delivery"
 var codexCapabilities = []string{
 	"session-events", "read-only-native-history",
 	"deliver_when_idle", "durable_next_turn", promptDeliveryCapability,
+	"interrupt-native-turn", "respond-interactions",
 }
 
 // Projector connects explicit native threads to their fabric-owned public
@@ -29,6 +30,7 @@ type Projector struct {
 	Mappings      []Mapping
 	Capabilities  []string
 	ClaimDuration time.Duration
+	Observed      func(Session, Mapping)
 }
 
 func (p *Projector) Reconcile(ctx context.Context) error {
@@ -70,6 +72,9 @@ func (p *Projector) projectThread(ctx context.Context, mapping Mapping, thread N
 	}
 	if session, err = p.updateIfChanged(ctx, session, thread); err != nil {
 		return err
+	}
+	if p.Observed != nil {
+		p.Observed(session, mapping)
 	}
 	for _, event := range normalizedEvents(thread) {
 		payload, err := json.Marshal(event)
@@ -456,6 +461,19 @@ func Run(ctx context.Context, cfg Config, fabric Fabric, open func() (AppServer,
 	if err != nil {
 		return fmt.Errorf("register fabric adapter: %w", err)
 	}
+	controls := NewControls(fabric, cfg)
+	if cfg.StatePath != "" {
+		if _, err := loadControlState(cfg.StatePath); err != nil {
+			return fmt.Errorf("load control state: %w", err)
+		}
+	}
+	if cfg.ControlListen != "" {
+		go func() {
+			if err := ServeControls(ctx, cfg.ControlListen, controls); err != nil && ctx.Err() == nil {
+				logf("crew-codex: control API stopped: %v", err)
+			}
+		}()
+	}
 	var native AppServer
 	defer func() {
 		if native != nil {
@@ -491,7 +509,8 @@ func Run(ctx context.Context, cfg Config, fabric Fabric, open func() (AppServer,
 				continue
 			}
 		}
-		projector := Projector{Fabric: fabric, Native: native, AdapterID: cfg.AdapterID, Lease: lease, Mappings: cfg.Mappings, Capabilities: codexCapabilities, ClaimDuration: cfg.ClaimDuration}
+		controls.Attach(native, lease, cfg.Mappings)
+		projector := Projector{Fabric: fabric, Native: native, AdapterID: cfg.AdapterID, Lease: lease, Mappings: controls.Mappings(cfg.Mappings), Capabilities: codexCapabilities, ClaimDuration: cfg.ClaimDuration, Observed: controls.Observe}
 		if err := projector.Reconcile(ctx); err != nil {
 			logf("crew-codex: reconciliation failed: %v", err)
 			_ = native.Close()

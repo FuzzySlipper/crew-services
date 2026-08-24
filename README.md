@@ -91,6 +91,13 @@ notifications, partial agent messages, reasoning, tool activity, files, and
 approval requests out of this first durable event projection. Those are later
 adapter/UI slices, not an implied generic transcript format.
 
+`crew-codex -state PATH` stores a small adapter-owned JSON receipt after a
+successful browser-created native thread: the create operation ID, native
+thread mapping, and fabric public session ID. Reusing that path lets a normal
+adapter restart replay a successful create and rejoin projection of the thread.
+It does not persist pending App Server callbacks; approvals and input requests
+vanish if the native child exits and must be reissued by Codex.
+
 For a session advertising `queued-prompt-delivery`, the DSH workbench may send
 an ordinary fabric message to its mapped address. `crew-codex` claims the exact
 binding generation, begins one fabric dispatch, and calls native

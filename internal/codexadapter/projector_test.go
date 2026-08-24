@@ -2,6 +2,7 @@ package codexadapter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -377,6 +378,16 @@ func (f *fakeAppServer) QueueList(_ context.Context, threadID string) ([]QueuedS
 	}
 	return append([]QueuedSubmission(nil), f.queued[threadID]...), nil
 }
+func (f *fakeAppServer) StartThread(context.Context, string) (NativeThread, error) {
+	return NativeThread{}, errors.New("not implemented")
+}
+func (f *fakeAppServer) Interrupt(context.Context, string, string) error {
+	return errors.New("not implemented")
+}
+func (f *fakeAppServer) Interactions() []NativeInteraction { return nil }
+func (f *fakeAppServer) RespondInteraction(context.Context, string, string, json.RawMessage) error {
+	return errors.New("not implemented")
+}
 
 type outageNative struct {
 	thread                   NativeThread
@@ -399,6 +410,16 @@ func (n *outageNative) QueueAdd(context.Context, string, string, string) (Queued
 }
 func (n *outageNative) QueueList(context.Context, string) ([]QueuedSubmission, error) {
 	return nil, errors.New("native unavailable")
+}
+func (n *outageNative) StartThread(context.Context, string) (NativeThread, error) {
+	return NativeThread{}, errors.New("unavailable")
+}
+func (n *outageNative) Interrupt(context.Context, string, string) error {
+	return errors.New("unavailable")
+}
+func (n *outageNative) Interactions() []NativeInteraction { return nil }
+func (n *outageNative) RespondInteraction(context.Context, string, string, json.RawMessage) error {
+	return errors.New("unavailable")
 }
 func (n *outageNative) Close() error  { n.closed = true; return nil }
 func (f *fakeAppServer) Close() error { f.closed = true; return nil }
