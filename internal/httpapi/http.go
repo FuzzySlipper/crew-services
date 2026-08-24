@@ -97,16 +97,18 @@ type unbindRequest struct {
 }
 
 type messageRequest struct {
-	ProducerID       string `json:"producer_id"`
-	LeaseToken       string `json:"lease_token"`
-	OperationID      string `json:"operation_id"`
-	SenderAddress    string `json:"sender_address"`
-	RecipientAddress string `json:"recipient_address"`
-	Body             string `json:"body"`
-	CorrelationID    string `json:"correlation_id,omitempty"`
-	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
-	ActivationPolicy string `json:"activation_policy,omitempty"`
-	TTL              string `json:"ttl"`
+	ProducerID                  string `json:"producer_id"`
+	LeaseToken                  string `json:"lease_token"`
+	OperationID                 string `json:"operation_id"`
+	SenderAddress               string `json:"sender_address"`
+	RecipientAddress            string `json:"recipient_address"`
+	Body                        string `json:"body"`
+	CorrelationID               string `json:"correlation_id,omitempty"`
+	ReplyToMessageID            string `json:"reply_to_message_id,omitempty"`
+	ActivationPolicy            string `json:"activation_policy,omitempty"`
+	TTL                         string `json:"ttl"`
+	ExpectedSenderGeneration    *int64 `json:"expected_sender_generation,omitempty"`
+	ExpectedRecipientGeneration *int64 `json:"expected_recipient_generation,omitempty"`
 }
 
 func registerAdapter(svc *service.Service) http.HandlerFunc {
@@ -216,7 +218,7 @@ func submitMessage(svc *service.Service) http.HandlerFunc {
 			writeError(w, &service.Error{Code: service.CodeInvalid, Err: errors.New("invalid ttl")})
 			return
 		}
-		result, err := svc.SubmitMessage(r.Context(), service.SubmitMessageRequest{ProducerID: body.ProducerID, LeaseToken: body.LeaseToken, OperationID: body.OperationID, SenderAddress: body.SenderAddress, RecipientAddress: body.RecipientAddress, Body: body.Body, CorrelationID: body.CorrelationID, ReplyToMessageID: body.ReplyToMessageID, ActivationPolicy: body.ActivationPolicy, TTL: ttl})
+		result, err := svc.SubmitMessage(r.Context(), service.SubmitMessageRequest{ProducerID: body.ProducerID, LeaseToken: body.LeaseToken, OperationID: body.OperationID, SenderAddress: body.SenderAddress, RecipientAddress: body.RecipientAddress, Body: body.Body, CorrelationID: body.CorrelationID, ReplyToMessageID: body.ReplyToMessageID, ActivationPolicy: body.ActivationPolicy, TTL: ttl, ExpectedSenderGeneration: body.ExpectedSenderGeneration, ExpectedRecipientGeneration: body.ExpectedRecipientGeneration})
 		if err != nil {
 			writeError(w, err)
 			return

@@ -15,8 +15,9 @@ type controlState struct {
 }
 
 type persistedControlSession struct {
-	Session ControlSession `json:"session"`
-	Mapping Mapping        `json:"mapping"`
+	Session     ControlSession `json:"session"`
+	Mapping     Mapping        `json:"mapping"`
+	ToolEnabled bool           `json:"tool_enabled"`
 }
 
 func loadControlState(path string) (map[string]persistedControlSession, error) {

@@ -177,7 +177,7 @@ func (p *Projector) deliverQueued(ctx context.Context, mapping Mapping, thread N
 	}); err != nil {
 		return fmt.Errorf("begin dispatch %q: %w", delivery.DeliveryID, err)
 	}
-	queued, queueErr := p.Native.QueueAdd(ctx, mapping.ThreadID, envelope.Body, clientID)
+	queued, queueErr := p.Native.QueueAdd(ctx, mapping.ThreadID, frameInbound(envelope), clientID)
 	if queueErr == nil && queued.ID != "" && queued.ClientUserMessageID == clientID {
 		if _, err := p.Fabric.Acknowledge(ctx, delivery.DeliveryID, ReconcileRequest{AdapterID: p.AdapterID, LeaseToken: p.Lease.LeaseToken, OperationID: deliveryOperation(delivery.DeliveryID, "ack"), NativeAttemptRef: attempt}); err != nil {
 			return fmt.Errorf("acknowledge %q: %w", delivery.DeliveryID, err)

@@ -2,6 +2,9 @@ package codexadapter
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"os/exec"
 	"testing"
 	"time"
@@ -48,6 +51,230 @@ func TestStdioAppServerChildExitFailsRequest(t *testing.T) {
 		t.Fatal("request succeeded after close")
 	}
 }
+
+func TestStdioAppServerFailCancelsDynamicToolContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &StdioAppServer{toolContext: ctx, toolCancel: cancel, pending: map[string]chan rpcResponse{}, interactions: map[string]pendingInteraction{}, done: make(chan struct{}), handshakeDone: make(chan struct{})}
+	client.fail(context.Canceled)
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("dynamic tool context was not cancelled")
+	}
+}
+
+func TestStdioAppServerBlockingDynamicToolDoesNotBlockReadLoop(t *testing.T) {
+	toolContext, toolCancel := context.WithCancel(context.Background())
+	client := &StdioAppServer{
+		stdin:         &testWriteCloser{write: func(p []byte) (int, error) { return len(p), nil }},
+		pending:       map[string]chan rpcResponse{},
+		interactions:  map[string]pendingInteraction{},
+		done:          make(chan struct{}),
+		handshakeDone: make(chan struct{}),
+		toolContext:   toolContext,
+		toolCancel:    toolCancel,
+	}
+
+	toolStarted := make(chan struct{})
+	toolCanceled := make(chan struct{})
+	client.SetDynamicToolHandler(func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
+		close(toolStarted)
+		<-ctx.Done()
+		close(toolCanceled)
+		return nil, ctx.Err()
+	})
+
+	response := make(chan rpcResponse, 1)
+	client.mu.Lock()
+	client.pending["n:42"] = response
+	client.mu.Unlock()
+
+	frameReturned := make(chan struct{})
+	go func() {
+		client.handleFrame([]byte(`{"jsonrpc":"2.0","id":1,"method":"item/tool/call","params":{"callId":"call-1"}}`))
+		close(frameReturned)
+	}()
+	select {
+	case <-toolStarted:
+	case <-time.After(time.Second):
+		t.Fatal("dynamic tool handler did not start")
+	}
+	select {
+	case <-frameReturned:
+	case <-time.After(time.Second):
+		t.Fatal("read loop remained blocked by dynamic tool handler")
+	}
+
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","id":42,"result":{"ok":true}}`))
+	select {
+	case result, ok := <-response:
+		if !ok || string(result.result) != `{"ok":true}` {
+			t.Fatalf("unrelated response=%+v open=%t", result, ok)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unrelated response was not processed while tool handler blocked")
+	}
+
+	client.mu.Lock()
+	client.interactions["interaction-1"] = pendingInteraction{id: json.RawMessage(`7`), method: "item/approval"}
+	client.mu.Unlock()
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"serverRequest/resolved","params":{"requestId":7}}`))
+	if interactions := client.Interactions(); len(interactions) != 0 {
+		t.Fatalf("unrelated notification was not processed while tool handler blocked: %+v", interactions)
+	}
+
+	client.fail(errors.New("child closed"))
+	select {
+	case <-toolCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("child failure did not cancel dynamic tool handler context")
+	}
+}
+
+func TestStdioAppServerDynamicToolWriteFailureClosesPendingState(t *testing.T) {
+	tests := []struct {
+		name  string
+		write func([]byte) (int, error)
+	}{
+		{name: "write error", write: func(p []byte) (int, error) { return 0, errors.New("stdin closed") }},
+		{name: "short write", write: func(p []byte) (int, error) { return len(p) - 1, nil }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			toolContext, toolCancel := context.WithCancel(context.Background())
+			stdin := &testWriteCloser{write: test.write}
+			client := &StdioAppServer{
+				stdin:         stdin,
+				pending:       map[string]chan rpcResponse{},
+				interactions:  map[string]pendingInteraction{},
+				done:          make(chan struct{}),
+				handshakeDone: make(chan struct{}),
+				toolContext:   toolContext,
+				toolCancel:    toolCancel,
+			}
+			pending := make(chan rpcResponse)
+			client.pending["n:42"] = pending
+			client.SetDynamicToolHandler(func(context.Context, json.RawMessage) (json.RawMessage, error) {
+				return json.RawMessage(`{"success":true}`), nil
+			})
+
+			client.handleFrame([]byte(`{"jsonrpc":"2.0","id":1,"method":"item/tool/call","params":{"callId":"call-1"}}`))
+			select {
+			case <-client.done:
+			case <-time.After(time.Second):
+				t.Fatal("dynamic tool write failure did not fail the App Server")
+			}
+			select {
+			case _, ok := <-pending:
+				if ok {
+					t.Fatal("pending response was delivered instead of closed")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("pending response remained open after dynamic tool write failure")
+			}
+			client.mu.Lock()
+			terminalErr := client.err
+			client.mu.Unlock()
+			if terminalErr == nil {
+				t.Fatal("dynamic tool write failure did not record terminal error")
+			}
+		})
+	}
+}
+
+func TestStdioAppServerSendRequestRejectsFailedAndShortWrites(t *testing.T) {
+	tests := []struct {
+		name  string
+		write func([]byte) (int, error)
+	}{
+		{name: "write error", write: func([]byte) (int, error) { return 0, errors.New("stdin closed") }},
+		{name: "short write", write: func(p []byte) (int, error) { return len(p) - 1, nil }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &StdioAppServer{
+				stdin:         &testWriteCloser{write: test.write},
+				pending:       map[string]chan rpcResponse{},
+				interactions:  map[string]pendingInteraction{},
+				done:          make(chan struct{}),
+				handshakeDone: make(chan struct{}),
+			}
+			var target map[string]any
+			if err := client.sendRequest(context.Background(), "test/request", map[string]any{}, &target); err == nil {
+				t.Fatal("sendRequest accepted incomplete write")
+			}
+			client.mu.Lock()
+			pending := len(client.pending)
+			client.mu.Unlock()
+			if pending != 0 {
+				t.Fatalf("failed sendRequest left %d pending requests", pending)
+			}
+		})
+	}
+}
+
+func TestStdioAppServerInitializedNotificationRejectsFailedAndShortWrites(t *testing.T) {
+	tests := []struct {
+		name  string
+		write func([]byte) (int, error)
+	}{
+		{name: "write error", write: func([]byte) (int, error) { return 0, errors.New("stdin closed") }},
+		{name: "short write", write: func(p []byte) (int, error) { return len(p) - 1, nil }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &StdioAppServer{
+				stdin:         &testWriteCloser{write: test.write},
+				pending:       map[string]chan rpcResponse{},
+				interactions:  map[string]pendingInteraction{},
+				done:          make(chan struct{}),
+				handshakeDone: make(chan struct{}),
+			}
+			if err := client.notifyInitialized(); err == nil {
+				t.Fatal("initialized notification accepted incomplete write")
+			}
+		})
+	}
+}
+
+func TestStdioAppServerInteractionResponseRejectsFailedAndShortWrites(t *testing.T) {
+	tests := []struct {
+		name  string
+		write func([]byte) (int, error)
+	}{
+		{name: "write error", write: func([]byte) (int, error) { return 0, errors.New("stdin closed") }},
+		{name: "short write", write: func(p []byte) (int, error) { return len(p) - 1, nil }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &StdioAppServer{
+				stdin:         &testWriteCloser{write: test.write},
+				pending:       map[string]chan rpcResponse{},
+				interactions:  map[string]pendingInteraction{},
+				done:          make(chan struct{}),
+				handshakeDone: make(chan struct{}),
+			}
+			client.interactions["interaction-1"] = pendingInteraction{id: json.RawMessage(`7`), method: "item/approval"}
+			if err := client.RespondInteraction(context.Background(), "interaction-1", "item/approval", json.RawMessage(`{"decision":"accept"}`)); err == nil {
+				t.Fatal("interaction response accepted incomplete write")
+			}
+			if len(client.Interactions()) != 1 {
+				t.Fatal("failed interaction response removed the pending interaction")
+			}
+		})
+	}
+}
+
+type testWriteCloser struct {
+	write func([]byte) (int, error)
+}
+
+func (w *testWriteCloser) Write(p []byte) (int, error) { return w.write(p) }
+
+func (w *testWriteCloser) Close() error { return nil }
+
+var _ io.WriteCloser = (*testWriteCloser)(nil)
 
 func TestStdioAppServerWaitsForInitializedBeforeConcurrentRequest(t *testing.T) {
 	client, err := StartStdioAppServer("sh", []string{"-c", `ready=0

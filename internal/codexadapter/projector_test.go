@@ -599,6 +599,16 @@ func (f *fakeFabric) Unknown(_ context.Context, deliveryID string, _ ReconcileRe
 func (f *fakeFabric) Deliveries(context.Context) ([]Delivery, error) {
 	return append([]Delivery(nil), f.deliveries...), nil
 }
+func (f *fakeFabric) Submit(_ context.Context, request MessageRequest) (SubmittedMessage, error) {
+	return SubmittedMessage{Message: Message{MessageID: "message-" + request.OperationID, RecipientAddress: request.RecipientAddress, Body: request.Body}}, nil
+}
+func (f *fakeFabric) Bindings(context.Context) ([]Binding, error) {
+	values := make([]Binding, 0, len(f.bindings))
+	for _, value := range f.bindings {
+		values = append(values, value)
+	}
+	return values, nil
+}
 
 func newProjector(fabric Fabric, native AppServer) *Projector {
 	return &Projector{Fabric: fabric, Native: native, AdapterID: "crew-codex", Lease: Lease{LeaseToken: "lease"}, Mappings: []Mapping{{Address: "crew/scout", ThreadID: "thread-1"}}, Capabilities: []string{"session-events", "read-only-native-history"}}

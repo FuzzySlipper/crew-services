@@ -160,6 +160,60 @@ func TestExactReplayAfterAuthorityDriftDoesNotNeedNewIDs(t *testing.T) {
 	}
 }
 
+func TestMessageReplayUsesCurrentExpectedGenerationsWithoutChangingPayload(t *testing.T) {
+	ctx := context.Background()
+	clock := &mutableClock{now: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
+	persistence, svc := newMessageService(t, filepath.Join(t.TempDir(), "generation-replay.db"), clock, idSequence("generation-message", "generation-delivery", "unused-message", "unused-delivery"))
+	defer persistence.Close()
+	alpha, beta, bob := bindPair(t, svc)
+	first, err := svc.SubmitMessage(ctx, service.SubmitMessageRequest{
+		ProducerID: alpha.AdapterID, LeaseToken: alpha.LeaseToken, OperationID: "generation-operation",
+		SenderAddress: "agent/alice", RecipientAddress: "agent/bob", Body: "hello", TTL: time.Hour,
+		ExpectedSenderGeneration: pointer(1), ExpectedRecipientGeneration: pointer(1),
+	})
+	if err != nil || first.Replayed || first.Message.SenderGeneration != 1 || first.Message.RecipientGeneration != 1 {
+		t.Fatalf("first generation-fenced submit = %#v, %v", first, err)
+	}
+
+	rebound, err := svc.PutBinding(ctx, service.PutBindingRequest{
+		Address: bob.Address, ActorAdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken,
+		AdapterID: beta.AdapterID, TargetRef: "opaque/bob-rebound", ExpectedRevision: pointer(bob.Revision),
+	})
+	if err != nil || rebound.Generation != 2 {
+		t.Fatalf("rebind recipient = %#v, %v", rebound, err)
+	}
+
+	// The expected generations are caller-side freshness guards, not message
+	// identity. An exact retry can carry the currently observed generation and
+	// must still return the original immutable result after the rebind.
+	replay, err := svc.SubmitMessage(ctx, service.SubmitMessageRequest{
+		ProducerID: alpha.AdapterID, LeaseToken: alpha.LeaseToken, OperationID: "generation-operation",
+		SenderAddress: "agent/alice", RecipientAddress: "agent/bob", Body: "hello", TTL: time.Hour,
+		ExpectedSenderGeneration: pointer(1), ExpectedRecipientGeneration: pointer(2),
+	})
+	if err != nil || !replay.Replayed || replay.Message != first.Message || replay.Delivery != first.Delivery {
+		t.Fatalf("replay with current generations = %#v, %v; first = %#v", replay, err, first)
+	}
+
+	conflict, err := svc.SubmitMessage(ctx, service.SubmitMessageRequest{
+		ProducerID: alpha.AdapterID, LeaseToken: alpha.LeaseToken, OperationID: "generation-operation",
+		SenderAddress: "agent/alice", RecipientAddress: "agent/bob", Body: "changed", TTL: time.Hour,
+		ExpectedSenderGeneration: pointer(1), ExpectedRecipientGeneration: pointer(2),
+	})
+	if !hasCode(err, service.CodeOperationConflict) {
+		t.Fatalf("changed payload result = %#v, error = %v", conflict, err)
+	}
+
+	stale, err := svc.SubmitMessage(ctx, service.SubmitMessageRequest{
+		ProducerID: alpha.AdapterID, LeaseToken: alpha.LeaseToken, OperationID: "new-generation-operation",
+		SenderAddress: "agent/alice", RecipientAddress: "agent/bob", Body: "new", TTL: time.Hour,
+		ExpectedSenderGeneration: pointer(1), ExpectedRecipientGeneration: pointer(1),
+	})
+	if !hasCode(err, service.CodeStaleRevision) {
+		t.Fatalf("new operation with stale generation result = %#v, error = %v", stale, err)
+	}
+}
+
 func TestDeliveryFIFOCancellationAndBindingDriftSettlement(t *testing.T) {
 	ctx := context.Background()
 	clock := &mutableClock{now: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}

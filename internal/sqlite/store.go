@@ -358,6 +358,9 @@ func acceptMessage(ctx context.Context, tx *sql.Tx, now time.Time, request store
 	if sender.AdapterID != request.ProducerID {
 		return store.Message{}, store.Delivery{}, store.ErrAdapterMismatch
 	}
+	if request.ExpectedSenderGeneration != nil && sender.Generation != *request.ExpectedSenderGeneration {
+		return store.Message{}, store.Delivery{}, store.ErrStaleRevision
+	}
 	recipient, found, err := readBinding(ctx, tx, request.RecipientAddress)
 	if err != nil {
 		return store.Message{}, store.Delivery{}, err
@@ -367,6 +370,9 @@ func acceptMessage(ctx context.Context, tx *sql.Tx, now time.Time, request store
 	}
 	if !recipient.Bound {
 		return store.Message{}, store.Delivery{}, store.ErrNotBound
+	}
+	if request.ExpectedRecipientGeneration != nil && recipient.Generation != *request.ExpectedRecipientGeneration {
+		return store.Message{}, store.Delivery{}, store.ErrStaleRevision
 	}
 	message := store.Message{ProducerID: request.ProducerID, OperationID: request.OperationID, MessageID: request.MessageID, SenderAddress: request.SenderAddress, RecipientAddress: request.RecipientAddress, Body: request.Body, CorrelationID: request.CorrelationID, ReplyToMessageID: request.ReplyToMessageID, ActivationPolicy: request.ActivationPolicy, CreatedAt: now.UTC(), ExpiresAt: request.ExpiresAt.UTC(), SenderGeneration: sender.Generation, RecipientGeneration: recipient.Generation}
 	if err := validateReply(ctx, tx, message); err != nil {

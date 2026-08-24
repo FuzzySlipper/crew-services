@@ -27,6 +27,8 @@ type Fabric interface {
 	Acknowledge(context.Context, string, ReconcileRequest) (Delivery, error)
 	Unknown(context.Context, string, ReconcileRequest) (Delivery, error)
 	Deliveries(context.Context) ([]Delivery, error)
+	Submit(context.Context, MessageRequest) (SubmittedMessage, error)
+	Bindings(context.Context) ([]Binding, error)
 }
 
 type Lease struct {
@@ -99,7 +101,26 @@ type AppendRequest struct {
 type Message struct {
 	MessageID        string `json:"message_id"`
 	Body             string `json:"body"`
+	SenderAddress    string `json:"sender_address"`
 	RecipientAddress string `json:"recipient_address"`
+	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
+}
+type MessageRequest struct {
+	ProducerID                  string `json:"producer_id"`
+	LeaseToken                  string `json:"lease_token"`
+	OperationID                 string `json:"operation_id"`
+	SenderAddress               string `json:"sender_address"`
+	RecipientAddress            string `json:"recipient_address"`
+	Body                        string `json:"body"`
+	ReplyToMessageID            string `json:"reply_to_message_id,omitempty"`
+	ActivationPolicy            string `json:"activation_policy"`
+	TTL                         string `json:"ttl"`
+	ExpectedSenderGeneration    *int64 `json:"expected_sender_generation,omitempty"`
+	ExpectedRecipientGeneration *int64 `json:"expected_recipient_generation,omitempty"`
+}
+type SubmittedMessage struct {
+	Message  Message `json:"message"`
+	Replayed bool    `json:"replayed"`
 }
 
 type Delivery struct {
@@ -196,6 +217,18 @@ func (h *HTTPFabric) Bind(ctx context.Context, address string, request BindReque
 }
 func (h *HTTPFabric) Append(ctx context.Context, sessionID string, request AppendRequest) error {
 	return h.call(ctx, http.MethodPost, "/v1/sessions/"+url.PathEscape(sessionID)+"/events", request, nil)
+}
+func (h *HTTPFabric) Submit(ctx context.Context, request MessageRequest) (SubmittedMessage, error) {
+	var result SubmittedMessage
+	err := h.call(ctx, http.MethodPost, "/v1/messages", request, &result)
+	return result, err
+}
+func (h *HTTPFabric) Bindings(ctx context.Context) ([]Binding, error) {
+	var value struct {
+		Addresses []Binding `json:"addresses"`
+	}
+	err := h.call(ctx, http.MethodGet, "/v1/addresses", nil, &value)
+	return value.Addresses, err
 }
 func (h *HTTPFabric) Claim(ctx context.Context, request ClaimRequest) (Claim, error) {
 	var claim Claim

@@ -128,19 +128,21 @@ type Delivery struct {
 }
 
 type SubmitMessageRequest struct {
-	ProducerID       string
-	LeaseToken       string
-	OperationID      string
-	Fingerprint      string
-	MessageID        string
-	DeliveryID       string
-	SenderAddress    string
-	RecipientAddress string
-	Body             string
-	CorrelationID    string
-	ReplyToMessageID string
-	ActivationPolicy string
-	ExpiresAt        time.Time
+	ProducerID                  string
+	LeaseToken                  string
+	OperationID                 string
+	Fingerprint                 string
+	MessageID                   string
+	DeliveryID                  string
+	SenderAddress               string
+	RecipientAddress            string
+	Body                        string
+	CorrelationID               string
+	ReplyToMessageID            string
+	ActivationPolicy            string
+	ExpiresAt                   time.Time
+	ExpectedSenderGeneration    *int64
+	ExpectedRecipientGeneration *int64
 }
 
 type SubmitMessageResult struct {

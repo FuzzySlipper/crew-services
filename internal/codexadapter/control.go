@@ -2,9 +2,12 @@ package codexadapter
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -91,10 +94,134 @@ func (c *Controls) Attach(native AppServer, lease Lease, mappings []Mapping) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.native, c.lease = native, lease
+	if stdio, ok := native.(*StdioAppServer); ok {
+		stdio.SetDynamicToolHandler(c.dynamicTool)
+	}
 	for _, mapping := range mappings {
 		// Existing sessions are populated by Observe after their normal adoption.
 		_ = mapping
 	}
+}
+
+func (c *Controls) dynamicTool(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) > 32*1024 {
+		return nil, errors.New("Crew dynamic tool arguments are too large")
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(raw, &envelope) != nil || envelope == nil {
+		return nil, errors.New("dynamic tool call must be an object")
+	}
+	for key := range envelope {
+		if key != "threadId" && key != "turnId" && key != "callId" && key != "namespace" && key != "tool" && key != "arguments" {
+			return nil, errors.New("unknown dynamic tool call field")
+		}
+	}
+	var call struct {
+		ThreadID  string          `json:"threadId"`
+		TurnID    string          `json:"turnId"`
+		CallID    string          `json:"callId"`
+		Tool      string          `json:"tool"`
+		Namespace *string         `json:"namespace"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if json.Unmarshal(raw, &call) != nil || call.ThreadID == "" || call.TurnID == "" || call.CallID == "" || call.Tool == "" || (call.Namespace != nil && *call.Namespace != "") {
+		return nil, errors.New("invalid Crew dynamic tool call")
+	}
+	c.mu.Lock()
+	var sessionID string
+	var mapping Mapping
+	toolEnabled := false
+	for id, value := range c.mappings {
+		if value.ThreadID == call.ThreadID {
+			sessionID, mapping = id, value
+			for _, persisted := range c.persisted {
+				if persisted.Session.SessionID == id && persisted.ToolEnabled {
+					toolEnabled = true
+				}
+			}
+			break
+		}
+	}
+	lease := c.lease
+	c.mu.Unlock()
+	if sessionID == "" || !toolEnabled || lease.LeaseToken == "" {
+		return nil, errors.New("Crew tools are unavailable for this thread")
+	}
+	binding, err := c.fabric.Resolve(ctx, mapping.Address)
+	if err != nil || !binding.Bound || binding.AdapterID != c.cfg.AdapterID || binding.TargetRef != sessionID {
+		return nil, errors.New("Crew tools are no longer authorized for this thread")
+	}
+	switch call.Tool {
+	case "crew_directory":
+		var args map[string]json.RawMessage
+		if json.Unmarshal(call.Arguments, &args) != nil || args == nil || len(args) != 0 {
+			return nil, errors.New("crew_directory takes no arguments")
+		}
+		bindings, err := c.fabric.Bindings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		addresses := make([]string, 0)
+		for _, value := range bindings {
+			if value.Bound && value.TargetRef != "" && value.AdapterID != "" && inboundCapability(value.Capabilities) {
+				addresses = append(addresses, value.Address)
+			}
+		}
+		return dynamicResult(true, fmt.Sprintf("routable Crew addresses: %s", strings.Join(addresses, ", "))), nil
+	case "crew_message":
+		var rawArgs map[string]json.RawMessage
+		if json.Unmarshal(call.Arguments, &rawArgs) != nil {
+			return nil, errors.New("invalid crew_message arguments")
+		}
+		for key := range rawArgs {
+			if key != "recipient" && key != "text" && key != "reply_to_message_id" {
+				return nil, errors.New("unknown crew_message argument")
+			}
+		}
+		var args struct {
+			Recipient string `json:"recipient"`
+			Text      string `json:"text"`
+			ReplyTo   string `json:"reply_to_message_id"`
+		}
+		if json.Unmarshal(call.Arguments, &args) != nil || strings.TrimSpace(args.Recipient) == "" || strings.TrimSpace(args.Text) == "" {
+			return nil, errors.New("crew_message requires recipient and text")
+		}
+		if len(args.Recipient) > 256 || len(args.ReplyTo) > 256 || len(args.Text) > 12_000 {
+			return nil, errors.New("crew_message argument exceeds limit")
+		}
+		recipient, err := c.fabric.Resolve(ctx, args.Recipient)
+		if err != nil || !recipient.Bound || !inboundCapability(recipient.Capabilities) {
+			return nil, errors.New("Crew recipient is not routable")
+		}
+		operation := toolOperation(call.ThreadID, call.CallID)
+		result, err := c.fabric.Submit(ctx, MessageRequest{ProducerID: c.cfg.AdapterID, LeaseToken: lease.LeaseToken, OperationID: operation, SenderAddress: mapping.Address, RecipientAddress: recipient.Address, Body: args.Text, ReplyToMessageID: args.ReplyTo, ActivationPolicy: "wake_when_idle", TTL: "24h", ExpectedSenderGeneration: &binding.Generation, ExpectedRecipientGeneration: &recipient.Generation})
+		if err != nil {
+			return nil, err
+		}
+		return dynamicResult(true, fmt.Sprintf("messageId=%s replayed=%t", result.Message.MessageID, result.Replayed)), nil
+	default:
+		return nil, errors.New("unsupported Crew dynamic tool")
+	}
+}
+func inboundCapability(values []string) bool {
+	for _, value := range values {
+		if value == "deliver_when_idle" || value == "durable_next_turn" || value == "wake_inactive" {
+			return true
+		}
+	}
+	return false
+}
+func toolOperation(threadID, callID string) string {
+	canonical, _ := json.Marshal(struct {
+		ThreadID string `json:"thread_id"`
+		CallID   string `json:"call_id"`
+	}{ThreadID: threadID, CallID: callID})
+	sum := sha256.Sum256(canonical)
+	return "codex-tool:" + hex.EncodeToString(sum[:])
+}
+func dynamicResult(success bool, text string) json.RawMessage {
+	value, _ := json.Marshal(map[string]any{"success": success, "contentItems": []map[string]string{{"type": "inputText", "text": text}}})
+	return value
 }
 
 func (c *Controls) Mappings(base []Mapping) []Mapping {
@@ -188,7 +315,7 @@ func (c *Controls) Create(ctx context.Context, operationID, cwd string) (Control
 	for operation, persisted := range c.persisted {
 		next[operation] = persisted
 	}
-	next[operationID] = persistedControlSession{Session: value, Mapping: mapping}
+	next[operationID] = persistedControlSession{Session: value, Mapping: mapping, ToolEnabled: true}
 	if err := saveControlState(c.cfg.StatePath, next); err != nil {
 		c.mu.Unlock()
 		return ControlSession{}, err

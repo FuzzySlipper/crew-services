@@ -98,6 +98,13 @@ adapter restart replay a successful create and rejoin projection of the thread.
 It does not persist pending App Server callbacks; approvals and input requests
 vanish if the native child exits and must be reissued by Codex.
 
+Threads created through the crew-codex control API start with `crew_directory`
+and `crew_message` dynamic tools. Existing explicit `-address` mappings remain
+projection-only because Codex cannot retrofit dynamic tools onto a resumed
+thread. The catalog may still be visible after an address is unbound, but each
+call re-resolves the current fabric binding and fails closed; no native thread,
+lease token, or fabric target reference is returned to Codex.
+
 For a session advertising `queued-prompt-delivery`, the DSH workbench may send
 an ordinary fabric message to its mapped address. `crew-codex` claims the exact
 binding generation, begins one fabric dispatch, and calls native

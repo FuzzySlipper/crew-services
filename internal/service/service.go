@@ -86,16 +86,18 @@ type Message = store.Message
 type Delivery = store.Delivery
 
 type SubmitMessageRequest struct {
-	ProducerID       string
-	LeaseToken       string
-	OperationID      string
-	SenderAddress    string
-	RecipientAddress string
-	Body             string
-	CorrelationID    string
-	ReplyToMessageID string
-	ActivationPolicy string
-	TTL              time.Duration
+	ProducerID                  string
+	LeaseToken                  string
+	OperationID                 string
+	SenderAddress               string
+	RecipientAddress            string
+	Body                        string
+	CorrelationID               string
+	ReplyToMessageID            string
+	ActivationPolicy            string
+	TTL                         time.Duration
+	ExpectedSenderGeneration    *int64
+	ExpectedRecipientGeneration *int64
 }
 
 type SubmitMessageResult = store.SubmitMessageResult
@@ -243,7 +245,7 @@ func (s *Service) SubmitMessage(ctx context.Context, request SubmitMessageReques
 		return SubmitMessageResult{}, fmt.Errorf("generate delivery ID: %w", err)
 	}
 	now := s.clock.Now().UTC()
-	result, err := s.store.SubmitMessage(ctx, now, store.SubmitMessageRequest{ProducerID: request.ProducerID, LeaseToken: request.LeaseToken, OperationID: request.OperationID, Fingerprint: fingerprint, MessageID: messageID, DeliveryID: deliveryID, SenderAddress: request.SenderAddress, RecipientAddress: request.RecipientAddress, Body: request.Body, CorrelationID: request.CorrelationID, ReplyToMessageID: request.ReplyToMessageID, ActivationPolicy: request.ActivationPolicy, ExpiresAt: now.Add(request.TTL)})
+	result, err := s.store.SubmitMessage(ctx, now, store.SubmitMessageRequest{ProducerID: request.ProducerID, LeaseToken: request.LeaseToken, OperationID: request.OperationID, Fingerprint: fingerprint, MessageID: messageID, DeliveryID: deliveryID, SenderAddress: request.SenderAddress, RecipientAddress: request.RecipientAddress, Body: request.Body, CorrelationID: request.CorrelationID, ReplyToMessageID: request.ReplyToMessageID, ActivationPolicy: request.ActivationPolicy, ExpiresAt: now.Add(request.TTL), ExpectedSenderGeneration: request.ExpectedSenderGeneration, ExpectedRecipientGeneration: request.ExpectedRecipientGeneration})
 	return result, mapReplyError(err)
 }
 

@@ -94,6 +94,9 @@ type StdioAppServer struct {
 	interactions   map[string]pendingInteraction
 	interactionSeq uint64
 	instancePrefix string
+	dynamicHandler func(context.Context, json.RawMessage) (json.RawMessage, error)
+	toolContext    context.Context
+	toolCancel     context.CancelFunc
 	closing        bool
 	closed         bool
 	done           chan struct{}
@@ -103,6 +106,14 @@ type StdioAppServer struct {
 	handshakeComplete bool
 	handshakeStarted  bool
 	handshakeErr      error
+}
+
+// SetDynamicToolHandler installs adapter-owned handling for tools advertised
+// only on newly created threads. Existing projected threads never call it.
+func (c *StdioAppServer) SetDynamicToolHandler(handler func(context.Context, json.RawMessage) (json.RawMessage, error)) {
+	c.mu.Lock()
+	c.dynamicHandler = handler
+	c.mu.Unlock()
 }
 
 type rpcResponse struct {
@@ -144,7 +155,8 @@ func StartStdioAppServer(command string, args []string) (*StdioAppServer, error)
 		_ = cmd.Process.Kill()
 		return nil, fmt.Errorf("random interaction prefix: %w", err)
 	}
-	client := &StdioAppServer{command: cmd, stdin: stdin, pending: make(map[string]chan rpcResponse), interactions: make(map[string]pendingInteraction), done: make(chan struct{}), handshakeDone: make(chan struct{}), instancePrefix: hex.EncodeToString(prefix)}
+	toolContext, toolCancel := context.WithCancel(context.Background())
+	client := &StdioAppServer{command: cmd, stdin: stdin, pending: make(map[string]chan rpcResponse), interactions: make(map[string]pendingInteraction), done: make(chan struct{}), handshakeDone: make(chan struct{}), instancePrefix: hex.EncodeToString(prefix), toolContext: toolContext, toolCancel: toolCancel}
 	go client.read(stdout)
 	go client.wait()
 	return client, nil
@@ -161,6 +173,7 @@ func (c *StdioAppServer) StartThread(ctx context.Context, cwd string) (NativeThr
 		return NativeThread{}, err
 	}
 	params := map[string]any{}
+	params["dynamicTools"] = crewDynamicTools()
 	if cwd != "" {
 		params["cwd"] = cwd
 	}
@@ -168,6 +181,10 @@ func (c *StdioAppServer) StartThread(ctx context.Context, cwd string) (NativeThr
 		return NativeThread{}, err
 	}
 	return response.Thread.native(), nil
+}
+
+func crewDynamicTools() []map[string]any {
+	return []map[string]any{{"type": "function", "name": "crew_directory", "description": "List routable Crew addresses.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{}}}, {"type": "function", "name": "crew_message", "description": "Send one Crew message to a routable address.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"recipient": map[string]any{"type": "string"}, "text": map[string]any{"type": "string"}, "reply_to_message_id": map[string]any{"type": "string"}}, "required": []string{"recipient", "text"}}}}
 }
 
 // Interrupt requests cancellation of one exact active native turn.
@@ -214,7 +231,7 @@ func (c *StdioAppServer) RespondInteraction(ctx context.Context, id, method stri
 		return err
 	}
 	c.writeMu.Lock()
-	_, err = c.stdin.Write(append(message, '\n'))
+	err = writeFrame(c.stdin, append(message, '\n'))
 	c.writeMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("write %s interaction response: %w", method, err)
@@ -362,7 +379,7 @@ func (c *StdioAppServer) sendRequest(ctx context.Context, method string, params 
 		return fmt.Errorf("encode %s: %w", method, err)
 	}
 	c.writeMu.Lock()
-	_, err = c.stdin.Write(append(message, '\n'))
+	err = writeFrame(c.stdin, append(message, '\n'))
 	c.writeMu.Unlock()
 	if err != nil {
 		c.removePending(key)
@@ -404,7 +421,7 @@ func (c *StdioAppServer) notifyInitialized() error {
 		return err
 	}
 	c.writeMu.Lock()
-	_, err = c.stdin.Write(append(message, '\n'))
+	err = writeFrame(c.stdin, append(message, '\n'))
 	c.writeMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("write initialized: %w", err)
@@ -508,6 +525,26 @@ func (c *StdioAppServer) handleFrame(frame []byte) {
 		if !validRPCID(envelope.ID) {
 			return
 		}
+		if envelope.Method == "item/tool/call" {
+			c.mu.Lock()
+			handler := c.dynamicHandler
+			c.mu.Unlock()
+			if handler != nil {
+				id, params := append(json.RawMessage(nil), envelope.ID...), append(json.RawMessage(nil), envelope.Params...)
+				go func() {
+					ctx, cancel := context.WithTimeout(c.toolContext, 5*time.Second)
+					defer cancel()
+					result, err := handler(ctx, params)
+					if err != nil {
+						result, _ = json.Marshal(map[string]any{"success": false, "contentItems": []map[string]string{{"type": "inputText", "text": err.Error()}}})
+					}
+					if err := c.writeServerResult(id, result); err != nil {
+						c.fail(fmt.Errorf("write dynamic tool result: %w", err))
+					}
+				}()
+				return
+			}
+		}
 		interaction := NativeInteraction{Method: envelope.Method, Params: append(json.RawMessage(nil), envelope.Params...), CreatedAt: time.Now().UTC()}
 		var scope struct {
 			ThreadID string `json:"threadId"`
@@ -555,6 +592,24 @@ func (c *StdioAppServer) handleFrame(frame []byte) {
 	}
 }
 
+func (c *StdioAppServer) writeServerResult(id json.RawMessage, result json.RawMessage) error {
+	message, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": json.RawMessage(result)})
+	if err != nil {
+		return err
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return writeFrame(c.stdin, append(message, '\n'))
+}
+
+func writeFrame(writer io.Writer, frame []byte) error {
+	written, err := writer.Write(frame)
+	if err == nil && written != len(frame) {
+		return io.ErrShortWrite
+	}
+	return err
+}
+
 func validRPCID(value json.RawMessage) bool {
 	var stringID string
 	if json.Unmarshal(value, &stringID) == nil {
@@ -591,6 +646,9 @@ func (c *StdioAppServer) fail(err error) {
 		return
 	}
 	c.err = err
+	if c.toolCancel != nil {
+		c.toolCancel()
+	}
 	if !c.handshakeComplete {
 		c.handshakeErr = err
 		c.handshakeComplete = true
