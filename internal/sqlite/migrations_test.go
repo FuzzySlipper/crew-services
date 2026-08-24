@@ -38,8 +38,8 @@ func TestOpenMigratesFreshAndExistingDatabaseIdempotently(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 5 {
-		t.Fatalf("migration count = %d, want 5", count)
+	if count != 6 {
+		t.Fatalf("migration count = %d, want 6", count)
 	}
 	var name string
 	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'service_metadata'").Scan(&name); err != nil {

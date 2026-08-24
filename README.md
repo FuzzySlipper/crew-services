@@ -2,8 +2,9 @@
 
 `crew-services` is an independent, runtime-neutral successor for selected local
 agent-service capabilities. Its implemented foundation includes a runtime-neutral
-directory plus atomic immutable message acceptance and an ordered delivery
-ledger. It stores accepted work only; runtime activation and native insertion
+directory, atomic immutable message acceptance, an ordered delivery ledger, and
+an adapter-owned session projection with an append-only event log. It stores
+accepted work and read-model facts only; runtime activation and native insertion
 remain adapter-owned and are not implemented here.
 
 Rusty Crew, DSH, the Codex app server, and future transports are evidence and
@@ -36,6 +37,9 @@ under `/v1`. Submission atomically records one immutable envelope and one queued
 delivery, with producer-scoped `operation_id` retries. Inspection is read-only.
 Claims, dispatch acknowledgement/reconciliation, reply rounds, and explicit
 maintenance reaping are available. Native activation remains adapter-owned.
+The session surface adds idempotent adapter adoption, revision-fenced updates,
+bounded session/event reads, and SSE replay from a durable global cursor.
+Opaque adapter keys and lease tokens never appear in session/client JSON.
 
 Start here:
 

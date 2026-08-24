@@ -262,6 +262,54 @@ func TestMaintenanceReapReleasesExpiredClaimAndIsRepeatable(t *testing.T) {
 	}
 }
 
+func TestSessionEndpointsKeepOpaqueKeysPrivateAndReplaySSE(t *testing.T) {
+	ctx := context.Background()
+	persistence, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "sessions-http.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer persistence.Close()
+	clock := fixedClock{now: time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)}
+	ids := []string{"session-http", "unused-adoption-retry", "event-http"}
+	svc, err := service.New(persistence, clock, service.WithMaxLeaseDuration(time.Hour), service.WithTokenGenerator(func() (string, error) { return "lease-secret", nil }), service.WithIDGenerator(func() (string, error) { value := ids[0]; ids = ids[1:]; return value, nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(svc)
+	requestJSON(t, handler, http.MethodPost, "/v1/adapters/register", map[string]any{"adapter_id": "adapter.http", "instance_id": "http", "lease_duration": "1h"})
+	adopted := requestJSON(t, handler, http.MethodPost, "/v1/sessions/adopt", map[string]any{"adapter_id": "adapter.http", "lease_token": "lease-secret", "adapter_key": "opaque-key", "label": "Work", "location": "local", "status": "idle", "capabilities": []string{"events"}})
+	if adopted.Code != http.StatusOK || strings.Contains(adopted.Body.String(), "opaque-key") || strings.Contains(adopted.Body.String(), "lease-secret") || !strings.Contains(adopted.Body.String(), `"session_id":"session-http"`) {
+		t.Fatalf("adopted=%d %s", adopted.Code, adopted.Body.String())
+	}
+	replayed := requestJSON(t, handler, http.MethodPost, "/v1/sessions/adopt", map[string]any{"adapter_id": "adapter.http", "lease_token": "lease-secret", "adapter_key": "opaque-key", "label": "Changed", "status": "idle"})
+	if replayed.Code != http.StatusOK || !strings.Contains(replayed.Body.String(), `"session_id":"session-http"`) {
+		t.Fatalf("replayed=%d %s", replayed.Code, replayed.Body.String())
+	}
+	event := requestJSON(t, handler, http.MethodPost, "/v1/sessions/session-http/events", map[string]any{"adapter_id": "adapter.http", "lease_token": "lease-secret", "expected_revision": 1, "operation_id": "event-op", "event_type": "state", "payload": map[string]any{"value": "ready"}})
+	if event.Code != http.StatusCreated || !strings.Contains(event.Body.String(), `"cursor":1`) {
+		t.Fatalf("event=%d %s", event.Code, event.Body.String())
+	}
+	history := httptest.NewRecorder()
+	handler.ServeHTTP(history, httptest.NewRequest(http.MethodGet, "/v1/session-events?cursor=0", nil))
+	if history.Code != http.StatusOK || !strings.Contains(history.Body.String(), `"event_id":"event-http"`) {
+		t.Fatalf("history=%d %s", history.Code, history.Body.String())
+	}
+	request, cancel := context.WithCancel(httptest.NewRequest(http.MethodGet, "/v1/session-events/stream", nil).Context())
+	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+	stream := httptest.NewRecorder()
+	streamRequest := httptest.NewRequest(http.MethodGet, "/v1/session-events/stream", nil).WithContext(request)
+	streamRequest.Header.Set("Last-Event-ID", "0")
+	handler.ServeHTTP(stream, streamRequest)
+	if !strings.Contains(stream.Body.String(), "id: 1\nevent: session_event") {
+		t.Fatalf("stream=%d %s", stream.Code, stream.Body.String())
+	}
+	tooLarge := httptest.NewRecorder()
+	handler.ServeHTTP(tooLarge, httptest.NewRequest(http.MethodPost, "/v1/sessions/adopt", strings.NewReader(`{"adapter_id":"`+strings.Repeat("x", int(maxSessionRequestBytes))+`"}`)))
+	if tooLarge.Code != http.StatusBadRequest {
+		t.Fatalf("oversize=%d %s", tooLarge.Code, tooLarge.Body.String())
+	}
+}
+
 func requestJSON(t *testing.T, handler http.Handler, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	encoded, err := json.Marshal(body)

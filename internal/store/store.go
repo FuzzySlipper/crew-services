@@ -3,6 +3,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -194,6 +195,75 @@ type Traffic struct {
 	Rounds     []Round    `json:"rounds"`
 }
 
+// Session is an adapter-owned runtime projection. The opaque adapter key is
+// persistence-only; clients receive only the service-owned session ID.
+type Session struct {
+	SessionID    string    `json:"session_id"`
+	AdapterID    string    `json:"adapter_id,omitempty"`
+	Label        string    `json:"label"`
+	Location     string    `json:"location,omitempty"`
+	Status       string    `json:"status"`
+	Capabilities []string  `json:"capabilities"`
+	Revision     int64     `json:"revision"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	AdapterKey   string    `json:"-"`
+}
+
+// SessionEvent is an append-only projection fact, not an authoritative
+// transcript or runtime lifecycle record.
+type SessionEvent struct {
+	EventID    string          `json:"event_id"`
+	SessionID  string          `json:"session_id"`
+	Sequence   int64           `json:"sequence"`
+	Cursor     int64           `json:"cursor"`
+	EventType  string          `json:"event_type"`
+	Payload    json.RawMessage `json:"payload"`
+	OccurredAt time.Time       `json:"occurred_at"`
+	RecordedAt time.Time       `json:"recorded_at"`
+}
+
+type AdoptSessionRequest struct {
+	AdapterID    string
+	LeaseToken   string
+	AdapterKey   string
+	SessionID    string
+	Label        string
+	Location     string
+	Status       string
+	Capabilities []string
+}
+
+type UpdateSessionRequest struct {
+	AdapterID        string
+	LeaseToken       string
+	SessionID        string
+	ExpectedRevision int64
+	Label            string
+	Location         string
+	Status           string
+	Capabilities     []string
+}
+
+type AppendSessionEventRequest struct {
+	AdapterID        string
+	LeaseToken       string
+	SessionID        string
+	ExpectedRevision int64
+	OperationID      string
+	Fingerprint      string
+	EventID          string
+	EventType        string
+	Payload          json.RawMessage
+	OccurredAt       time.Time
+}
+
+type SessionEventOperationLookup struct {
+	Found       bool
+	Fingerprint string
+	Event       SessionEvent
+}
+
 // OperationLookup is the side-effect-free producer-scoped idempotency read.
 // SubmitMessage still repeats this check inside its write transaction to close
 // concurrent first-submit races.
@@ -234,4 +304,11 @@ type Store interface {
 	SettlePending(context.Context, time.Time) ([]Delivery, error)
 	LookupDeliveryOperation(context.Context, string, string) (DeliveryOperationLookup, error)
 	DeliveryOperation(context.Context, time.Time, DeliveryOperationRequest) (DeliveryOperationResult, error)
+	AdoptSession(context.Context, time.Time, AdoptSessionRequest) (Session, error)
+	UpdateSession(context.Context, time.Time, UpdateSessionRequest) (Session, error)
+	GetSession(context.Context, string) (Session, error)
+	ListSessions(context.Context, int) ([]Session, error)
+	LookupSessionEventOperation(context.Context, string, string) (SessionEventOperationLookup, error)
+	AppendSessionEvent(context.Context, time.Time, AppendSessionEventRequest) (SessionEvent, error)
+	ListSessionEvents(context.Context, string, int64, int) ([]SessionEvent, error)
 }

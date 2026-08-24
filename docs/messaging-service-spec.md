@@ -71,6 +71,33 @@ adapter. This is coordination provenance and fencing on a trusted box, not an
 authentication claim. Any future operator/system ingress uses an explicit
 service-owned origin instead of impersonating an agent address.
 
+### Session projection and event log
+
+The same local database holds a bounded, runtime-neutral projection for clients
+that need to discover adapter-owned work. A session has a stable service ID,
+adapter diagnostic ID, label, location, status, capabilities, revision, and
+timestamps. Adoption is idempotent on `(adapter_id, opaque_adapter_key)`: an
+adapter restart returns the original public session ID rather than creating
+another one. The opaque key stays persistence-only and is never returned in
+client JSON.
+
+An adapter with a live lease owns its projected sessions. It may CAS-update a
+session at its current revision and append named JSON facts at that revision.
+Events have a per-session sequence plus a global cursor, event ID, event type,
+payload, occurred time, and recorded time. They are projection/read-model facts,
+not an authoritative native transcript, runtime lifecycle, or model context.
+Exact adapter-scoped `operation_id` retry returns the original event even after
+later session-revision or lease drift; the revision fences only a first append.
+Reuse for a different session, type, or payload conflicts.
+When supplied, the occurrence time is part of that immutable event identity;
+omitting it keeps retries independent of the service-recorded current time.
+
+Reads are bounded and side-effect free: list/get session, event history after a
+cursor, and SSE replay/resume only observe the durable log. SSE accepts a query
+cursor or `Last-Event-ID`, can filter one public session ID, replays in global
+cursor order, then follows new events using local polling. It never claims,
+wakes, inserts, retries, or changes runtime work.
+
 ### Delivery state machine
 
 A delivery is mutable executable work separate from its message:
@@ -141,6 +168,8 @@ Paths are provisional; these operations are semantic commitments:
 | begin dispatch | Token-fenced transition recorded immediately before the native side effect, including its stable attempt reference. |
 | acknowledge / release / fail / outcome unknown | Token-fenced adapter outcomes; acknowledgement means native acceptance only, and ambiguity is preserved for reconciliation. |
 | inspect message / delivery / mailbox | Read-only inspection and history. |
+| adopt / update session | Adapter-owned, lease- and revision-fenced runtime-neutral projection. |
+| append / replay session event | Append projection fact with adapter operation idempotency; replay from global cursor or SSE. |
 | begin / get / wait / cancel round | Durable request/reply lifecycle; waiting is observational. |
 
 V1 is a trusted local box: loopback only, no authentication or encryption.
