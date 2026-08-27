@@ -15,9 +15,10 @@ type controlState struct {
 }
 
 type persistedControlSession struct {
-	Session     ControlSession `json:"session"`
-	Mapping     Mapping        `json:"mapping"`
-	ToolEnabled bool           `json:"tool_enabled"`
+	Session       ControlSession `json:"session"`
+	Mapping       Mapping        `json:"mapping"`
+	ToolEnabled   bool           `json:"tool_enabled"`
+	CreatedThread *NativeThread  `json:"created_thread,omitempty"`
 }
 
 func loadControlState(path string) (map[string]persistedControlSession, error) {
@@ -41,6 +42,9 @@ func loadControlState(path string) (map[string]persistedControlSession, error) {
 	for operation, value := range state.Created {
 		if operation == "" || value.Session.SessionID == "" || value.Mapping.Address == "" || value.Mapping.ThreadID == "" {
 			return nil, fmt.Errorf("invalid control state entry %q", operation)
+		}
+		if value.CreatedThread != nil && value.CreatedThread.ID != value.Mapping.ThreadID {
+			return nil, fmt.Errorf("invalid created thread in control state entry %q", operation)
 		}
 	}
 	return state.Created, nil

@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 func TestCreatedControlStateReloadsOperationAndMapping(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "crew-codex.json")
-	want := persistedControlSession{Session: ControlSession{SessionID: "public-1", Label: "new", Status: "idle"}, Mapping: Mapping{Address: "codex/native-1", ThreadID: "native-1"}}
+	initial := thread("native-1", "new", "notLoaded", nil)
+	want := persistedControlSession{Session: ControlSession{SessionID: "public-1", Label: "new", Status: "idle"}, Mapping: Mapping{Address: "codex/native-1", ThreadID: "native-1"}, CreatedThread: &initial}
 	if err := saveControlState(path, map[string]persistedControlSession{"click-1": want}); err != nil {
 		t.Fatal(err)
 	}
@@ -22,6 +24,34 @@ func TestCreatedControlStateReloadsOperationAndMapping(t *testing.T) {
 	mappings := controls.Mappings(nil)
 	if len(mappings) != 1 || mappings[0] != want.Mapping {
 		t.Fatalf("reloaded mappings = %#v", mappings)
+	}
+	if got := controls.UnmaterializedThreads()["native-1"]; !reflect.DeepEqual(got, initial) {
+		t.Fatalf("reloaded created thread = %#v", got)
+	}
+}
+
+func TestControlsCreatePersistsThreadStartReceipt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "crew-codex.json")
+	created := thread("native-1", "new", "notLoaded", nil)
+	controls := NewControls(newFakeFabric(), Config{AdapterID: "crew-codex", StatePath: path})
+	controls.Attach(&fakeAppServer{startedThread: created}, Lease{AdapterID: "crew-codex", LeaseToken: "lease"}, nil)
+	if _, err := controls.Create(t.Context(), "click-1", "/workspace"); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := loadControlState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := persisted["click-1"].CreatedThread; !reflect.DeepEqual(got, &created) {
+		t.Fatalf("persisted create receipt = %#v", got)
+	}
+}
+
+func TestLegacyCreatedControlStateRetainsAThreadIdentityForMaterialization(t *testing.T) {
+	controls := NewControls(nil, Config{})
+	controls.persisted["legacy"] = persistedControlSession{Session: ControlSession{SessionID: "public-1"}, Mapping: Mapping{Address: "codex/native-1", ThreadID: "native-1"}}
+	if got := controls.UnmaterializedThreads()["native-1"]; got.ID != "native-1" || got.Status != "notLoaded" {
+		t.Fatalf("legacy materialization seed = %#v", got)
 	}
 }
 

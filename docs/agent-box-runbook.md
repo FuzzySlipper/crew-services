@@ -59,6 +59,31 @@ exec "$HOME/.local/bin/crew-codex" \
   -address crew/scout=YOUR_CODEX_THREAD_ID
 ```
 
+For the persistent DSH web setup, save the equivalent user unit as
+`~/.config/systemd/user/crew-codex.service`. Keep the instance ID stable and
+replace the example mapping with each Codex task that should be projected.
+
+```ini
+[Unit]
+Description=Codex adapter for the local crew messaging fabric
+Wants=crew-messaging.service
+After=crew-messaging.service
+
+[Service]
+Environment=PATH=%h/.npm-global/bin:%h/.local/bin:/usr/local/bin:/usr/bin
+ExecStart=%h/.local/bin/crew-codex -fabric-url http://127.0.0.1:8787 -state %h/.local/state/crew-messaging/crew-codex.json -address crew/scout=YOUR_CODEX_THREAD_ID
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+```
+
+Then run `systemctl --user daemon-reload` and
+`systemctl --user enable --now crew-codex.service`. The unit owns its stdio
+App Server child; an independently running socket App Server is not reused or
+replaced.
+
 Repeat `-address` for each selected thread. The command refuses to map the
 same thread twice and will not take over an address bound by another adapter.
 It exposes a fabric-owned public session ID and public binding target; the
@@ -73,11 +98,13 @@ resume projection after process restart. Keep it in the same user-private state
 directory as the SQLite database. Pending approvals and user-input callbacks
 remain process-lifetime App Server requests and disappear if its child restarts.
 
-The adapter does not call `thread/resume`, `turn/start`, `turn/steer`, or
-approval APIs. For a DSH workbench prompt it uses `thread/queue/add`, which
-persists the input and lets Codex automatically start it in FIFO order after
-the thread becomes idle. Native tool activity, partial messages, reasoning,
-and approvals remain outside the projected event surface.
+The adapter does not call `thread/resume`, `turn/steer`, or approval APIs. A
+newly created control thread that Codex has not materialized yet uses one
+receipt-gated `turn/start` for its first DSH workbench prompt. Once canonical
+history is available, ordinary prompts use `thread/queue/add`, which persists
+input and lets Codex automatically start it in FIFO order after the thread
+becomes idle. Native tool activity, partial messages, reasoning, and approvals
+remain outside the projected event surface.
 
 With an ordinary logged-in local Codex CLI, an opt-in scratch-DB smoke reads one
 existing native thread and projects it without mutating Codex:

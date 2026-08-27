@@ -31,6 +31,9 @@ type Projector struct {
 	Capabilities  []string
 	ClaimDuration time.Duration
 	Observed      func(Session, Mapping)
+	// UnmaterializedThreads contains only control-created native threads. Codex
+	// permits their first queued prompt before thread/read can include turns.
+	UnmaterializedThreads map[string]NativeThread
 }
 
 func (p *Projector) Reconcile(ctx context.Context) error {
@@ -45,20 +48,25 @@ func (p *Projector) Reconcile(ctx context.Context) error {
 		// The explicit mapping gives us an exact identity; thread/read is the
 		// canonical metadata/history source for that identity.
 		thread, err := p.Native.ReadThread(ctx, mapping.ThreadID)
+		unmaterialized := false
 		if err != nil {
-			return fmt.Errorf("read Codex thread %q: %w", mapping.ThreadID, err)
+			seed, found := p.UnmaterializedThreads[mapping.ThreadID]
+			if !found || !isUnmaterializedThreadError(err) {
+				return fmt.Errorf("read Codex thread %q: %w", mapping.ThreadID, err)
+			}
+			thread, unmaterialized = seed, true
 		}
 		if thread.ID != mapping.ThreadID {
 			return fmt.Errorf("thread/read identity mismatch: configured %q, returned %q", mapping.ThreadID, thread.ID)
 		}
-		if err := p.projectThread(ctx, mapping, thread); err != nil {
+		if err := p.projectThread(ctx, mapping, thread, unmaterialized); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (p *Projector) projectThread(ctx context.Context, mapping Mapping, thread NativeThread) error {
+func (p *Projector) projectThread(ctx context.Context, mapping Mapping, thread NativeThread, unmaterialized bool) error {
 	session, err := p.Fabric.Adopt(ctx, AdoptRequest{
 		AdapterID: p.AdapterID, LeaseToken: p.Lease.LeaseToken, AdapterKey: thread.ID,
 		Label: threadLabel(thread), Location: thread.CWD, Status: threadStatus(thread.Status), Capabilities: p.Capabilities,
@@ -70,8 +78,10 @@ func (p *Projector) projectThread(ctx context.Context, mapping Mapping, thread N
 	if err != nil {
 		return err
 	}
-	if session, err = p.updateIfChanged(ctx, session, thread); err != nil {
-		return err
+	if !unmaterialized {
+		if session, err = p.updateIfChanged(ctx, session, thread); err != nil {
+			return err
+		}
 	}
 	if p.Observed != nil {
 		p.Observed(session, mapping)
@@ -91,7 +101,7 @@ func (p *Projector) projectThread(ctx context.Context, mapping Mapping, thread N
 	if err := p.reconcileDispatching(ctx, mapping, thread, binding); err != nil {
 		return err
 	}
-	return p.deliverQueued(ctx, mapping, thread, binding)
+	return p.deliverQueuedWithCreatedThread(ctx, mapping, thread, binding, unmaterialized)
 }
 
 func (p *Projector) bind(ctx context.Context, address string, session Session) (Binding, error) {
@@ -125,14 +135,25 @@ func (p *Projector) bind(ctx context.Context, address string, session Session) (
 	return written, nil
 }
 
-// deliverQueued makes only the native queue insertion. Queue admission is
-// durable and FIFO; Codex starts the queued work itself when the thread is
-// idle, so this adapter never needs to inspect-idle then call turn/start.
+// deliverQueued uses native queue admission for materialized threads. Queue
+// admission is durable and FIFO; Codex starts the queued work itself when the
+// thread is idle, so active threads are never steered or interrupted.
 func (p *Projector) deliverQueued(ctx context.Context, mapping Mapping, thread NativeThread, binding Binding) error {
+	return p.deliverQueuedWithCreatedThread(ctx, mapping, thread, binding, false)
+}
+
+// deliverQueuedWithCreatedThread materializes the exact control-created thread
+// with turn/start, then uses queue admission for every materialized thread.
+// Existing mappings still require canonical thread/read availability.
+func (p *Projector) deliverQueuedWithCreatedThread(ctx context.Context, mapping Mapping, thread NativeThread, binding Binding, createdThread bool) error {
 	// Codex has no inactive-thread wake primitive in this adapter. Do not even
 	// record a no-work claim: its availability is part of the durable receipt
 	// fingerprint and would conflict with the later idle claim for this head.
-	if threadAvailability(thread.Status) == "inactive" {
+	availabilityStatus := thread.Status
+	if createdThread {
+		availabilityStatus = "idle"
+	}
+	if threadAvailability(availabilityStatus) == "inactive" {
 		return nil
 	}
 	head, err := p.deliveryHead(ctx, mapping.Address, binding.Generation)
@@ -142,7 +163,7 @@ func (p *Projector) deliverQueued(ctx context.Context, mapping Mapping, thread N
 	if head == nil {
 		return nil
 	}
-	availability, ok := claimAvailability(*head, thread.Status, p.AdapterID, p.Lease.InstanceID)
+	availability, ok := claimAvailability(*head, availabilityStatus, p.AdapterID, p.Lease.InstanceID)
 	if !ok {
 		return nil
 	}
@@ -177,21 +198,31 @@ func (p *Projector) deliverQueued(ctx context.Context, mapping Mapping, thread N
 	}); err != nil {
 		return fmt.Errorf("begin dispatch %q: %w", delivery.DeliveryID, err)
 	}
-	queued, queueErr := p.Native.QueueAdd(ctx, mapping.ThreadID, frameInbound(envelope), clientID)
-	if queueErr == nil && queued.ID != "" && queued.ClientUserMessageID == clientID {
+	text := frameInbound(envelope)
+	accepted := false
+	var dispatchErr error
+	if createdThread {
+		started, err := p.Native.StartTurn(ctx, mapping.ThreadID, text, clientID)
+		accepted, dispatchErr = started.ID != "", err
+	} else {
+		queued, err := p.Native.QueueAdd(ctx, mapping.ThreadID, text, clientID)
+		accepted, dispatchErr = queued.ID != "" && queued.ClientUserMessageID == clientID, err
+	}
+	if dispatchErr == nil && accepted {
 		if _, err := p.Fabric.Acknowledge(ctx, delivery.DeliveryID, ReconcileRequest{AdapterID: p.AdapterID, LeaseToken: p.Lease.LeaseToken, OperationID: deliveryOperation(delivery.DeliveryID, "ack"), NativeAttemptRef: attempt}); err != nil {
 			return fmt.Errorf("acknowledge %q: %w", delivery.DeliveryID, err)
 		}
 		return nil
 	}
-	// A lost native response is ambiguous. Read durable queue/history before
-	// settling rather than replaying the prompt into a possibly active thread.
+	// A lost native response is ambiguous. Read canonical history and the native
+	// queue before settling rather than replaying the prompt into a possibly
+	// active thread.
 	accepted, readErr := p.nativeAccepted(ctx, mapping.ThreadID, thread, clientID)
 	if readErr != nil {
 		if _, unknownErr := p.Fabric.Unknown(ctx, delivery.DeliveryID, ReconcileRequest{AdapterID: p.AdapterID, LeaseToken: p.Lease.LeaseToken, OperationID: deliveryOperation(delivery.DeliveryID, "unknown"), NativeAttemptRef: attempt}); unknownErr != nil {
 			return fmt.Errorf("settle unknown after native observation %q: %w", delivery.DeliveryID, unknownErr)
 		}
-		return fmt.Errorf("reconcile native queue %q: %w", delivery.DeliveryID, readErr)
+		return fmt.Errorf("reconcile native prompt %q: %w", delivery.DeliveryID, readErr)
 	}
 	if accepted {
 		if _, err := p.Fabric.Acknowledge(ctx, delivery.DeliveryID, ReconcileRequest{AdapterID: p.AdapterID, LeaseToken: p.Lease.LeaseToken, OperationID: deliveryOperation(delivery.DeliveryID, "ack"), NativeAttemptRef: attempt}); err != nil {
@@ -202,10 +233,19 @@ func (p *Projector) deliverQueued(ctx context.Context, mapping Mapping, thread N
 	if _, err := p.Fabric.Unknown(ctx, delivery.DeliveryID, ReconcileRequest{AdapterID: p.AdapterID, LeaseToken: p.Lease.LeaseToken, OperationID: deliveryOperation(delivery.DeliveryID, "unknown"), NativeAttemptRef: attempt}); err != nil {
 		return fmt.Errorf("settle unknown %q: %w", delivery.DeliveryID, err)
 	}
-	if queueErr != nil {
-		return fmt.Errorf("queue native prompt %q: %w", delivery.DeliveryID, queueErr)
+	if dispatchErr != nil {
+		return fmt.Errorf("dispatch native prompt %q: %w", delivery.DeliveryID, dispatchErr)
 	}
-	return fmt.Errorf("queue native prompt %q returned an invalid receipt", delivery.DeliveryID)
+	return fmt.Errorf("dispatch native prompt %q returned an invalid receipt", delivery.DeliveryID)
+}
+
+func isUnmaterializedThreadError(err error) bool {
+	var rpc *rpcError
+	if !errors.As(err, &rpc) || rpc.Code != -32600 {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(rpc.Message))
+	return strings.Contains(message, "not materialized") || strings.HasPrefix(message, "thread not loaded:")
 }
 
 // reconcileDispatching settles only the adapter's own exact native attempt.
@@ -296,24 +336,29 @@ func (p *Projector) nativeAccepted(ctx context.Context, threadID string, thread 
 	if threadHasClientID(thread, clientID) {
 		return true, nil
 	}
+	// turn/start is accepted into canonical history directly, while queue/add
+	// may remain pending. Check history first so a recovered first turn does
+	// not depend on a queue rollout that it never created.
+	refreshed, readErr := p.Native.ReadThread(ctx, threadID)
+	if readErr == nil && threadHasClientID(refreshed, clientID) {
+		return true, nil
+	}
 	queued, err := p.Native.QueueList(ctx, threadID)
 	if err != nil {
+		if readErr != nil {
+			return false, fmt.Errorf("read canonical history: %v; list native queue: %w", readErr, err)
+		}
 		return false, err
 	}
 	if containsQueuedClientID(queued, clientID) {
 		return true, nil
 	}
-	// queue/add may hand an idle thread straight to its next turn. Re-read the
-	// canonical thread after observing an empty queue so that this handoff is
-	// not mistaken for an unproven native dispatch.
-	refreshed, err := p.Native.ReadThread(ctx, threadID)
-	if err != nil {
-		// The queue read already established that this attempt is not pending.
-		// A failed best-effort race read leaves it unproven, which the caller
+	if readErr != nil {
+		// A failed canonical read leaves this attempt unproven, which the caller
 		// settles as outcome_unknown rather than retrying it.
 		return false, nil
 	}
-	return threadHasClientID(refreshed, clientID), nil
+	return false, nil
 }
 
 func threadAvailability(status string) string {
@@ -510,7 +555,7 @@ func Run(ctx context.Context, cfg Config, fabric Fabric, open func() (AppServer,
 			}
 		}
 		controls.Attach(native, lease, cfg.Mappings)
-		projector := Projector{Fabric: fabric, Native: native, AdapterID: cfg.AdapterID, Lease: lease, Mappings: controls.Mappings(cfg.Mappings), Capabilities: codexCapabilities, ClaimDuration: cfg.ClaimDuration, Observed: controls.Observe}
+		projector := Projector{Fabric: fabric, Native: native, AdapterID: cfg.AdapterID, Lease: lease, Mappings: controls.Mappings(cfg.Mappings), Capabilities: codexCapabilities, ClaimDuration: cfg.ClaimDuration, Observed: controls.Observe, UnmaterializedThreads: controls.UnmaterializedThreads()}
 		if err := projector.Reconcile(ctx); err != nil {
 			logf("crew-codex: reconciliation failed: %v", err)
 			_ = native.Close()

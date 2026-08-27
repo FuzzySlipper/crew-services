@@ -107,9 +107,11 @@ lease token, or fabric target reference is returned to Codex.
 
 For a session advertising `queued-prompt-delivery`, the DSH workbench may send
 an ordinary fabric message to its mapped address. `crew-codex` claims the exact
-binding generation, begins one fabric dispatch, and calls native
-`thread/queue/add` with a delivery-derived `clientUserMessageId`. Codex owns
-the later FIFO start once the thread is idle; an active turn is never steered
-or interrupted. If the adapter loses the queue response, a restart reads both
-the native queue and canonical thread history for that client ID before it
-acknowledges or records `outcome_unknown`; it never sends the prompt again.
+binding generation and begins one fabric dispatch. A newly created, still
+unmaterialized control thread uses `turn/start` once with a delivery-derived
+`clientUserMessageId`; a materialized thread uses `thread/queue/add` and Codex
+owns the later FIFO start once it is idle. An active turn is never steered or
+interrupted. If the adapter loses either native response, it rereads canonical
+thread history (and, for queue admission, the native queue) for that client ID
+before it acknowledges or records `outcome_unknown`; it never sends the prompt
+again.

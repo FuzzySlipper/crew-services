@@ -266,6 +266,64 @@ func TestStdioAppServerInteractionResponseRejectsFailedAndShortWrites(t *testing
 	}
 }
 
+func TestStdioAppServerStartTurnUsesClientMessageIdentity(t *testing.T) {
+	writes := make(chan []byte, 1)
+	client := &StdioAppServer{
+		stdin: &testWriteCloser{write: func(value []byte) (int, error) {
+			writes <- append([]byte(nil), value...)
+			return len(value), nil
+		}},
+		pending:           map[string]chan rpcResponse{},
+		interactions:      map[string]pendingInteraction{},
+		done:              make(chan struct{}),
+		handshakeDone:     make(chan struct{}),
+		handshakeComplete: true,
+	}
+	result := make(chan struct {
+		turn StartedTurn
+		err  error
+	}, 1)
+	go func() {
+		turn, err := client.StartTurn(context.Background(), "thread-1", "first prompt", "crew-delivery:delivery-1")
+		result <- struct {
+			turn StartedTurn
+			err  error
+		}{turn, err}
+	}()
+
+	var request struct {
+		Method string `json:"method"`
+		Params struct {
+			ThreadID            string `json:"threadId"`
+			ClientUserMessageID string `json:"clientUserMessageId"`
+			Input               []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"input"`
+		} `json:"params"`
+	}
+	select {
+	case wire := <-writes:
+		if err := json.Unmarshal(wire, &request); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("turn/start was not written")
+	}
+	if request.Method != "turn/start" || request.Params.ThreadID != "thread-1" || request.Params.ClientUserMessageID != "crew-delivery:delivery-1" || len(request.Params.Input) != 1 || request.Params.Input[0].Type != "text" || request.Params.Input[0].Text != "first prompt" {
+		t.Fatalf("turn/start request = %+v", request)
+	}
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","id":1,"result":{"turn":{"id":"turn-1"}}}`))
+	select {
+	case value := <-result:
+		if value.err != nil || value.turn.ID != "turn-1" {
+			t.Fatalf("turn/start result = %+v, %v", value.turn, value.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("turn/start did not receive its response")
+	}
+}
+
 type testWriteCloser struct {
 	write func([]byte) (int, error)
 }

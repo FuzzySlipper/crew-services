@@ -247,6 +247,101 @@ func TestProjectorDefersQueuedPromptFromInactiveUntilIdle(t *testing.T) {
 	}
 }
 
+func TestProjectorStartsFirstPromptForCreatedUnmaterializedThread(t *testing.T) {
+	for _, message := range []string{
+		"thread is not materialized yet; includeTurns is unavailable before first user message",
+		"thread not loaded: new-thread",
+	} {
+		t.Run(message, func(t *testing.T) {
+			native := &fakeAppServer{readErr: &rpcError{Code: -32600, Message: message}}
+			fabric := &deliveryFabric{fakeFabric: newFakeFabric(), claim: Claim{
+				Claimed:    true,
+				ClaimToken: "claim",
+				Message:    &Message{MessageID: "message", Body: "start with this", RecipientAddress: "codex/new-thread"},
+				Delivery:   &Delivery{DeliveryID: "delivery", RecipientAddress: "codex/new-thread", RecipientGeneration: 0},
+			}}
+			projector := &Projector{
+				Fabric:        fabric,
+				Native:        native,
+				AdapterID:     "crew-codex",
+				Lease:         Lease{LeaseToken: "lease"},
+				Mappings:      []Mapping{{Address: "codex/new-thread", ThreadID: "new-thread"}},
+				Capabilities:  codexCapabilities,
+				ClaimDuration: time.Minute,
+				UnmaterializedThreads: map[string]NativeThread{
+					"new-thread": thread("new-thread", "New Codex session", "notLoaded", nil),
+				},
+			}
+			if err := projector.Reconcile(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if native.turnStarts != 1 || native.queueAdds != 0 || len(native.turnInputs) != 1 {
+				t.Fatalf("first prompt did not use one turn start: starts=%d queue-adds=%d inputs=%+v", native.turnStarts, native.queueAdds, native.turnInputs)
+			}
+			input := native.turnInputs[0]
+			if input.ThreadID != "new-thread" || input.ClientID != clientMessageID("delivery") || input.Text != frameInbound(*fabric.claim.Message) {
+				t.Fatalf("turn start input=%+v", input)
+			}
+			if len(fabric.acked) != 1 || len(fabric.unknown) != 0 {
+				t.Fatalf("first prompt settlement ack=%v unknown=%v", fabric.acked, fabric.unknown)
+			}
+			if got := fabric.sessions["new-thread"].Label; got != "New Codex session" {
+				t.Fatalf("fallback unexpectedly changed created presentation: label=%q", got)
+			}
+		})
+	}
+}
+
+func TestProjectorReconcilesLostFirstTurnStartFromCanonicalHistory(t *testing.T) {
+	native := &fakeAppServer{
+		readErr:            &rpcError{Code: -32600, Message: "thread not loaded: new-thread"},
+		turnStartErr:       errors.New("lost turn/start response"),
+		persistTurnOnError: true,
+	}
+	fabric := &deliveryFabric{fakeFabric: newFakeFabric(), claim: Claim{
+		Claimed:    true,
+		ClaimToken: "claim",
+		Message:    &Message{MessageID: "message", Body: "start with this", RecipientAddress: "codex/new-thread"},
+		Delivery:   &Delivery{DeliveryID: "delivery", RecipientAddress: "codex/new-thread", RecipientGeneration: 0},
+	}}
+	projector := &Projector{
+		Fabric:        fabric,
+		Native:        native,
+		AdapterID:     "crew-codex",
+		Lease:         Lease{LeaseToken: "lease"},
+		Mappings:      []Mapping{{Address: "codex/new-thread", ThreadID: "new-thread"}},
+		Capabilities:  codexCapabilities,
+		ClaimDuration: time.Minute,
+		UnmaterializedThreads: map[string]NativeThread{
+			"new-thread": thread("new-thread", "New Codex session", "notLoaded", nil),
+		},
+	}
+	if err := projector.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if native.turnStarts != 1 || native.queueAdds != 0 || len(fabric.acked) != 1 || len(fabric.unknown) != 0 {
+		t.Fatalf("lost first turn was not reconciled: starts=%d queue-adds=%d ack=%v unknown=%v", native.turnStarts, native.queueAdds, fabric.acked, fabric.unknown)
+	}
+}
+
+func TestProjectorDoesNotUseCreatedThreadFallbackForAnAdoptedMapping(t *testing.T) {
+	for _, message := range []string{
+		"thread is not materialized yet; includeTurns is unavailable before first user message",
+		"thread not loaded: thread-1",
+	} {
+		t.Run(message, func(t *testing.T) {
+			native := &fakeAppServer{readErr: &rpcError{Code: -32600, Message: message}}
+			fabric := &deliveryFabric{fakeFabric: newFakeFabric(), claim: Claim{Claimed: true, ClaimToken: "claim", Message: &Message{MessageID: "message", Body: "review this", RecipientAddress: "crew/scout"}, Delivery: &Delivery{DeliveryID: "delivery", RecipientAddress: "crew/scout"}}}
+			if err := newProjector(fabric, native).Reconcile(context.Background()); err == nil {
+				t.Fatal("adopted mapping used the created-thread fallback")
+			}
+			if native.queueAdds != 0 || len(fabric.acked) != 0 {
+				t.Fatalf("adopted mapping made a queue side effect: adds=%d ack=%v", native.queueAdds, fabric.acked)
+			}
+		})
+	}
+}
+
 func TestRunStopsNativeWhileWaitingForNextPoll(t *testing.T) {
 	fabric := newFakeFabric()
 	native := &fakeAppServer{threads: []NativeThread{thread("thread-1", "Scout", "idle", nil)}, read: make(chan struct{})}
@@ -332,7 +427,13 @@ type fakeAppServer struct {
 	queueAdds            int
 	queueAddErr          error
 	queueListErr         error
+	turnStarts           int
+	turnStartErr         error
+	persistTurnOnError   bool
+	turnInputs           []struct{ ThreadID, Text, ClientID string }
+	readErr              error
 	persistQueuedOnError bool
+	startedThread        NativeThread
 }
 
 func (f *fakeAppServer) Initialize(context.Context) error { f.init = true; return nil }
@@ -350,12 +451,35 @@ func (f *fakeAppServer) ReadThread(_ context.Context, id string) (NativeThread, 
 			close(f.read)
 		}
 	}
+	if f.readErr != nil {
+		return NativeThread{}, f.readErr
+	}
 	for _, value := range f.threads {
 		if value.ID == id {
 			return value, nil
 		}
 	}
 	return NativeThread{}, errors.New("missing thread")
+}
+func (f *fakeAppServer) StartTurn(_ context.Context, threadID, text, clientID string) (StartedTurn, error) {
+	f.turnStarts++
+	f.turnInputs = append(f.turnInputs, struct{ ThreadID, Text, ClientID string }{threadID, text, clientID})
+	if f.turnStartErr == nil || f.persistTurnOnError {
+		f.readErr = nil
+		for index := range f.threads {
+			if f.threads[index].ID == threadID {
+				f.threads[index].Turns = append(f.threads[index].Turns, NativeTurn{ID: "turn-" + clientID, Status: "active", Items: []NativeItem{{ID: clientID, Type: "userMessage", ClientID: clientID}}})
+				break
+			}
+		}
+		if len(f.threads) == 0 {
+			f.threads = append(f.threads, NativeThread{ID: threadID, Status: "active", Turns: []NativeTurn{{ID: "turn-" + clientID, Status: "active", Items: []NativeItem{{ID: clientID, Type: "userMessage", ClientID: clientID}}}}})
+		}
+	}
+	if f.turnStartErr != nil {
+		return StartedTurn{}, f.turnStartErr
+	}
+	return StartedTurn{ID: "turn-" + clientID}, nil
 }
 func (f *fakeAppServer) QueueAdd(_ context.Context, threadID, _ string, clientID string) (QueuedSubmission, error) {
 	f.queueAdds++
@@ -379,7 +503,10 @@ func (f *fakeAppServer) QueueList(_ context.Context, threadID string) ([]QueuedS
 	return append([]QueuedSubmission(nil), f.queued[threadID]...), nil
 }
 func (f *fakeAppServer) StartThread(context.Context, string) (NativeThread, error) {
-	return NativeThread{}, errors.New("not implemented")
+	if f.startedThread.ID == "" {
+		return NativeThread{}, errors.New("not implemented")
+	}
+	return f.startedThread, nil
 }
 func (f *fakeAppServer) Interrupt(context.Context, string, string) error {
 	return errors.New("not implemented")
@@ -407,6 +534,9 @@ func (n *outageNative) ReadThread(context.Context, string) (NativeThread, error)
 }
 func (n *outageNative) QueueAdd(context.Context, string, string, string) (QueuedSubmission, error) {
 	return QueuedSubmission{}, errors.New("native unavailable")
+}
+func (n *outageNative) StartTurn(context.Context, string, string, string) (StartedTurn, error) {
+	return StartedTurn{}, errors.New("native unavailable")
 }
 func (n *outageNative) QueueList(context.Context, string) ([]QueuedSubmission, error) {
 	return nil, errors.New("native unavailable")

@@ -273,7 +273,13 @@ func (h *HTTPFabric) call(ctx context.Context, method, path string, body any, ta
 		reader = bytes.NewReader(encoded)
 	}
 	u := *h.base
-	u.Path = strings.TrimRight(u.Path, "/") + path
+	escapedPath := strings.TrimRight(u.EscapedPath(), "/") + path
+	decodedPath, err := url.PathUnescape(escapedPath)
+	if err != nil {
+		return fmt.Errorf("decode fabric request path %q: %w", escapedPath, err)
+	}
+	u.Path = decodedPath
+	u.RawPath = escapedPath
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), reader)
 	if err != nil {
 		return err

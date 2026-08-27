@@ -241,6 +241,24 @@ func (c *Controls) Mappings(base []Mapping) []Mapping {
 	return values
 }
 
+// UnmaterializedThreads returns the creation receipts that may be queued once
+// before Codex can expose their canonical turn history. A persisted create
+// mapping from an older adapter has no receipt details, but it still denotes a
+// browser-created thread and can safely retain the exact native identity.
+func (c *Controls) UnmaterializedThreads() map[string]NativeThread {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	threads := make(map[string]NativeThread, len(c.persisted))
+	for _, value := range c.persisted {
+		thread := NativeThread{ID: value.Mapping.ThreadID, Status: "notLoaded"}
+		if value.CreatedThread != nil {
+			thread = *value.CreatedThread
+		}
+		threads[thread.ID] = thread
+	}
+	return threads
+}
+
 // Observe records the public session identity associated with one mapping.
 func (c *Controls) Observe(session Session, mapping Mapping) {
 	c.mu.Lock()
@@ -315,7 +333,8 @@ func (c *Controls) Create(ctx context.Context, operationID, cwd string) (Control
 	for operation, persisted := range c.persisted {
 		next[operation] = persisted
 	}
-	next[operationID] = persistedControlSession{Session: value, Mapping: mapping, ToolEnabled: true}
+	createdThread := thread
+	next[operationID] = persistedControlSession{Session: value, Mapping: mapping, ToolEnabled: true, CreatedThread: &createdThread}
 	if err := saveControlState(c.cfg.StatePath, next); err != nil {
 		c.mu.Unlock()
 		return ControlSession{}, err

@@ -21,6 +21,7 @@ type AppServer interface {
 	Initialize(context.Context) error
 	ListThreads(context.Context) ([]NativeThread, error)
 	ReadThread(context.Context, string) (NativeThread, error)
+	StartTurn(context.Context, string, string, string) (StartedTurn, error)
 	QueueAdd(context.Context, string, string, string) (QueuedSubmission, error)
 	QueueList(context.Context, string) ([]QueuedSubmission, error)
 	StartThread(context.Context, string) (NativeThread, error)
@@ -73,6 +74,10 @@ type QueuedSubmission struct {
 	ID                  string
 	ClientUserMessageID string
 }
+
+// StartedTurn is the native acceptance receipt for the one first turn that
+// materializes a control-created thread.
+type StartedTurn struct{ ID string }
 
 type NativeContent struct {
 	Type string
@@ -304,6 +309,26 @@ func (c *StdioAppServer) ReadThread(ctx context.Context, threadID string) (Nativ
 		return NativeThread{}, err
 	}
 	return response.Thread.native(), nil
+}
+
+// StartTurn materializes one control-created thread. Its caller supplies an
+// adapter-owned clientUserMessageId so a lost RPC response can be reconciled
+// from canonical thread history without replaying the prompt.
+func (c *StdioAppServer) StartTurn(ctx context.Context, threadID, text, clientUserMessageID string) (StartedTurn, error) {
+	var response struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	if err := c.awaitInitialized(ctx); err != nil {
+		return StartedTurn{}, err
+	}
+	if err := c.sendRequest(ctx, "turn/start", map[string]any{
+		"threadId": threadID, "input": []map[string]any{{"type": "text", "text": text, "text_elements": []any{}}}, "clientUserMessageId": clientUserMessageID,
+	}, &response); err != nil {
+		return StartedTurn{}, err
+	}
+	return StartedTurn{ID: response.Turn.ID}, nil
 }
 
 // QueueAdd persists a turn for automatic FIFO start once Codex considers the
