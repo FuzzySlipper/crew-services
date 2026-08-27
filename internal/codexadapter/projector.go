@@ -2,6 +2,7 @@ package codexadapter
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -91,10 +92,7 @@ func (p *Projector) projectThread(ctx context.Context, mapping Mapping, thread N
 		if err != nil {
 			return fmt.Errorf("encode native entry %q: %w", event.EntryID, err)
 		}
-		if err := p.Fabric.Append(ctx, session.SessionID, AppendRequest{
-			AdapterID: p.AdapterID, LeaseToken: p.Lease.LeaseToken, ExpectedRevision: session.Revision,
-			OperationID: event.operationID(thread.ID), EventType: projectionEventType, Payload: payload,
-		}); err != nil {
+		if err := p.appendEntry(ctx, session, event, thread.ID, payload); err != nil {
 			return fmt.Errorf("append native entry %q: %w", event.EntryID, err)
 		}
 	}
@@ -102,6 +100,29 @@ func (p *Projector) projectThread(ctx context.Context, mapping Mapping, thread N
 		return err
 	}
 	return p.deliverQueuedWithCreatedThread(ctx, mapping, thread, binding, unmaterialized)
+}
+
+func (p *Projector) appendEntry(ctx context.Context, session Session, event Entry, threadID string, payload json.RawMessage) error {
+	request := AppendRequest{
+		AdapterID: p.AdapterID, LeaseToken: p.Lease.LeaseToken, ExpectedRevision: session.Revision,
+		OperationID: event.operationID(threadID), EventType: projectionEventType, Payload: payload,
+	}
+	if err := p.Fabric.Append(ctx, session.SessionID, request); !isOperationConflict(err) {
+		return err
+	}
+	request.OperationID = contentQualifiedOperationID(request.OperationID, payload)
+	return p.Fabric.Append(ctx, session.SessionID, request)
+}
+
+func isOperationConflict(err error) bool {
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.Status != 409 {
+		return false
+	}
+	var response struct {
+		Code string `json:"code"`
+	}
+	return json.Unmarshal([]byte(httpErr.Body), &response) == nil && response.Code == "operation_conflict"
 }
 
 func (p *Projector) bind(ctx context.Context, address string, session Session) (Binding, error) {
@@ -462,6 +483,11 @@ type Entry struct {
 
 func (e Entry) operationID(threadID string) string {
 	return "codex-entry:" + threadID + ":" + e.TurnID + ":" + e.EntryID
+}
+
+func contentQualifiedOperationID(base string, payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return fmt.Sprintf("%s:%x", base, sum)
 }
 
 func normalizedEvents(thread NativeThread) []Entry {

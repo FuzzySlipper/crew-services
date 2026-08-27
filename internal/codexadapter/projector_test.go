@@ -26,6 +26,12 @@ func TestProjectorCanonicalReplayDoesNotDuplicateEntries(t *testing.T) {
 	if got := len(fabric.events); got != 2 {
 		t.Fatalf("events=%d, want 2", got)
 	}
+	if got, want := fabric.events[0].OperationID, "codex-entry:thread-1:turn-1:user-1"; got != want {
+		t.Fatalf("user operation=%q, want %q", got, want)
+	}
+	if got, want := fabric.events[1].OperationID, "codex-entry:thread-1:turn-1:agent-1"; got != want {
+		t.Fatalf("agent operation=%q, want %q", got, want)
+	}
 	if got := fabric.sessions["thread-1"].SessionID; got != "session-1" {
 		t.Fatalf("session ID=%q", got)
 	}
@@ -49,6 +55,68 @@ func TestProjectorCanonicalReplayDoesNotDuplicateEntries(t *testing.T) {
 		if event.PayloadContains("thread-1") {
 			t.Fatalf("native thread ID leaked into entry payload: %s", event.OperationID)
 		}
+	}
+}
+
+func TestProjectorRecordsChangedCanonicalEntryWithStableContentOperation(t *testing.T) {
+	native := &fakeAppServer{threads: []NativeThread{thread("thread-1", "Scout", "idle", []NativeTurn{{ID: "turn-1", Status: "completed", Items: []NativeItem{{ID: "item-623", Type: "agentMessage", Text: "done"}}}})}}
+	base := "codex-entry:thread-1:turn-1:item-623"
+	fabric := &projectionConflictFabric{
+		fakeFabric:    newFakeFabric(),
+		baseOperation: base,
+		baseError:     &HTTPError{Status: 409, Body: `{"code":"operation_conflict"}`},
+	}
+	// The old projection was accepted before Codex completed the turn, so its
+	// canonical payload has since gained final:true.
+	if err := fabric.fakeFabric.Append(context.Background(), "session-1", AppendRequest{OperationID: base, Payload: []byte(`{"entry_id":"item-623","turn_id":"turn-1","author":"agent","category":"message","text":"done","completed":true,"final":false}`)}); err != nil {
+		t.Fatal(err)
+	}
+	projector := newProjector(fabric, native)
+	if err := projector.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(fabric.attempts); got != 2 {
+		t.Fatalf("append attempts=%d, want 2", got)
+	}
+	if got := fabric.attempts[0].OperationID; got != base {
+		t.Fatalf("initial operation=%q, want base %q", got, base)
+	}
+	wantCorrection := contentQualifiedOperationID(base, fabric.attempts[1].Payload)
+	if got := fabric.attempts[1].OperationID; got != wantCorrection {
+		t.Fatalf("correction operation=%q, want %q", got, wantCorrection)
+	}
+	if got := len(fabric.events); got != 2 {
+		t.Fatalf("events=%d, want historical plus correction", got)
+	}
+
+	if err := projector.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(fabric.attempts); got != 4 {
+		t.Fatalf("replay append attempts=%d, want 4", got)
+	}
+	if got := len(fabric.events); got != 2 {
+		t.Fatalf("replay appended duplicate correction: events=%d", got)
+	}
+}
+
+func TestProjectorDoesNotRetryOtherAppendFailuresAsCorrections(t *testing.T) {
+	for name, err := range map[string]error{
+		"other conflict": &HTTPError{Status: 409, Body: `{"code":"address_conflict"}`},
+		"ordinary error": errors.New("fabric unavailable"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fabric := &projectionConflictFabric{
+				fakeFabric: newFakeFabric(), baseOperation: "codex-entry:thread-1:turn-1:item-623", baseError: err,
+			}
+			native := &fakeAppServer{threads: []NativeThread{thread("thread-1", "Scout", "idle", []NativeTurn{{ID: "turn-1", Status: "completed", Items: []NativeItem{{ID: "item-623", Type: "agentMessage", Text: "done"}}}})}}
+			if err := newProjector(fabric, native).Reconcile(context.Background()); err == nil {
+				t.Fatal("reconciliation succeeded")
+			}
+			if got := len(fabric.attempts); got != 1 {
+				t.Fatalf("append attempts=%d, want 1", got)
+			}
+		})
 	}
 }
 
@@ -578,6 +646,21 @@ type deliveryFabric struct {
 	claimErrors   []error
 	claimRequests []ClaimRequest
 	claimOnError  func(ClaimRequest)
+}
+
+type projectionConflictFabric struct {
+	*fakeFabric
+	baseOperation string
+	baseError     error
+	attempts      []AppendRequest
+}
+
+func (f *projectionConflictFabric) Append(ctx context.Context, sessionID string, request AppendRequest) error {
+	f.attempts = append(f.attempts, request)
+	if request.OperationID == f.baseOperation {
+		return f.baseError
+	}
+	return f.fakeFabric.Append(ctx, sessionID, request)
 }
 
 func (f *deliveryFabric) Claim(_ context.Context, request ClaimRequest) (Claim, error) {
