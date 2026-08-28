@@ -60,16 +60,18 @@ func (d *fakeDen) FinalizeReview(_ context.Context, f Finalization) (Receipt, er
 }
 
 type fakeRuntime struct {
-	mu             sync.Mutex
-	running        int
-	max            int
-	start          chan struct{}
-	release        chan struct{}
-	completion     Completion
-	acquired       int
-	released       int
-	skipCompletion bool
-	runErr         error
+	mu              sync.Mutex
+	running         int
+	max             int
+	start           chan struct{}
+	release         chan struct{}
+	completion      Completion
+	acquired        int
+	released        int
+	skipCompletion  bool
+	runErr          error
+	completed       chan struct{}
+	afterCompletion chan struct{}
 }
 
 func (r *fakeRuntime) Acquire(context.Context, TaskKey, string, string) (Worker, error) {
@@ -99,6 +101,16 @@ func (r *fakeRuntime) Run(ctx context.Context, _ Worker, _ string, complete func
 	if !r.skipCompletion {
 		e = complete(r.completion)
 	}
+	if r.completed != nil {
+		r.completed <- struct{}{}
+	}
+	if r.afterCompletion != nil {
+		select {
+		case <-r.afterCompletion:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if r.runErr != nil {
 		e = r.runErr
 	}
@@ -125,7 +137,7 @@ func fixture(t *testing.T, capacity int) (*Service, *SQLiteStore, *fakeDen, *fak
 	key := Key{ProjectID: "dsh-crew", TaskID: 7413, ReviewRoundID: 1, CorrelationID: "correlation-1"}
 	den := &fakeDen{contexts: map[int64]Context{1: {Key: key, NextState: "source_review_ready", Workspace: "/repo"}}, receipts: map[int64]Receipt{}}
 	runtime := &fakeRuntime{completion: Completion{Verdict: "looks_good"}}
-	svc, e := New(store, den, runtime, "review profile")
+	svc, e := New(store, den, runtime, "review profile", WithClock(clock))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -371,6 +383,9 @@ func TestFinalizingStaleConflictAndResponseLoss(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
+			if e = store.ReleaseFinalization(context.Background(), j.ID); e != nil {
+				t.Fatal(e)
+			}
 			if _, e = svc.RunOne(context.Background()); e != nil {
 				t.Fatal(e)
 			}
@@ -393,6 +408,9 @@ func TestFinalizingStaleConflictAndResponseLoss(t *testing.T) {
 	}
 	_, e = store.PutFinalization(context.Background(), j.ID, Finalization{Key: a.Key, Reviewer: a.Reviewer, Completion: Completion{Verdict: "looks_good"}})
 	if e != nil {
+		t.Fatal(e)
+	}
+	if e = store.ReleaseFinalization(context.Background(), j.ID); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = svc.RunOne(context.Background()); e == nil {
@@ -421,6 +439,9 @@ func TestFinalizationClaimAndSameTaskSerialization(t *testing.T) {
 	}
 	_, e = store.PutFinalization(context.Background(), j.ID, Finalization{Key: a.Key, Reviewer: a.Reviewer, Completion: Completion{Verdict: "looks_good"}})
 	if e != nil {
+		t.Fatal(e)
+	}
+	if e = store.ReleaseFinalization(context.Background(), j.ID); e != nil {
 		t.Fatal(e)
 	}
 	den.started = make(chan struct{}, 1)
@@ -464,6 +485,34 @@ func TestFinalizationClaimAndSameTaskSerialization(t *testing.T) {
 	runtime.release <- struct{}{}
 	if e := <-turn; e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestRuntimeCallbackOwnsFinalizationUntilTurnCompletes(t *testing.T) {
+	svc, store, _, runtime, a := fixture(t, 2)
+	defer store.Close()
+	runtime.completion = Completion{Verdict: "changes_requested"}
+	runtime.completed = make(chan struct{}, 1)
+	runtime.afterCompletion = make(chan struct{})
+	if _, _, err := svc.Admit(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	ownerDone := make(chan error, 1)
+	go func() { _, err := svc.RunOne(context.Background()); ownerDone <- err }()
+	<-runtime.completed // PutFinalization completed, but the runtime turn has not.
+	if ran, err := svc.RunOne(context.Background()); err != nil || ran {
+		t.Fatalf("concurrent runner stole finalization: ran=%v err=%v", ran, err)
+	}
+	close(runtime.afterCompletion)
+	if err := <-ownerDone; err != nil {
+		t.Fatal(err)
+	}
+	if runtime.released != 0 {
+		t.Fatalf("changes_requested worker was released: releases=%d", runtime.released)
+	}
+	snapshot, err := svc.Snapshot(context.Background(), 5)
+	if err != nil || len(snapshot.Retained) != 1 || snapshot.Retained[0].ProjectID != a.Key.ProjectID || snapshot.Retained[0].TaskID != a.Key.TaskID {
+		t.Fatalf("changes_requested affinity was not retained: snapshot=%+v err=%v", snapshot, err)
 	}
 }
 

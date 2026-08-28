@@ -327,7 +327,11 @@ func (s *SQLiteStore) PutFinalization(ctx context.Context, id string, f Finaliza
 	if e != nil {
 		return Job{}, e
 	}
-	res, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,finalization_json=?,updated_at=? WHERE id=? AND state=?`, Finalizing, string(b), stamp(s.clock.Now()), id, Running)
+	// The runtime callback's executing lane owns this finalization until it
+	// reconciles or explicitly releases it for retry. Without this claim, a
+	// second runner can reconcile the stored result before the callback's turn
+	// returns and cause that lane to lose its changes-requested affinity.
+	res, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,finalizing_claim=1,finalization_json=?,updated_at=? WHERE id=? AND state=?`, Finalizing, string(b), stamp(s.clock.Now()), id, Running)
 	if e != nil {
 		return Job{}, e
 	}
