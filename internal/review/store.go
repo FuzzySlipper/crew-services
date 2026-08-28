@@ -30,10 +30,12 @@ type SubmissionStore interface {
 }
 
 type Snapshot struct {
-	Backend  string             `json:"backend"`
-	Capacity int                `json:"capacity"`
-	Queued   int                `json:"queued"`
-	Running  int                `json:"running"`
-	Recent   []Projection       `json:"recent"`
-	Retained []RetainedAffinity `json:"retained_affinities"`
+	Backend    string             `json:"backend"`
+	Capacity   int                `json:"capacity"`
+	Queued     int                `json:"queued"`
+	Running    int                `json:"running"`
+	Finalizing int                `json:"finalizing"`
+	Active     []Projection       `json:"active"`
+	Recent     []Projection       `json:"recent"`
+	Retained   []RetainedAffinity `json:"retained_affinities"`
 }

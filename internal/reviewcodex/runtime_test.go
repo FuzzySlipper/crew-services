@@ -357,6 +357,86 @@ func TestMissingCompletionIncludesRejectedToolReason(t *testing.T) {
 		t.Fatalf("run result=%v", e)
 	}
 }
+
+func TestCallbackRejectionAllowsCorrectedCompletion(t *testing.T) {
+	r, s := runtimeFixture(t)
+	s.starts = make(chan string, 1)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	calls := 0
+	done := make(chan error, 1)
+	go func() {
+		done <- r.Run(context.Background(), w, "review", func(review.Completion) error {
+			calls++
+			if calls == 1 {
+				return errors.New("encoded completion is too large")
+			}
+			return nil
+		})
+	}()
+	parts := strings.Split(<-s.starts, "/")
+	first, e := s.handler(context.Background(), callWithArguments(parts[0], parts[1], map[string]any{"verdict": "looks_good", "notes": "long"}))
+	if e != nil || !strings.Contains(string(first), "too large") {
+		t.Fatalf("first completion=%s err=%v", first, e)
+	}
+	second, e := s.handler(context.Background(), callWithArguments(parts[0], parts[1], map[string]any{"verdict": "looks_good", "notes": "short"}))
+	if e != nil || !strings.Contains(string(second), "completion accepted") {
+		t.Fatalf("corrected completion=%s err=%v", second, e)
+	}
+	s.finish(parts[0], parts[1])
+	if e := <-done; e != nil || calls != 2 {
+		t.Fatalf("run result=%v calls=%d", e, calls)
+	}
+}
+
+func TestCallbackRejectionBeforeTurnStartReturnsAllowsCorrection(t *testing.T) {
+	r, s := runtimeFixture(t)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	calls := 0
+	s.turnStartHook = func(thread, turn string) {
+		first, err := s.handler(context.Background(), callWithArguments(thread, turn, map[string]any{"verdict": "looks_good", "notes": "long"}))
+		if err != nil || !strings.Contains(string(first), "too large") {
+			t.Errorf("first completion=%s err=%v", first, err)
+		}
+		second, err := s.handler(context.Background(), callWithArguments(thread, turn, map[string]any{"verdict": "looks_good", "notes": "short"}))
+		if err != nil || !strings.Contains(string(second), "completion accepted") {
+			t.Errorf("corrected completion=%s err=%v", second, err)
+		}
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- r.Run(context.Background(), w, "review", func(review.Completion) error {
+			calls++
+			if calls == 1 {
+				return errors.New("encoded completion is too large")
+			}
+			return nil
+		})
+	}()
+	for {
+		s.mu.Lock()
+		var key string
+		for candidate := range s.waits {
+			key = candidate
+			break
+		}
+		s.mu.Unlock()
+		if key != "" {
+			parts := strings.Split(key, "/")
+			s.finish(parts[0], parts[1])
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if e := <-done; e != nil || calls != 2 {
+		t.Fatalf("run result=%v calls=%d", e, calls)
+	}
+}
 func TestSecondTurnAcceptsCompletionBeforeStartReturns(t *testing.T) {
 	r, s := runtimeFixture(t)
 	s.starts = make(chan string, 2)

@@ -186,20 +186,12 @@ func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, com
 		return e
 	}
 	r.mu.Lock()
-	w.turnID = turn.ID
-	candidate, candidateTurn, callback := w.candidate, w.candidateTurn, w.complete
-	r.mu.Unlock()
-	if candidate != nil {
-		if candidateTurn != turn.ID {
-			return errors.New("completion arrived for a stale turn")
-		}
-		if callbackErr := callback(*candidate); callbackErr != nil {
-			r.mu.Lock()
-			w.callbackErr = callbackErr
-			r.mu.Unlock()
-			return callbackErr
-		}
+	if w.turnID != "" && w.turnID != turn.ID {
+		r.mu.Unlock()
+		return errors.New("completion arrived for a stale turn")
 	}
+	w.turnID = turn.ID
+	r.mu.Unlock()
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	wait := make(chan error, 1)
@@ -306,6 +298,12 @@ func (r *Runtime) dynamicTool(_ context.Context, raw json.RawMessage) (json.RawM
 		w.rejectedReason = "stale review turn"
 		return toolResult(false, w.rejectedReason), nil
 	}
+	if w.turnID == "" {
+		// Tool calls can arrive before the turn/start response. The call carries
+		// the authoritative turn id, allowing validation to happen before the
+		// model receives a successful tool result.
+		w.turnID = call.TurnID
+	}
 	if w.candidate != nil {
 		if reflect.DeepEqual(*w.candidate, candidate) {
 			if w.callbackErr != nil {
@@ -320,9 +318,6 @@ func (r *Runtime) dynamicTool(_ context.Context, raw json.RawMessage) (json.RawM
 	w.candidateTurn = call.TurnID
 	copy := candidate
 	w.candidate = &copy
-	if w.turnID == "" {
-		return toolResult(true, "completion accepted"), nil
-	}
 	callback := w.complete
 	r.mu.Unlock()
 	err := callback(copy)
@@ -330,6 +325,10 @@ func (r *Runtime) dynamicTool(_ context.Context, raw json.RawMessage) (json.RawM
 	w.callbackErr = err
 	if err != nil {
 		w.rejectedReason = err.Error()
+		// The callback did not persist this completion. Keep the turn open for a
+		// corrected complete_review call instead of poisoning the worker.
+		w.candidate = nil
+		w.candidateTurn = ""
 		return toolResult(false, w.rejectedReason), nil
 	}
 	return toolResult(true, "completion accepted"), nil

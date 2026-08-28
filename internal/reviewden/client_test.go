@@ -228,6 +228,10 @@ func TestFinalizeReviewClassifiesStaleAndConflict(t *testing.T) {
 			message: `{"error":"den_backend_request_failed","message":"{\"error\":{\"code\":\"review_finalization_conflict\",\"message\":\"different decision identity\"}}"}`,
 			want:    review.ErrDenConflict,
 		},
+		"rejected": {
+			message: `{"error":"den_backend_request_failed","message":"{\"error\":{\"code\":\"review_request_too_large\",\"message\":\"review request exceeds the bounded payload budget\"}}"}`,
+			want:    review.ErrDenRejected,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -246,6 +250,25 @@ func TestFinalizeReviewClassifiesStaleAndConflict(t *testing.T) {
 				t.Fatalf("error = %v, want %v", err, outcome.want)
 			}
 		})
+	}
+}
+
+func TestValidateFinalizationUsesEncodedDenRequestSize(t *testing.T) {
+	client, err := New("http://den.test/mcp", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalization := review.Finalization{
+		Key:        review.Key{ProjectID: "dsh-crew", TaskID: 7416, ReviewRoundID: 12, CorrelationID: "corr"},
+		Reviewer:   "reviewer",
+		Completion: review.Completion{Verdict: "looks_good", Notes: strings.Repeat(">", 700)},
+	}
+	if err := client.ValidateFinalization(finalization); !errors.Is(err, review.ErrDenRejected) {
+		t.Fatalf("encoded oversize validation error = %v", err)
+	}
+	finalization.Completion.Notes = "concise"
+	if err := client.ValidateFinalization(finalization); err != nil {
+		t.Fatalf("concise finalization rejected: %v", err)
 	}
 }
 

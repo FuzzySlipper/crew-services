@@ -424,13 +424,33 @@ func (s *SQLiteStore) Snapshot(ctx context.Context, limit int) (Snapshot, error)
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	out := Snapshot{Backend: "unavailable", Capacity: s.capacity, Recent: []Projection{}}
+	out := Snapshot{Backend: "unavailable", Capacity: s.capacity, Active: []Projection{}, Recent: []Projection{}}
 	if e := s.db.QueryRowContext(ctx, `SELECT count(*) FROM crew_review_jobs WHERE state=?`, Queued).Scan(&out.Queued); e != nil {
 		return out, e
 	}
 	if e := s.db.QueryRowContext(ctx, `SELECT count(*) FROM crew_review_jobs WHERE state=?`, Running).Scan(&out.Running); e != nil {
 		return out, e
 	}
+	if e := s.db.QueryRowContext(ctx, `SELECT count(*) FROM crew_review_jobs WHERE state=?`, Finalizing).Scan(&out.Finalizing); e != nil {
+		return out, e
+	}
+	active, e := s.db.QueryContext(ctx, `SELECT id,admission_json,state,finalization_json,receipt_json,failure,created_at,updated_at FROM crew_review_jobs WHERE state IN (?,?,?) ORDER BY created_at LIMIT ?`, Queued, Running, Finalizing, limit)
+	if e != nil {
+		return out, e
+	}
+	for active.Next() {
+		j, scanErr := scanJob(active)
+		if scanErr != nil {
+			active.Close()
+			return out, scanErr
+		}
+		out.Active = append(out.Active, j.Projection())
+	}
+	if e = active.Err(); e != nil {
+		active.Close()
+		return out, e
+	}
+	active.Close()
 	rows, e := s.db.QueryContext(ctx, `SELECT id,admission_json,state,finalization_json,receipt_json,failure,created_at,updated_at FROM crew_review_jobs WHERE state IN (?,?,?,?) ORDER BY updated_at DESC LIMIT ?`, Succeeded, Failed, Cancelled, Stale, limit)
 	if e != nil {
 		return out, e

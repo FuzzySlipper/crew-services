@@ -88,6 +88,13 @@ environment; all have corresponding flags where they affect the process.
 The command starts a fixed number of bounded runner lanes (one durable job per
 lane at a time), reports `backend: "codex"` from `GET /v1/review-pool`, and
 never exposes ephemeral Codex worker or thread IDs in that projection.
+The pool projection includes bounded active jobs and a separate `finalizing`
+count so durable reconciliation cannot hide behind the running aggregate. The
+Den adapter validates the exact encoded 4 KiB finalization request before it
+is stored; a rejected tool result lets the reviewer submit a shorter completion
+in the same turn. Deterministic Den validation failures become one terminal
+job failure, while ambiguous transport failures retain the exact request for
+idempotent retry.
 
 The managed submission boundary is `POST /v1/review-submissions`. The Den MCP
 facade routes its `submit_task_for_review` green path to this endpoint through

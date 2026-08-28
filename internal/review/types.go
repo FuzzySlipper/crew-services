@@ -31,6 +31,7 @@ var (
 	// Adapter implementations classify Den's authoritative terminal responses.
 	ErrStaleRound        = errors.New("Den review round is stale")
 	ErrDenConflict       = errors.New("Den review finalization conflicts")
+	ErrDenRejected       = errors.New("Den rejected the review finalization")
 	ErrCapacity          = errors.New("reviewer runtime is at capacity")
 	ErrAffinityBusy      = errors.New("retained reviewer is busy")
 	ErrSubmissionChanged = errors.New("review submission changed while it was being advanced")
@@ -317,6 +318,12 @@ func (c Context) ReviewableFor(k Key) bool { return c.Key == k && c.NextState ==
 type DenReviewClient interface {
 	GetReviewContext(context.Context, Key) (Context, error)
 	FinalizeReview(context.Context, Finalization) (Receipt, error)
+}
+
+// FinalizationValidator is an optional adapter capability for checking the
+// exact downstream request contract before durable finalization is recorded.
+type FinalizationValidator interface {
+	ValidateFinalization(Finalization) error
 }
 
 // SubmissionDenClient is the additional narrow seam used only by the

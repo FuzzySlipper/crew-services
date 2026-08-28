@@ -24,8 +24,9 @@ import (
 )
 
 const (
-	DefaultMCPURL    = "http://192.168.1.10:5199/mcp"
-	maxResponseBytes = 1 << 20
+	DefaultMCPURL               = "http://192.168.1.10:5199/mcp"
+	maxResponseBytes            = 1 << 20
+	maxFinalizationRequestBytes = 4096
 )
 
 // Client is a deliberately small stateless caller for the Den MCP endpoint.
@@ -207,7 +208,19 @@ func classifyCode(operation, code, message string) error {
 	if strings.Contains(lower, "review_finalization_conflict") || strings.Contains(lower, "finalization conflict") || strings.Contains(lower, "different decision identity") {
 		return fmt.Errorf("%w: %s", review.ErrDenConflict, text)
 	}
+	if permanentFinalizationCode(strings.ToLower(strings.TrimSpace(code))) || strings.Contains(lower, "review_request_too_large") {
+		return fmt.Errorf("%w: %s", review.ErrDenRejected, text)
+	}
 	return fmt.Errorf("Den MCP %s: %s", operation, text)
+}
+
+func permanentFinalizationCode(code string) bool {
+	return code == "review_request_too_large" ||
+		strings.HasPrefix(code, "invalid_") ||
+		strings.HasPrefix(code, "missing_") ||
+		code == "unresolved_findings" ||
+		code == "actionable_finding" ||
+		code == "task_not_reviewable"
 }
 
 // Context response fields are the subset needed to validate that the bounded
@@ -410,27 +423,10 @@ type finalizeResponse struct {
 // converts its typed receipt into the local job receipt. Den's idempotent
 // finalization operation is the completion authority.
 func (c *Client) FinalizeReview(ctx context.Context, finalization review.Finalization) (review.Receipt, error) {
-	notes := strings.TrimSpace(finalization.Completion.Notes)
-	if evidence := strings.TrimSpace(finalization.Completion.Evidence); evidence != "" {
-		if notes != "" {
-			notes += "\n\n"
-		}
-		notes += "Evidence:\n" + evidence
+	if err := c.ValidateFinalization(finalization); err != nil {
+		return review.Receipt{}, err
 	}
-	arguments := map[string]any{
-		"review_round_id": finalization.Key.ReviewRoundID,
-		"verdict":         finalization.Completion.Verdict,
-		"decided_by":      finalization.Reviewer,
-	}
-	if notes != "" {
-		arguments["notes"] = notes
-	}
-	if len(finalization.Completion.PriorResolutions) > 0 {
-		arguments["prior_finding_resolutions"] = finalization.Completion.PriorResolutions
-	}
-	if len(finalization.Completion.NewFindings) > 0 {
-		arguments["new_findings"] = finalization.Completion.NewFindings
-	}
+	arguments := finalizationArguments(finalization)
 	data, err := c.call(ctx, "finalize_review", arguments)
 	if err != nil {
 		return review.Receipt{}, err
@@ -465,6 +461,45 @@ func (c *Client) FinalizeReview(ctx context.Context, finalization review.Finaliz
 		LastErrorStep:       response.LastErrorStep,
 		LastError:           response.LastError,
 	}, nil
+}
+
+// ValidateFinalization mirrors the compact body emitted by Den's MCP Review
+// adapter. Go's JSON encoder escapes characters such as '>', so counting raw
+// model text is not sufficient to enforce Den's 4 KiB request contract.
+func (c *Client) ValidateFinalization(finalization review.Finalization) error {
+	encoded, err := json.Marshal(finalizationArguments(finalization))
+	if err != nil {
+		return fmt.Errorf("encode Den finalization arguments: %w", err)
+	}
+	if len(encoded) > maxFinalizationRequestBytes {
+		return fmt.Errorf("%w: review_request_too_large: encoded request is %d bytes (maximum %d); shorten notes, evidence, or finding details", review.ErrDenRejected, len(encoded), maxFinalizationRequestBytes)
+	}
+	return nil
+}
+
+func finalizationArguments(finalization review.Finalization) map[string]any {
+	notes := strings.TrimSpace(finalization.Completion.Notes)
+	if evidence := strings.TrimSpace(finalization.Completion.Evidence); evidence != "" {
+		if notes != "" {
+			notes += "\n\n"
+		}
+		notes += "Evidence:\n" + evidence
+	}
+	arguments := map[string]any{
+		"review_round_id": finalization.Key.ReviewRoundID,
+		"verdict":         finalization.Completion.Verdict,
+		"decided_by":      finalization.Reviewer,
+	}
+	if notes != "" {
+		arguments["notes"] = notes
+	}
+	if len(finalization.Completion.PriorResolutions) > 0 {
+		arguments["prior_finding_resolutions"] = finalization.Completion.PriorResolutions
+	}
+	if len(finalization.Completion.NewFindings) > 0 {
+		arguments["new_findings"] = finalization.Completion.NewFindings
+	}
+	return arguments
 }
 
 func first(a, b string) string {

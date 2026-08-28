@@ -251,6 +251,10 @@ func TestFinalizationRecoveryAndCancellation(t *testing.T) {
 	if _, e = store.PutFinalization(context.Background(), j.ID, Finalization{Key: a.Key, Reviewer: a.Reviewer, Completion: Completion{Verdict: "looks_good"}}); e != nil {
 		t.Fatal(e)
 	}
+	snapshot, e := svc.Snapshot(context.Background(), 5)
+	if e != nil || snapshot.Finalizing != 1 || len(snapshot.Active) != 1 || snapshot.Active[0].State != Finalizing {
+		t.Fatalf("finalizing job is not visible in pool projection: snapshot=%+v err=%v", snapshot, e)
+	}
 	if e = store.Recover(context.Background()); e != nil {
 		t.Fatal(e)
 	}
@@ -447,7 +451,7 @@ func TestFinalizingStaleConflictAndResponseLoss(t *testing.T) {
 		err  error
 		want State
 	}{
-		"stale": {ErrStaleRound, Stale}, "conflict": {ErrDenConflict, Failed},
+		"stale": {ErrStaleRound, Stale}, "conflict": {ErrDenConflict, Failed}, "rejected": {ErrDenRejected, Failed},
 	} {
 		t.Run(name, func(t *testing.T) {
 			svc, store, den, _, a := fixture(t, 1)

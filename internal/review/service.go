@@ -159,6 +159,11 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 			return errors.New("runtime returned invalid review verdict")
 		}
 		f := Finalization{Key: j.Admission.Key, Reviewer: j.Admission.Reviewer, Completion: candidate}
+		if validator, ok := s.den.(FinalizationValidator); ok {
+			if err := validator.ValidateFinalization(f); err != nil {
+				return err
+			}
+		}
 		_, e := s.store.PutFinalization(ctx, j.ID, f)
 		if e == nil {
 			completionStored = true
@@ -230,6 +235,9 @@ func (s *Service) reconcile(ctx context.Context, j Job) error {
 			return s.terminal(ctx, j, Stale, e.Error())
 		}
 		if errors.Is(e, ErrDenConflict) {
+			return s.terminal(ctx, j, Failed, e.Error())
+		}
+		if errors.Is(e, ErrDenRejected) {
 			return s.terminal(ctx, j, Failed, e.Error())
 		}
 		// An ambiguous transport failure retains the exact stored request in
