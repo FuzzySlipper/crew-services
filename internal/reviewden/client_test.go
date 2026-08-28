@@ -1,6 +1,7 @@
 package reviewden
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,19 @@ func TestGetReviewContextMapsTypedStructuredContent(t *testing.T) {
 			Arguments json.RawMessage `json:"arguments"`
 		} `json:"params"`
 	}
+	structured := map[string]any{
+		"schema": "den_review.reviewer_context.v1", "schema_version": 1,
+		"project_id": "dsh-crew", "task_id": 7416,
+		"task":            map[string]any{"id": 7416, "project_id": "dsh-crew", "root_path": "/home/dev/dsh-crew"},
+		"current_round":   map[string]any{"id": 12, "project_id": "dsh-crew", "task_id": 7416},
+		"next_state":      "source_review_ready",
+		"prior_findings":  []map[string]any{{"id": "R7416-1", "summary": "recheck claim expiry"}},
+		"rereview_packet": map[string]any{"round": 12, "addresses": []string{"R7416-1"}},
+	}
+	wantMaterial, err := json.Marshal(structured)
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
 			t.Fatalf("authorization = %q", got)
@@ -30,13 +44,7 @@ func TestGetReviewContextMapsTypedStructuredContent(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		writeToolResult(w, map[string]any{
-			"schema": "den_review.reviewer_context.v1", "schema_version": 1,
-			"project_id": "dsh-crew", "task_id": 7416,
-			"task":          map[string]any{"id": 7416, "project_id": "dsh-crew", "root_path": "/home/dev/dsh-crew"},
-			"current_round": map[string]any{"id": 12, "project_id": "dsh-crew", "task_id": 7416},
-			"next_state":    "source_review_ready",
-		})
+		writeToolResult(w, structured)
 	}))
 	defer server.Close()
 	client, err := New(server.URL, "secret", server.Client())
@@ -50,6 +58,9 @@ func TestGetReviewContextMapsTypedStructuredContent(t *testing.T) {
 	}
 	if got.Key != key || got.NextState != "source_review_ready" || got.Workspace != "/home/dev/dsh-crew" {
 		t.Fatalf("context = %+v", got)
+	}
+	if !bytes.Equal(got.Material, wantMaterial) {
+		t.Fatalf("material = %s, want %s", got.Material, wantMaterial)
 	}
 	if gotRequest.Method != "tools/call" || gotRequest.Params.Name != "get_review_context" {
 		t.Fatalf("request = %+v", gotRequest)

@@ -210,9 +210,9 @@ func classifyCode(operation, code, message string) error {
 	return fmt.Errorf("Den MCP %s: %s", operation, text)
 }
 
-// Context response fields are intentionally a narrow subset of Den's bounded
-// reviewer context. Unknown fields remain available to Den but cannot leak
-// into the runtime-neutral review service.
+// Context response fields are the subset needed to validate that the bounded
+// Den reviewer context belongs to the admitted review. The original bounded
+// structuredContent is retained separately as private prompt material.
 type contextResponse struct {
 	ProjectID    string        `json:"project_id"`
 	TaskID       int64         `json:"task_id"`
@@ -266,7 +266,12 @@ func (c *Client) GetReviewContext(ctx context.Context, key review.Key) (review.C
 	if workspace == "" {
 		workspace = strings.TrimSpace(response.Task.RepositoryHandle)
 	}
-	return review.Context{Key: key, NextState: strings.TrimSpace(response.NextState), Workspace: workspace}, nil
+	return review.Context{
+		Key:       key,
+		NextState: strings.TrimSpace(response.NextState),
+		Workspace: workspace,
+		Material:  append(json.RawMessage(nil), data...),
+	}, nil
 }
 
 type requestReviewResponse struct {

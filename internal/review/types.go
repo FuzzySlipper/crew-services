@@ -4,6 +4,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -294,6 +295,10 @@ type Context struct {
 	NextState string
 	Profile   string
 	Workspace string
+	// Material is the bounded, validated Den structuredContent for this review.
+	// It is private prompt input only: jobs and public pool projections must not
+	// persist or expose it.
+	Material json.RawMessage
 }
 
 func (c Context) ReviewableFor(k Key) bool { return c.Key == k && c.NextState == "source_review_ready" }

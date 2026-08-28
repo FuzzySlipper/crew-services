@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,6 +73,7 @@ type fakeRuntime struct {
 	runErr          error
 	completed       chan struct{}
 	afterCompletion chan struct{}
+	prompt          string
 }
 
 func (r *fakeRuntime) Acquire(context.Context, TaskKey, string, string) (Worker, error) {
@@ -80,9 +82,10 @@ func (r *fakeRuntime) Acquire(context.Context, TaskKey, string, string) (Worker,
 	r.acquired++
 	return r.acquired, nil
 }
-func (r *fakeRuntime) Run(ctx context.Context, _ Worker, _ string, complete func(Completion) error) error {
+func (r *fakeRuntime) Run(ctx context.Context, _ Worker, prompt string, complete func(Completion) error) error {
 	r.mu.Lock()
 	r.running++
+	r.prompt = prompt
 	if r.running > r.max {
 		r.max = r.running
 	}
@@ -126,6 +129,12 @@ func (r *fakeRuntime) Release(context.Context, Worker) error {
 	return nil
 }
 func (*fakeRuntime) Close() error { return nil }
+
+func (r *fakeRuntime) Prompt() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.prompt
+}
 
 func fixture(t *testing.T, capacity int) (*Service, *SQLiteStore, *fakeDen, *fakeRuntime, Admission) {
 	t.Helper()
@@ -271,6 +280,34 @@ func TestStaleContextPreventsRuntime(t *testing.T) {
 	got, e := svc.Get(context.Background(), j.ID)
 	if e != nil || got.State != Stale || runtime.acquired != 0 {
 		t.Fatalf("job=%+v acquired=%d err=%v", got, runtime.acquired, e)
+	}
+}
+
+func TestRuntimePromptCarriesAuthoritativeBoundedDenContext(t *testing.T) {
+	svc, store, den, runtime, a := fixture(t, 1)
+	defer store.Close()
+	material := []byte(`{"schema":"den_review.reviewer_context.v1","prior_findings":[{"id":"R7413-1","body":"check the stale claim"}],"rereview_packet":{"round":2,"addresses":["R7413-1"],"request":"verify the fix"}}`)
+	den.contexts[a.Key.ReviewRoundID] = Context{
+		Key:       a.Key,
+		NextState: "source_review_ready",
+		Workspace: "/repo",
+		Material:  material,
+	}
+	if _, _, err := svc.Admit(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	prompt := runtime.Prompt()
+	if !strings.Contains(prompt, "authoritative bounded Den reviewer context") || !strings.Contains(prompt, "Do not attempt a second Den fetch") {
+		t.Fatalf("prompt did not identify the authoritative handoff: %q", prompt)
+	}
+	if !strings.Contains(prompt, "<den_reviewer_context>\n"+string(material)+"\n</den_reviewer_context>") {
+		t.Fatalf("prompt did not preserve exact Den material: %q", prompt)
+	}
+	if !strings.Contains(prompt, `"prior_findings"`) || !strings.Contains(prompt, `"rereview_packet"`) {
+		t.Fatalf("prompt omitted prior findings or rereview packet: %q", prompt)
 	}
 }
 
