@@ -124,6 +124,11 @@ func call(thread, turn, verdict string) json.RawMessage {
 	return b
 }
 
+func callWithArguments(thread, turn string, arguments map[string]any) json.RawMessage {
+	b, _ := json.Marshal(map[string]any{"threadId": thread, "turnId": turn, "callId": "call", "tool": "complete_review", "arguments": arguments})
+	return b
+}
+
 func TestEphemeralProfileAndSchema(t *testing.T) {
 	r, s := runtimeFixture(t)
 	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "/repo")
@@ -140,6 +145,76 @@ func TestEphemeralProfileAndSchema(t *testing.T) {
 	if e = r.Release(context.Background(), w); e != nil {
 		t.Fatal(e)
 	}
+}
+
+func TestCompletionToolConstrainsDenFindingValues(t *testing.T) {
+	raw, e := json.Marshal(completionTool())
+	if e != nil {
+		t.Fatal(e)
+	}
+	var tools []struct {
+		InputSchema struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"inputSchema"`
+	}
+	if e = json.Unmarshal(raw, &tools); e != nil {
+		t.Fatal(e)
+	}
+	if len(tools) != 1 {
+		t.Fatalf("tool count=%d", len(tools))
+	}
+	assertNestedEnum(t, tools[0].InputSchema.Properties["new_findings"], []string{"blocking_bug", "acceptance_gap", "test_weakness", "follow_up_candidate"})
+	assertNestedEnum(t, tools[0].InputSchema.Properties["prior_finding_resolutions"], []string{"verified_fixed", "not_fixed", "superseded", "split_to_follow_up"})
+}
+
+func assertNestedEnum(t *testing.T, raw json.RawMessage, want []string) {
+	t.Helper()
+	var schema struct {
+		Items struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"items"`
+	}
+	if e := json.Unmarshal(raw, &schema); e != nil {
+		t.Fatal(e)
+	}
+	field := "category"
+	if schema.Items.Properties[field] == nil {
+		field = "status"
+	}
+	var value struct {
+		Enum []string `json:"enum"`
+	}
+	if e := json.Unmarshal(schema.Items.Properties[field], &value); e != nil {
+		t.Fatal(e)
+	}
+	if len(value.Enum) != len(want) {
+		t.Fatalf("%s enum=%v, want %v", field, value.Enum, want)
+	}
+	for i := range want {
+		if value.Enum[i] != want[i] {
+			t.Fatalf("%s enum=%v, want %v", field, value.Enum, want)
+		}
+	}
+}
+
+func TestToolRejectsInvalidDenFindingValues(t *testing.T) {
+	r, s := runtimeFixture(t)
+	cases := []struct {
+		name      string
+		arguments map[string]any
+	}{
+		{name: "category", arguments: map[string]any{"verdict": "changes_requested", "new_findings": []map[string]any{{"category": "arbitrary", "summary": "bad enum"}}}},
+		{name: "resolution status", arguments: map[string]any{"verdict": "looks_good", "prior_finding_resolutions": []map[string]any{{"finding_id": 1, "status": "arbitrary", "verification_note": "bad enum"}}}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			out, e := s.handler(context.Background(), callWithArguments("thread", "turn", testCase.arguments))
+			if e != nil || !strings.Contains(string(out), "invalid completion arguments") {
+				t.Fatalf("result=%s err=%v", out, e)
+			}
+		})
+	}
+	_ = r
 }
 func TestSequentialTurnsAndCompletionRules(t *testing.T) {
 	r, s := runtimeFixture(t)

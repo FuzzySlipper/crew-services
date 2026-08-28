@@ -205,9 +205,40 @@ type NewFinding struct {
 }
 
 func (c Completion) valid() bool {
-	return c.Verdict == "looks_good" || c.Verdict == "changes_requested"
+	if c.Verdict != "looks_good" && c.Verdict != "changes_requested" {
+		return false
+	}
+	for _, finding := range c.NewFindings {
+		if !validFindingCategory(finding.Category) {
+			return false
+		}
+	}
+	for _, resolution := range c.PriorResolutions {
+		if !validFindingResolutionStatus(resolution.Status) {
+			return false
+		}
+	}
+	return true
 }
 func (c Completion) Valid() bool { return c.valid() }
+
+func validFindingCategory(category string) bool {
+	switch category {
+	case "blocking_bug", "acceptance_gap", "test_weakness", "follow_up_candidate":
+		return true
+	default:
+		return false
+	}
+}
+
+func validFindingResolutionStatus(status string) bool {
+	switch status {
+	case "verified_fixed", "not_fixed", "superseded", "split_to_follow_up":
+		return true
+	default:
+		return false
+	}
+}
 
 type Finalization struct {
 	Key        Key        `json:"key"`
