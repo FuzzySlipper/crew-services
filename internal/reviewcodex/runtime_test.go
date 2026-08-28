@@ -125,7 +125,11 @@ func runtimeFixture(t *testing.T) (*Runtime, *fakeServer) {
 	return r, server
 }
 func call(thread, turn, verdict string) json.RawMessage {
-	b, _ := json.Marshal(map[string]any{"threadId": thread, "turnId": turn, "callId": "call", "tool": "complete_review", "arguments": map[string]any{"verdict": verdict, "notes": "ok"}})
+	arguments := map[string]any{"verdict": verdict, "notes": "ok"}
+	if verdict == "changes_requested" {
+		arguments["new_findings"] = []map[string]any{{"category": "blocking_bug", "summary": "current round regression"}}
+	}
+	b, _ := json.Marshal(map[string]any{"threadId": thread, "turnId": turn, "callId": "call", "tool": "complete_review", "arguments": arguments})
 	return b
 }
 
@@ -143,7 +147,7 @@ func TestEphemeralProfileAndSchema(t *testing.T) {
 	if len(s.options) != 1 || !s.options[0].ReadOnly || s.options[0].CWD != "/repo" || !strings.Contains(s.options[0].DeveloperInstructions, "Managed review runtime") {
 		t.Fatalf("options=%+v", s.options)
 	}
-	if !strings.Contains(s.options[0].DeveloperInstructions, "blocking_bug, acceptance_gap, test_weakness, or follow_up_candidate") || !strings.Contains(s.options[0].DeveloperInstructions, "verified_fixed, not_fixed, superseded, or split_to_follow_up") {
+	if !strings.Contains(s.options[0].DeveloperInstructions, "blocking_bug, acceptance_gap, test_weakness, or follow_up_candidate") || !strings.Contains(s.options[0].DeveloperInstructions, "verified_fixed, not_fixed, superseded, or split_to_follow_up") || !strings.Contains(s.options[0].DeveloperInstructions, "prior-finding resolution with status not_fixed alone is insufficient") {
 		t.Fatalf("instructions do not name allowed values: %q", s.options[0].DeveloperInstructions)
 	}
 	raw, _ := json.Marshal(completionTool())
@@ -161,6 +165,7 @@ func TestCompletionToolConstrainsDenFindingValues(t *testing.T) {
 		t.Fatal(e)
 	}
 	var tools []struct {
+		Description string `json:"description"`
 		InputSchema struct {
 			Properties map[string]json.RawMessage `json:"properties"`
 		} `json:"inputSchema"`
@@ -170,6 +175,9 @@ func TestCompletionToolConstrainsDenFindingValues(t *testing.T) {
 	}
 	if len(tools) != 1 {
 		t.Fatalf("tool count=%d", len(tools))
+	}
+	if !strings.Contains(tools[0].Description, "changes_requested verdict requires at least one valid new finding") || !strings.Contains(tools[0].Description, "not_fixed alone is insufficient") {
+		t.Fatalf("tool description does not explain actionable findings: %q", tools[0].Description)
 	}
 	assertNestedEnum(t, tools[0].InputSchema.Properties["new_findings"], []string{"blocking_bug", "acceptance_gap", "test_weakness", "follow_up_candidate"})
 	assertNestedEnum(t, tools[0].InputSchema.Properties["prior_finding_resolutions"], []string{"verified_fixed", "not_fixed", "superseded", "split_to_follow_up"})
@@ -211,6 +219,8 @@ func TestToolRejectsInvalidDenFindingValues(t *testing.T) {
 		name      string
 		arguments map[string]any
 	}{
+		{name: "changes requested without finding", arguments: map[string]any{"verdict": "changes_requested"}},
+		{name: "prior not fixed without current finding", arguments: map[string]any{"verdict": "changes_requested", "prior_finding_resolutions": []map[string]any{{"finding_id": 1, "status": "not_fixed", "verification_note": "still fails"}}}},
 		{name: "category", arguments: map[string]any{"verdict": "changes_requested", "new_findings": []map[string]any{{"category": "arbitrary", "summary": "bad enum"}}}},
 		{name: "resolution status", arguments: map[string]any{"verdict": "looks_good", "prior_finding_resolutions": []map[string]any{{"finding_id": 1, "status": "arbitrary", "verification_note": "bad enum"}}}},
 	}

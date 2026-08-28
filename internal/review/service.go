@@ -57,8 +57,18 @@ func New(store Store, den DenReviewClient, runtime ReviewerRuntime, profile stri
 	return s, nil
 }
 func (s *Service) Admit(ctx context.Context, a Admission) (Job, bool, error) {
+	return s.admit(ctx, a, s.store.Admit)
+}
+
+// admitRound retains Den's round-scoped uniqueness behavior while applying the
+// same service-owned idle-affinity policy as ordinary admissions.
+func (s *Service) admitRound(ctx context.Context, a Admission) (Job, bool, error) {
+	return s.admit(ctx, a, s.store.AdmitRound)
+}
+
+func (s *Service) admit(ctx context.Context, a Admission, admit func(context.Context, Admission) (Job, bool, error)) (Job, bool, error) {
 	s.reapExpired(ctx)
-	job, replayed, err := s.store.Admit(ctx, a)
+	job, replayed, err := admit(ctx, a)
 	if err == nil && !replayed {
 		s.mu.Lock()
 		if retained := s.affinities[a.Key.Task()]; retained != nil && !retained.busy {

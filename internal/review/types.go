@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -209,8 +210,14 @@ func (c Completion) valid() bool {
 	if c.Verdict != "looks_good" && c.Verdict != "changes_requested" {
 		return false
 	}
+	// A changes_requested verdict is actionable only when it records a new
+	// finding for this controller-bound review round. Prior resolutions describe
+	// earlier findings and cannot stand in for a current-round finding.
+	if c.Verdict == "changes_requested" && len(c.NewFindings) == 0 {
+		return false
+	}
 	for _, finding := range c.NewFindings {
-		if !validFindingCategory(finding.Category) {
+		if !validNewFinding(finding) {
 			return false
 		}
 	}
@@ -222,6 +229,10 @@ func (c Completion) valid() bool {
 	return true
 }
 func (c Completion) Valid() bool { return c.valid() }
+
+func validNewFinding(finding NewFinding) bool {
+	return validFindingCategory(finding.Category) && strings.TrimSpace(finding.Summary) != ""
+}
 
 func validFindingCategory(category string) bool {
 	switch category {

@@ -256,7 +256,7 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 		}
 		return s.submissionStale(ctx, store, record, "Den current review context is no longer source_review_ready")
 	}
-	job, _, err := s.store.AdmitRound(ctx, Admission{
+	job, _, err := s.admitRound(ctx, Admission{
 		IdempotencyKey: "crew-review-round:" + record.Request.ProjectID + ":" + strconv.FormatInt(record.ReviewRoundID, 10),
 		Key:            key,
 		Reviewer:       record.Request.Reviewer,

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 const submissionTestSHA = "0123456789abcdef0123456789abcdef01234567"
@@ -44,8 +45,8 @@ func (d *submissionDen) GetReviewContext(_ context.Context, key Key) (Context, e
 	return Context{Key: key, NextState: next, Workspace: "/repo"}, nil
 }
 
-func (*submissionDen) FinalizeReview(context.Context, Finalization) (Receipt, error) {
-	return Receipt{}, nil
+func (*submissionDen) FinalizeReview(_ context.Context, finalization Finalization) (Receipt, error) {
+	return Receipt{Verdict: finalization.Completion.Verdict}, nil
 }
 
 func (d *submissionDen) RequestReview(_ context.Context, request SubmissionRequest) (ReviewRoundRef, error) {
@@ -195,6 +196,67 @@ func TestSubmitTaskForReviewWithoutRequiredChecksRecordsPassedEvidenceAndAdmitsO
 	}
 	if jobs != 1 {
 		t.Fatalf("no-checks job count=%d, want one", jobs)
+	}
+}
+
+func TestManagedRereviewAdmissionRefreshesIdleAffinityButReplayDoesNot(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)}
+	store, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), clock, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	den := &submissionDen{roundID: 7}
+	runtime := &fakeRuntime{completion: changesRequestedCompletion()}
+	service, err := New(store, den, runtime, "review profile", WithClock(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRequest := submissionRequestForTest()
+	firstRequest.RequiredChecks = nil
+	first, replayed, err := service.SubmitTaskForReview(context.Background(), firstRequest)
+	if err != nil || replayed || first.Phase != SubmissionJobAdmitted || first.JobID == "" {
+		t.Fatalf("first receipt=%+v replayed=%v err=%v", first, replayed, err)
+	}
+	if _, err := service.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := service.Snapshot(context.Background(), 5)
+	if err != nil || len(before.Retained) != 1 {
+		t.Fatalf("first affinity=%+v err=%v", before, err)
+	}
+	if want := clock.Now().Add(12 * time.Hour); !before.Retained[0].ExpiresAt.Equal(want) {
+		t.Fatalf("first expiry=%s want %s", before.Retained[0].ExpiresAt, want)
+	}
+
+	clock.Advance(time.Hour)
+	den.roundID = 8
+	secondRequest := firstRequest
+	secondRequest.CommitSHA = "fedcba9876543210fedcba9876543210fedcba98"
+	second, replayed, err := service.SubmitTaskForReview(context.Background(), secondRequest)
+	if err != nil || replayed || second.Phase != SubmissionJobAdmitted || second.JobID == "" || second.JobID == first.JobID {
+		t.Fatalf("rereview receipt=%+v replayed=%v err=%v", second, replayed, err)
+	}
+	refreshed, err := service.Snapshot(context.Background(), 5)
+	if err != nil || len(refreshed.Retained) != 1 {
+		t.Fatalf("refreshed affinity=%+v err=%v", refreshed, err)
+	}
+	wantExpiry := clock.Now().Add(12 * time.Hour)
+	if !refreshed.Retained[0].ExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("rereview expiry=%s want %s", refreshed.Retained[0].ExpiresAt, wantExpiry)
+	}
+
+	clock.Advance(time.Hour)
+	replayedReceipt, replayed, err := service.SubmitTaskForReview(context.Background(), secondRequest)
+	if err != nil || !replayed || replayedReceipt.JobID != second.JobID {
+		t.Fatalf("rereview replay=%+v replayed=%v err=%v", replayedReceipt, replayed, err)
+	}
+	afterReplay, err := service.Snapshot(context.Background(), 5)
+	if err != nil || len(afterReplay.Retained) != 1 {
+		t.Fatalf("replay affinity=%+v err=%v", afterReplay, err)
+	}
+	if !afterReplay.Retained[0].ExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("replay refreshed expiry=%s want %s", afterReplay.Retained[0].ExpiresAt, wantExpiry)
 	}
 }
 

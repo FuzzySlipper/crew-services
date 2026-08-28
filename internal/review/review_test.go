@@ -153,6 +153,51 @@ func fixture(t *testing.T, capacity int) (*Service, *SQLiteStore, *fakeDen, *fak
 	return svc, store, den, runtime, Admission{IdempotencyKey: "idem-1", Key: key, Reviewer: "reviewer", Workspace: "/repo"}
 }
 
+func changesRequestedCompletion() Completion {
+	return Completion{Verdict: "changes_requested", NewFindings: []NewFinding{{Category: "blocking_bug", Summary: "current round regression"}}}
+}
+
+func TestChangesRequestedCompletionRequiresCurrentRoundNewFinding(t *testing.T) {
+	cases := []struct {
+		name       string
+		completion Completion
+		want       bool
+	}{
+		{name: "looks good", completion: Completion{Verdict: "looks_good"}, want: true},
+		{name: "no finding", completion: Completion{Verdict: "changes_requested"}},
+		{name: "prior not fixed only", completion: Completion{Verdict: "changes_requested", PriorResolutions: []FindingResolution{{FindingID: 1, Status: "not_fixed", VerificationNote: "still fails"}}}},
+		{name: "missing summary", completion: Completion{Verdict: "changes_requested", NewFindings: []NewFinding{{Category: "blocking_bug"}}}},
+		{name: "new current finding", completion: changesRequestedCompletion(), want: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := testCase.completion.Valid(); got != testCase.want {
+				t.Fatalf("Valid() = %v, want %v for %+v", got, testCase.want, testCase.completion)
+			}
+		})
+	}
+}
+
+func TestInvalidChangesRequestedDoesNotReachDenFinalization(t *testing.T) {
+	svc, store, den, runtime, admission := fixture(t, 1)
+	defer store.Close()
+	runtime.completion = Completion{
+		Verdict:          "changes_requested",
+		PriorResolutions: []FindingResolution{{FindingID: 1, Status: "not_fixed", VerificationNote: "still fails"}},
+	}
+	job, _, err := svc.Admit(context.Background(), admission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Get(context.Background(), job.ID)
+	if err != nil || got.State != Failed || den.calls != 0 {
+		t.Fatalf("job=%+v Den finalizations=%d err=%v", got, den.calls, err)
+	}
+}
+
 func TestAdmissionConflictAndSafeProjection(t *testing.T) {
 	svc, store, _, _, a := fixture(t, 1)
 	defer store.Close()
@@ -528,7 +573,7 @@ func TestFinalizationClaimAndSameTaskSerialization(t *testing.T) {
 func TestRuntimeCallbackOwnsFinalizationUntilTurnCompletes(t *testing.T) {
 	svc, store, _, runtime, a := fixture(t, 2)
 	defer store.Close()
-	runtime.completion = Completion{Verdict: "changes_requested"}
+	runtime.completion = changesRequestedCompletion()
 	runtime.completed = make(chan struct{}, 1)
 	runtime.afterCompletion = make(chan struct{})
 	if _, _, err := svc.Admit(context.Background(), a); err != nil {
@@ -590,7 +635,7 @@ func TestChangesRequestedRetainsRereviewRefreshesAndExpiryReleases(t *testing.T)
 	defer store.Close()
 	key := Key{ProjectID: "dsh", TaskID: 1, ReviewRoundID: 1, CorrelationID: "c1"}
 	den := &fakeDen{contexts: map[int64]Context{1: {Key: key, NextState: "source_review_ready"}}, receipts: map[int64]Receipt{}}
-	runtime := &fakeRuntime{completion: Completion{Verdict: "changes_requested"}}
+	runtime := &fakeRuntime{completion: changesRequestedCompletion()}
 	svc, err := New(store, den, runtime, "profile", WithClock(clock))
 	if err != nil {
 		t.Fatal(err)
@@ -660,7 +705,7 @@ func TestRetainedTaskClaimBeatsOlderNewTask(t *testing.T) {
 	defer store.Close()
 	first := Key{ProjectID: "dsh", TaskID: 1, ReviewRoundID: 1, CorrelationID: "a"}
 	den := &fakeDen{contexts: map[int64]Context{1: {Key: first, NextState: "source_review_ready"}}, receipts: map[int64]Receipt{}}
-	runtime := &fakeRuntime{completion: Completion{Verdict: "changes_requested"}}
+	runtime := &fakeRuntime{completion: changesRequestedCompletion()}
 	svc, e := New(store, den, runtime, "profile", WithClock(clock))
 	if e != nil {
 		t.Fatal(e)
@@ -710,7 +755,7 @@ func TestReplayDoesNotRefreshAffinityDeadlineOrRestartPersistIt(t *testing.T) {
 	defer store.Close()
 	key := Key{ProjectID: "dsh", TaskID: 1, ReviewRoundID: 1, CorrelationID: "a"}
 	den := &fakeDen{contexts: map[int64]Context{1: {Key: key, NextState: "source_review_ready"}}, receipts: map[int64]Receipt{}}
-	runtime := &fakeRuntime{completion: Completion{Verdict: "changes_requested"}}
+	runtime := &fakeRuntime{completion: changesRequestedCompletion()}
 	svc, e := New(store, den, runtime, "profile", WithClock(clock))
 	if e != nil {
 		t.Fatal(e)
@@ -744,7 +789,7 @@ func TestReplayDoesNotRefreshAffinityDeadlineOrRestartPersistIt(t *testing.T) {
 func TestManualAffinityReleaseRejectsBusyThenReleasesIdle(t *testing.T) {
 	svc, store, _, runtime, a := fixture(t, 1)
 	defer store.Close()
-	runtime.completion = Completion{Verdict: "changes_requested"}
+	runtime.completion = changesRequestedCompletion()
 	if _, _, e := svc.Admit(context.Background(), a); e != nil {
 		t.Fatal(e)
 	}
