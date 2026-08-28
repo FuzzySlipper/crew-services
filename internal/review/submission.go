@@ -80,9 +80,6 @@ func normalizeSubmissionRequest(request SubmissionRequest) (SubmissionRequest, e
 	if request.Ref == "" {
 		return SubmissionRequest{}, errors.New("ref is required")
 	}
-	if len(request.RequiredChecks) == 0 {
-		return SubmissionRequest{}, errors.New("required_checks must contain at least one check")
-	}
 	checks := make([]string, 0, len(request.RequiredChecks))
 	seen := make(map[string]struct{}, len(request.RequiredChecks))
 	for _, raw := range request.RequiredChecks {
@@ -167,7 +164,19 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 
 	gate := record.Gate
 	var err error
-	if gate.Handle == "" {
+	if len(record.Request.RequiredChecks) == 0 {
+		gate = noRequiredChecksGate(record.Request)
+		if record.Gate != gate || record.Phase != SubmissionGatePassed {
+			record, err = s.transitionSubmission(ctx, store, record, SubmissionTransition{
+				Phase:   SubmissionGatePassed,
+				Gate:    &gate,
+				Failure: emptyStringPtr(),
+			})
+			if err != nil {
+				return SubmissionReceipt{}, err
+			}
+		}
+	} else if gate.Handle == "" {
 		gate, err = den.WatchGitHubChecks(ctx, submissionGateRequest(record.Request))
 		if err != nil {
 			return s.submissionUnavailable(ctx, store, record, "den_watch_github_checks_unavailable", err.Error(), true)
@@ -268,6 +277,20 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 
 func submissionGateRequest(request SubmissionRequest) GateRequest {
 	return GateRequest{ProjectID: request.ProjectID, TaskID: request.TaskID, Repository: request.Repository, CommitSHA: request.CommitSHA, Ref: request.Ref, RequiredChecks: request.RequiredChecks, RequestedBy: request.Reviewer}
+}
+
+// noRequiredChecksGate records the deliberate no-gate path in the same
+// provider-neutral evidence shape as a Den GitHub gate. The public field is
+// still required, but an empty list means this submission has no checks to
+// watch; Den review context remains the authority before local job admission.
+func noRequiredChecksGate(request SubmissionRequest) GateEvidence {
+	return GateEvidence{
+		Repository:     request.Repository,
+		Ref:            request.Ref,
+		CommitSHA:      request.CommitSHA,
+		Status:         "passed",
+		TerminalReason: "no_required_checks",
+	}
 }
 
 func gatePhase(status string) SubmissionPhase {

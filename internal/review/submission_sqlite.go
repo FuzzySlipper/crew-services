@@ -11,7 +11,7 @@ import (
 )
 
 func (s *SQLiteStore) AdmitSubmission(ctx context.Context, request SubmissionRequest, idempotencyKey, materialHash string) (SubmissionRecord, bool, error) {
-	if request.ProjectID == "" || request.TaskID <= 0 || request.Repository == "" || request.CommitSHA == "" || request.Ref == "" || len(request.RequiredChecks) == 0 || request.ReviewSummary == "" || request.Reviewer == "" {
+	if request.ProjectID == "" || request.TaskID <= 0 || request.Repository == "" || request.CommitSHA == "" || request.Ref == "" || request.ReviewSummary == "" || request.Reviewer == "" {
 		return SubmissionRecord{}, false, errors.New("invalid review submission")
 	}
 	if idempotencyKey == "" || materialHash == "" {

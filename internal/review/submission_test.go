@@ -162,6 +162,42 @@ func TestSubmitTaskForReviewPendingThenPassReplaysAndAdmitsOneJob(t *testing.T) 
 	}
 }
 
+func TestSubmitTaskForReviewWithoutRequiredChecksRecordsPassedEvidenceAndAdmitsOneJob(t *testing.T) {
+	den := &submissionDen{
+		watchGate: GateEvidence{Status: "failed", Handle: "must-not-be-used"},
+	}
+	service, store, _ := submissionFixture(t, den)
+	defer store.Close()
+	request := submissionRequestForTest()
+	request.RequiredChecks = []string{}
+
+	first, replayed, err := service.SubmitTaskForReview(context.Background(), request)
+	if err != nil || replayed || !first.OK || first.Phase != SubmissionJobAdmitted || first.JobID == "" {
+		t.Fatalf("no-checks receipt=%+v replayed=%v err=%v", first, replayed, err)
+	}
+	if first.GateStatus != "passed" || first.GateTerminalReason != "no_required_checks" {
+		t.Fatalf("no-checks gate evidence = status=%q terminal_reason=%q", first.GateStatus, first.GateTerminalReason)
+	}
+	if den.requestCalls != 1 || den.watchCalls != 0 || den.readCalls != 0 || den.contextCalls != 1 {
+		t.Fatalf("no-checks Den calls request=%d watch=%d read=%d context=%d", den.requestCalls, den.watchCalls, den.readCalls, den.contextCalls)
+	}
+
+	second, replayed, err := service.SubmitTaskForReview(context.Background(), request)
+	if err != nil || !replayed || second.SubmissionID != first.SubmissionID || second.JobID != first.JobID {
+		t.Fatalf("no-checks replay receipt=%+v replayed=%v err=%v", second, replayed, err)
+	}
+	if den.requestCalls != 1 || den.watchCalls != 0 || den.readCalls != 0 || den.contextCalls != 1 {
+		t.Fatalf("no-checks replay made Den gate calls request=%d watch=%d read=%d context=%d", den.requestCalls, den.watchCalls, den.readCalls, den.contextCalls)
+	}
+	var jobs int
+	if err := store.db.QueryRowContext(context.Background(), `SELECT count(*) FROM crew_review_jobs`).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 1 {
+		t.Fatalf("no-checks job count=%d, want one", jobs)
+	}
+}
+
 func TestSubmitTaskForReviewGateFailureIsTerminal(t *testing.T) {
 	den := &submissionDen{watchGate: GateEvidence{
 		Repository: "owner/repo", Ref: "main", CommitSHA: submissionTestSHA, Status: "failed", Handle: "42",
