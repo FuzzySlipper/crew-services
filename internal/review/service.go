@@ -57,7 +57,8 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 	}
 	defer s.runtime.Release(context.Background(), w)
 	completionStored := false
-	runErr := s.runtime.Run(ctx, w, "Review the current Den reviewer context and complete only through the bound result.", func(candidate Completion) error {
+	prompt := fmt.Sprintf("Review Den project %q task %d review round %d (correlation %q). Load the current Den reviewer context; use only the controller-bound completion result.", j.Admission.Key.ProjectID, j.Admission.Key.TaskID, j.Admission.Key.ReviewRoundID, j.Admission.Key.CorrelationID)
+	runErr := s.runtime.Run(ctx, w, prompt, func(candidate Completion) error {
 		if !candidate.valid() {
 			return errors.New("runtime returned invalid review verdict")
 		}

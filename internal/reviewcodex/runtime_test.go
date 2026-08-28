@@ -1,0 +1,299 @@
+package reviewcodex
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"crew-services/internal/codexadapter"
+	"crew-services/internal/review"
+)
+
+type fakeServer struct {
+	mu           sync.Mutex
+	handler      func(context.Context, json.RawMessage) (json.RawMessage, error)
+	options      []codexadapter.EphemeralThreadOptions
+	next         int
+	starts       chan string
+	waits        map[string]chan codexadapter.TurnCompletion
+	forgotten    []string
+	closed       bool
+	startErr     error
+	interactions []codexadapter.NativeInteraction
+	interrupts   []string
+	startBlock   chan struct{}
+}
+
+func (f *fakeServer) Initialize(context.Context) error { return nil }
+func (f *fakeServer) SetDynamicToolHandler(h func(context.Context, json.RawMessage) (json.RawMessage, error)) {
+	f.handler = h
+}
+func (f *fakeServer) StartEphemeralThread(_ context.Context, o codexadapter.EphemeralThreadOptions) (codexadapter.NativeThread, error) {
+	f.mu.Lock()
+	if f.startErr != nil {
+		err := f.startErr
+		f.mu.Unlock()
+		return codexadapter.NativeThread{}, err
+	}
+	block := f.startBlock
+	f.mu.Unlock()
+	if block != nil {
+		<-block
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.next++
+	f.options = append(f.options, o)
+	return codexadapter.NativeThread{ID: "thread-" + itoa(f.next)}, nil
+}
+func (f *fakeServer) StartEphemeralTurn(_ context.Context, thread, _ string) (codexadapter.StartedTurn, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.next++
+	id := "turn-" + itoa(f.next)
+	if f.waits == nil {
+		f.waits = map[string]chan codexadapter.TurnCompletion{}
+	}
+	f.waits[thread+"/"+id] = make(chan codexadapter.TurnCompletion, 1)
+	if f.starts != nil {
+		f.starts <- thread + "/" + id
+	}
+	return codexadapter.StartedTurn{ID: id}, nil
+}
+func (f *fakeServer) WaitTurn(ctx context.Context, thread, turn string) (codexadapter.TurnCompletion, error) {
+	f.mu.Lock()
+	ch := f.waits[thread+"/"+turn]
+	f.mu.Unlock()
+	select {
+	case v := <-ch:
+		return v, nil
+	case <-ctx.Done():
+		return codexadapter.TurnCompletion{}, ctx.Err()
+	}
+}
+func (f *fakeServer) finish(thread, turn string) {
+	f.mu.Lock()
+	ch := f.waits[thread+"/"+turn]
+	f.mu.Unlock()
+	ch <- codexadapter.TurnCompletion{ThreadID: thread, TurnID: turn, Status: "completed"}
+}
+func (f *fakeServer) ForgetThread(thread string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.forgotten = append(f.forgotten, thread)
+}
+func (f *fakeServer) Interactions() []codexadapter.NativeInteraction {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]codexadapter.NativeInteraction(nil), f.interactions...)
+}
+func (f *fakeServer) Interrupt(_ context.Context, thread, turn string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.interrupts = append(f.interrupts, thread+"/"+turn)
+	return nil
+}
+func (f *fakeServer) Close() error { f.closed = true; return nil }
+func itoa(n int) string {
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	return "x"
+}
+func runtimeFixture(t *testing.T) (*Runtime, *fakeServer) {
+	t.Helper()
+	profile := filepath.Join(t.TempDir(), "SOUL.md")
+	if e := os.WriteFile(profile, []byte("review procedure"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	server := &fakeServer{}
+	r, e := NewWithServer(context.Background(), server, 2, profile)
+	if e != nil {
+		t.Fatal(e)
+	}
+	return r, server
+}
+func call(thread, turn, verdict string) json.RawMessage {
+	b, _ := json.Marshal(map[string]any{"threadId": thread, "turnId": turn, "callId": "call", "tool": "complete_review", "arguments": map[string]any{"verdict": verdict, "notes": "ok"}})
+	return b
+}
+
+func TestEphemeralProfileAndSchema(t *testing.T) {
+	r, s := runtimeFixture(t)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "/repo")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(s.options) != 1 || !s.options[0].ReadOnly || s.options[0].CWD != "/repo" || !strings.Contains(s.options[0].DeveloperInstructions, "Managed review runtime") {
+		t.Fatalf("options=%+v", s.options)
+	}
+	raw, _ := json.Marshal(completionTool())
+	if strings.Contains(string(raw), "project_id") || strings.Contains(string(raw), "review_round_id") || strings.Contains(string(raw), "correlation_id") {
+		t.Fatalf("tool leaks controller identity: %s", raw)
+	}
+	if e = r.Release(context.Background(), w); e != nil {
+		t.Fatal(e)
+	}
+}
+func TestSequentialTurnsAndCompletionRules(t *testing.T) {
+	r, s := runtimeFixture(t)
+	s.starts = make(chan string, 2)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "/repo")
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, verdict := range []string{"looks_good", "changes_requested"} {
+		done := make(chan error, 1)
+		calls := 0
+		go func() {
+			done <- r.Run(context.Background(), w, "review", func(review.Completion) error { calls++; return nil })
+		}()
+		pair := <-s.starts
+		parts := strings.Split(pair, "/")
+		if _, e := s.handler(context.Background(), call(parts[0], parts[1], verdict)); e != nil {
+			t.Fatal(e)
+		}
+		if _, e := s.handler(context.Background(), call(parts[0], parts[1], verdict)); e != nil {
+			t.Fatal(e)
+		}
+		other := "looks_good"
+		if verdict == other {
+			other = "changes_requested"
+		}
+		if out, e := s.handler(context.Background(), call(parts[0], parts[1], other)); e != nil || !strings.Contains(string(out), "conflicting") {
+			t.Fatalf("conflict=%s %v", out, e)
+		}
+		s.finish(parts[0], parts[1])
+		if e := <-done; e != nil {
+			t.Fatal(e)
+		}
+		if calls != 1 {
+			t.Fatalf("calls=%d", calls)
+		}
+	}
+}
+func TestMissingCompletionPoolBoundAndRelease(t *testing.T) {
+	r, s := runtimeFixture(t)
+	s.starts = make(chan string, 1)
+	w1, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	w2, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 3}, "", ""); e == nil {
+		t.Fatal("capacity accepted third worker")
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- r.Run(context.Background(), w1, "review", func(review.Completion) error { return nil })
+	}()
+	pair := <-s.starts
+	parts := strings.Split(pair, "/")
+	s.finish(parts[0], parts[1])
+	if e := <-done; e == nil || !strings.Contains(e.Error(), "without complete_review") {
+		t.Fatalf("missing completion=%v", e)
+	}
+	if e = r.Release(context.Background(), w1); e != nil {
+		t.Fatal(e)
+	}
+	if e = r.Release(context.Background(), w2); e != nil {
+		t.Fatal(e)
+	}
+	if e = r.Run(context.Background(), w1, "", func(review.Completion) error { return nil }); e == nil {
+		t.Fatal("released worker accepted")
+	}
+}
+func TestToolRejectsLateAndForeignThread(t *testing.T) {
+	r, s := runtimeFixture(t)
+	if _, e := s.handler(context.Background(), call("gone", "turn", "looks_good")); e != nil {
+		t.Fatal(e)
+	}
+	if !strings.Contains(string(must(s.handler(context.Background(), call("gone", "turn", "looks_good")))), "no longer active") {
+		t.Fatal("late call was not rejected")
+	}
+	_ = r
+}
+func TestAcquireReservesCapacityDuringBlockedStart(t *testing.T) {
+	r, s := runtimeFixture(t)
+	r.capacity = 1
+	s.startBlock = make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+		done <- e
+	}()
+	time.Sleep(10 * time.Millisecond)
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); e == nil {
+		t.Fatal("concurrent acquire exceeded reserved capacity")
+	}
+	close(s.startBlock)
+	if e := <-done; e != nil {
+		t.Fatal(e)
+	}
+}
+func TestInteractionInterruptsOnlyExactTurn(t *testing.T) {
+	r, s := runtimeFixture(t)
+	s.starts = make(chan string, 1)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	done := make(chan error, 1)
+	go func() { done <- r.Run(context.Background(), w, "review", func(review.Completion) error { return nil }) }()
+	pair := <-s.starts
+	parts := strings.Split(pair, "/")
+	s.interactions = []codexadapter.NativeInteraction{{ThreadID: "other", TurnID: parts[1]}}
+	time.Sleep(35 * time.Millisecond)
+	if len(s.interrupts) != 0 {
+		t.Fatal("other interaction interrupted active review")
+	}
+	s.mu.Lock()
+	s.interactions = []codexadapter.NativeInteraction{{ThreadID: parts[0], TurnID: parts[1]}}
+	s.mu.Unlock()
+	if e := <-done; e == nil || !strings.Contains(e.Error(), "noninteractive") {
+		t.Fatalf("interaction result=%v", e)
+	}
+	if len(s.interrupts) != 1 {
+		t.Fatalf("interrupts=%v", s.interrupts)
+	}
+}
+func TestLossRestartInvalidatesOldWorkers(t *testing.T) {
+	r, old := runtimeFixture(t)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	old.startErr = errors.New("child exited")
+	fresh := &fakeServer{}
+	r.factory = func(context.Context) (codexadapter.EphemeralServer, error) { return fresh, nil }
+	newWorker, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = r.Run(context.Background(), w, "", func(review.Completion) error { return nil }); e == nil {
+		t.Fatal("old worker survived child loss")
+	}
+	if e = r.Release(context.Background(), newWorker); e != nil {
+		t.Fatal(e)
+	}
+	if !old.closed || len(fresh.options) != 1 {
+		t.Fatalf("old.closed=%v fresh=%d", old.closed, len(fresh.options))
+	}
+}
+func must(v json.RawMessage, e error) json.RawMessage {
+	if e != nil {
+		panic(e)
+	}
+	return v
+}
+
+var _ = errors.New

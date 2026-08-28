@@ -93,6 +93,7 @@ type NewFinding struct {
 func (c Completion) valid() bool {
 	return c.Verdict == "looks_good" || c.Verdict == "changes_requested"
 }
+func (c Completion) Valid() bool { return c.valid() }
 
 type Finalization struct {
 	Key        Key        `json:"key"`

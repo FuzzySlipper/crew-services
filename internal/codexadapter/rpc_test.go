@@ -408,3 +408,40 @@ func waitForHandshakeStart(t *testing.T, client *StdioAppServer) {
 	}
 	t.Fatal("initialize did not start")
 }
+
+func TestTurnCompletionWaitsForExactTurnAndExitFailsWaiter(t *testing.T) {
+	client := &StdioAppServer{turnWaiters: map[string]chan TurnCompletion{}, completedTurns: map[string]TurnCompletion{}, ephemeralThreads: map[string]struct{}{"thread": {}}, done: make(chan struct{}), interactions: map[string]pendingInteraction{}, pending: map[string]chan rpcResponse{}, handshakeDone: make(chan struct{})}
+	first := make(chan error, 1)
+	go func() { _, err := client.WaitTurn(context.Background(), "thread", "one"); first <- err }()
+	time.Sleep(time.Millisecond)
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread","turn":{"id":"two","status":"completed"}}}`))
+	select {
+	case err := <-first:
+		t.Fatalf("wrong turn settled waiter: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thread","turn":{"id":"one","status":"completed"}}}`))
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	wait := make(chan error, 1)
+	go func() { _, err := client.WaitTurn(context.Background(), "thread", "three"); wait <- err }()
+	time.Sleep(time.Millisecond)
+	client.fail(errors.New("child exited"))
+	if err := <-wait; err == nil {
+		t.Fatal("exit did not fail exact waiter")
+	}
+}
+
+func TestUntrackedCompletionIsIgnoredButTrackedPreWaitIsCached(t *testing.T) {
+	client := &StdioAppServer{turnWaiters: map[string]chan TurnCompletion{}, completedTurns: map[string]TurnCompletion{}, ephemeralThreads: map[string]struct{}{"ephemeral": {}}, done: make(chan struct{}), interactions: map[string]pendingInteraction{}, pending: map[string]chan rpcResponse{}, handshakeDone: make(chan struct{})}
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"ordinary","turn":{"id":"one","status":"completed"}}}`))
+	if len(client.completedTurns) != 0 {
+		t.Fatalf("ordinary completion cached: %#v", client.completedTurns)
+	}
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"ephemeral","turn":{"id":"two","status":"completed"}}}`))
+	done, err := client.WaitTurn(context.Background(), "ephemeral", "two")
+	if err != nil || done.TurnID != "two" {
+		t.Fatalf("cached ephemeral completion=%+v err=%v", done, err)
+	}
+}

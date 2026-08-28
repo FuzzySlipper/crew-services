@@ -11,6 +11,7 @@ import (
 	"io"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -79,6 +80,29 @@ type QueuedSubmission struct {
 // materializes a control-created thread.
 type StartedTurn struct{ ID string }
 
+type EphemeralThreadOptions struct {
+	CWD                   string
+	DeveloperInstructions string
+	DynamicTools          []map[string]any
+	ReadOnly              bool
+}
+type TurnCompletion struct {
+	ThreadID string
+	TurnID   string
+	Status   string
+}
+type EphemeralServer interface {
+	Initialize(context.Context) error
+	StartEphemeralThread(context.Context, EphemeralThreadOptions) (NativeThread, error)
+	StartEphemeralTurn(context.Context, string, string) (StartedTurn, error)
+	WaitTurn(context.Context, string, string) (TurnCompletion, error)
+	ForgetThread(string)
+	Interactions() []NativeInteraction
+	Interrupt(context.Context, string, string) error
+	SetDynamicToolHandler(func(context.Context, json.RawMessage) (json.RawMessage, error))
+	Close() error
+}
+
 type NativeContent struct {
 	Type string
 	Text string
@@ -91,21 +115,24 @@ type StdioAppServer struct {
 	command *exec.Cmd
 	stdin   io.WriteCloser
 
-	mu             sync.Mutex
-	writeMu        sync.Mutex
-	responseMu     sync.Mutex
-	nextID         int64
-	pending        map[string]chan rpcResponse
-	interactions   map[string]pendingInteraction
-	interactionSeq uint64
-	instancePrefix string
-	dynamicHandler func(context.Context, json.RawMessage) (json.RawMessage, error)
-	toolContext    context.Context
-	toolCancel     context.CancelFunc
-	closing        bool
-	closed         bool
-	done           chan struct{}
-	err            error
+	mu               sync.Mutex
+	writeMu          sync.Mutex
+	responseMu       sync.Mutex
+	nextID           int64
+	pending          map[string]chan rpcResponse
+	interactions     map[string]pendingInteraction
+	interactionSeq   uint64
+	instancePrefix   string
+	dynamicHandler   func(context.Context, json.RawMessage) (json.RawMessage, error)
+	toolContext      context.Context
+	toolCancel       context.CancelFunc
+	turnWaiters      map[string]chan TurnCompletion
+	completedTurns   map[string]TurnCompletion
+	ephemeralThreads map[string]struct{}
+	closing          bool
+	closed           bool
+	done             chan struct{}
+	err              error
 
 	handshakeDone     chan struct{}
 	handshakeComplete bool
@@ -161,7 +188,7 @@ func StartStdioAppServer(command string, args []string) (*StdioAppServer, error)
 		return nil, fmt.Errorf("random interaction prefix: %w", err)
 	}
 	toolContext, toolCancel := context.WithCancel(context.Background())
-	client := &StdioAppServer{command: cmd, stdin: stdin, pending: make(map[string]chan rpcResponse), interactions: make(map[string]pendingInteraction), done: make(chan struct{}), handshakeDone: make(chan struct{}), instancePrefix: hex.EncodeToString(prefix), toolContext: toolContext, toolCancel: toolCancel}
+	client := &StdioAppServer{command: cmd, stdin: stdin, pending: make(map[string]chan rpcResponse), interactions: make(map[string]pendingInteraction), turnWaiters: make(map[string]chan TurnCompletion), completedTurns: make(map[string]TurnCompletion), ephemeralThreads: make(map[string]struct{}), done: make(chan struct{}), handshakeDone: make(chan struct{}), instancePrefix: hex.EncodeToString(prefix), toolContext: toolContext, toolCancel: toolCancel}
 	go client.read(stdout)
 	go client.wait()
 	return client, nil
@@ -186,6 +213,88 @@ func (c *StdioAppServer) StartThread(ctx context.Context, cwd string) (NativeThr
 		return NativeThread{}, err
 	}
 	return response.Thread.native(), nil
+}
+
+func (c *StdioAppServer) StartEphemeralThread(ctx context.Context, options EphemeralThreadOptions) (NativeThread, error) {
+	var response struct {
+		Thread nativeThreadWire `json:"thread"`
+	}
+	if err := c.awaitInitialized(ctx); err != nil {
+		return NativeThread{}, err
+	}
+	params := map[string]any{"ephemeral": true, "dynamicTools": options.DynamicTools}
+	if options.CWD != "" {
+		params["cwd"] = options.CWD
+	}
+	if options.DeveloperInstructions != "" {
+		params["developerInstructions"] = options.DeveloperInstructions
+	}
+	if options.ReadOnly {
+		params["sandbox"] = "read-only"
+		params["approvalPolicy"] = "never"
+	}
+	if err := c.sendRequest(ctx, "thread/start", params, &response); err != nil {
+		return NativeThread{}, err
+	}
+	thread := response.Thread.native()
+	c.mu.Lock()
+	c.ephemeralThreads[thread.ID] = struct{}{}
+	c.mu.Unlock()
+	return thread, nil
+}
+func (c *StdioAppServer) StartEphemeralTurn(ctx context.Context, threadID, text string) (StartedTurn, error) {
+	return c.StartTurn(ctx, threadID, text, "crew-review:"+threadID+":"+strconv.FormatInt(time.Now().UnixNano(), 10))
+}
+func turnKey(threadID, turnID string) string { return threadID + "\x00" + turnID }
+func (c *StdioAppServer) WaitTurn(ctx context.Context, threadID, turnID string) (TurnCompletion, error) {
+	key := turnKey(threadID, turnID)
+	c.mu.Lock()
+	if _, tracked := c.ephemeralThreads[threadID]; !tracked {
+		c.mu.Unlock()
+		return TurnCompletion{}, errors.New("Codex ephemeral thread is no longer tracked")
+	}
+	if done, ok := c.completedTurns[key]; ok {
+		delete(c.completedTurns, key)
+		c.mu.Unlock()
+		return done, nil
+	}
+	if c.closed {
+		err := c.terminalErrorLocked()
+		c.mu.Unlock()
+		return TurnCompletion{}, err
+	}
+	wait := make(chan TurnCompletion, 1)
+	c.turnWaiters[key] = wait
+	c.mu.Unlock()
+	select {
+	case done, ok := <-wait:
+		if !ok {
+			return TurnCompletion{}, c.terminalError()
+		}
+		return done, nil
+	case <-ctx.Done():
+		c.mu.Lock()
+		delete(c.turnWaiters, key)
+		c.mu.Unlock()
+		return TurnCompletion{}, ctx.Err()
+	case <-c.done:
+		return TurnCompletion{}, c.terminalError()
+	}
+}
+func (c *StdioAppServer) ForgetThread(threadID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.ephemeralThreads, threadID)
+	for key := range c.turnWaiters {
+		if strings.HasPrefix(key, threadID+"\x00") {
+			delete(c.turnWaiters, key)
+		}
+	}
+	for key := range c.completedTurns {
+		if strings.HasPrefix(key, threadID+"\x00") {
+			delete(c.completedTurns, key)
+		}
+	}
 }
 
 func crewDynamicTools() []map[string]any {
@@ -546,6 +655,29 @@ func (c *StdioAppServer) handleFrame(frame []byte) {
 	if err := json.Unmarshal(frame, &envelope); err != nil {
 		return
 	}
+	if envelope.Method == "turn/completed" {
+		var completed struct {
+			ThreadID string `json:"threadId"`
+			Turn     struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			} `json:"turn"`
+		}
+		if json.Unmarshal(envelope.Params, &completed) == nil && completed.ThreadID != "" && completed.Turn.ID != "" {
+			value := TurnCompletion{ThreadID: completed.ThreadID, TurnID: completed.Turn.ID, Status: completed.Turn.Status}
+			key := turnKey(value.ThreadID, value.TurnID)
+			c.mu.Lock()
+			if wait := c.turnWaiters[key]; wait != nil {
+				delete(c.turnWaiters, key)
+				wait <- value
+				close(wait)
+			} else if _, tracked := c.ephemeralThreads[value.ThreadID]; tracked {
+				c.completedTurns[key] = value
+			}
+			c.mu.Unlock()
+		}
+		return
+	}
 	if envelope.Method != "" && len(envelope.ID) > 0 && string(envelope.ID) != "null" {
 		if !validRPCID(envelope.ID) {
 			return
@@ -683,6 +815,12 @@ func (c *StdioAppServer) fail(err error) {
 		delete(c.pending, id)
 		close(response)
 	}
+	for id, waiter := range c.turnWaiters {
+		delete(c.turnWaiters, id)
+		close(waiter)
+	}
+	c.completedTurns = make(map[string]TurnCompletion)
+	c.ephemeralThreads = make(map[string]struct{})
 	c.interactions = make(map[string]pendingInteraction)
 	c.closed = true
 	close(c.done)
