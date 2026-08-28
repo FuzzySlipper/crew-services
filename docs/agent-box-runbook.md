@@ -106,6 +106,64 @@ input and lets Codex automatically start it in FIFO order after the thread
 becomes idle. Native tool activity, partial messages, reasoning, and approvals
 remain outside the projected event surface.
 
+## Codex-backed review service
+
+The separate `crew-review` command owns the local review job ledger and its
+ephemeral Codex worker pool. It calls the current Den MCP endpoint directly for
+`get_review_context` and `finalize_review`; it does not import Den or Rusty Crew
+code and does not create review rounds. Den remains the review authority.
+
+Build it beside the messaging binaries and keep its SQLite file separate:
+
+```sh
+cd /home/dev/crew-services
+go build -o "$HOME/.local/bin/crew-review" ./cmd/crew-review
+mkdir -p "$HOME/.local/state/crew-review"
+exec "$HOME/.local/bin/crew-review" \
+  -listen 127.0.0.1:8413 \
+  -db "$HOME/.local/state/crew-review/crew-review.sqlite" \
+  -den-mcp-url "${DEN_MCP_URL:-http://192.168.1.10:5199/mcp}" \
+  -review-profile "${CREW_REVIEW_PROFILE:-/home/agents/profiles/reviewer/SOUL.md}" \
+  -capacity "${CREW_REVIEW_CAPACITY:-2}"
+```
+
+The command also accepts `-den-mcp-token`, `-codex-command`, repeated
+`-codex-arg`, and `-run-interval`. `DEN_MCP_TOKEN`, `CODEX_COMMAND`,
+`CREW_REVIEW_PROFILE`, `CREW_REVIEW_CAPACITY`, and
+`CREW_REVIEW_RUN_INTERVAL` are the matching environment settings. Keep the
+Codex executable on the service user's `PATH`; if it is installed in a user
+bin directory, set that `PATH` in the unit below.
+
+For a persistent agent-box service, save this as
+`~/.config/systemd/user/crew-review.service`:
+
+```ini
+[Unit]
+Description=Codex-backed Crew review runner
+Wants=crew-messaging.service
+After=crew-messaging.service
+
+[Service]
+Environment=PATH=%h/.npm-global/bin:%h/.local/bin:/usr/local/bin:/usr/bin
+Environment=DEN_MCP_URL=http://192.168.1.10:5199/mcp
+Environment=CREW_REVIEW_PROFILE=/home/agents/profiles/reviewer/SOUL.md
+ExecStart=%h/.local/bin/crew-review -listen 127.0.0.1:8413 -db %h/.local/state/crew-review/crew-review.sqlite -capacity 2
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+```
+
+Then enable it with `systemctl --user daemon-reload` and
+`systemctl --user enable --now crew-review.service`. `GET
+http://127.0.0.1:8413/healthz` checks SQLite readiness; `GET
+http://127.0.0.1:8413/v1/review-pool` reports the configured `codex` backend,
+queued/running jobs, recent terminal projections, and retained task affinity.
+Ephemeral Codex thread IDs are process-local and disappear on service restart;
+an in-flight job is requeued when the process context is cancelled so the next
+start can run it fresh.
+
 With an ordinary logged-in local Codex CLI, an opt-in scratch-DB smoke reads one
 existing native thread and projects it without mutating Codex:
 

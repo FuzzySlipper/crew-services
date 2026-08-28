@@ -54,6 +54,40 @@ The project deliberately does not promise Rusty Crew compatibility, remote
 deployment, federation, authentication frameworks, or a UI. Those are not
 implementation omissions; they are outside the first slice.
 
+## Codex-backed review runner
+
+`crew-review` is the first managed review runtime. It admits durable review
+jobs locally, asks Den MCP for the current bounded reviewer context, starts
+private ephemeral Codex App Server threads with
+`/home/agents/profiles/reviewer/SOUL.md`, and sends only the structured
+`complete_review` result back through Den's `finalize_review` tool. Den remains
+the authority for current rounds, finalization, task transitions, and receipts;
+the local SQLite job state is only the retry/recovery ledger.
+
+Run it on the trusted agent box with the same user's Codex executable and
+profile environment:
+
+```sh
+go run ./cmd/crew-review \
+  -listen 127.0.0.1:8413 \
+  -db "$HOME/.local/state/crew-review/crew-review.sqlite" \
+  -den-mcp-url "${DEN_MCP_URL:-http://192.168.1.10:5199/mcp}" \
+  -review-profile "${CREW_REVIEW_PROFILE:-/home/agents/profiles/reviewer/SOUL.md}" \
+  -capacity 2
+```
+
+`DEN_MCP_TOKEN`, `CREW_REVIEW_PROFILE`, `CREW_REVIEW_CAPACITY`,
+`CREW_REVIEW_RUN_INTERVAL`, and `CODEX_COMMAND` may be supplied through the
+environment; all have corresponding flags where they affect the process.
+The command starts a fixed number of bounded runner lanes (one durable job per
+lane at a time), reports `backend: "codex"` from `GET /v1/review-pool`, and
+never exposes ephemeral Codex worker or thread IDs in that projection.
+
+The Den request/gate submission gateway is intentionally a later integration
+slice. Until it lands, a trusted caller must POST an admitted job to
+`/v1/review-jobs`; the runner itself does not discover or create Den review
+rounds.
+
 ## Project selected Codex threads
 
 `crew-codex` is a separate runtime adapter command. It supervises the ordinary

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -13,6 +14,7 @@ type Service struct {
 	den        DenReviewClient
 	runtime    ReviewerRuntime
 	profile    string
+	backend    string
 	clock      Clock
 	mu         sync.Mutex
 	affinities map[TaskKey]*affinity
@@ -29,6 +31,15 @@ func WithClock(clock Clock) Option {
 		if clock != nil {
 			s.clock = clock
 		}
+	}
+}
+
+// WithBackend labels the configured runtime in the operator-facing pool
+// projection. The label is deliberately supplied by the command/adaptor
+// boundary; the review state machine remains runtime-neutral.
+func WithBackend(name string) Option {
+	return func(s *Service) {
+		s.backend = strings.TrimSpace(name)
 	}
 }
 
@@ -65,6 +76,9 @@ func (s *Service) Snapshot(ctx context.Context, n int) (Snapshot, error) {
 	if err != nil {
 		return v, err
 	}
+	if s.backend != "" {
+		v.Backend = s.backend
+	}
 	s.mu.Lock()
 	for key, value := range s.affinities {
 		v.Retained = append(v.Retained, RetainedAffinity{ProjectID: key.ProjectID, TaskID: key.TaskID, ExpiresAt: value.expiresAt})
@@ -100,6 +114,9 @@ func (s *Service) RunOne(ctx context.Context) (bool, error) {
 func (s *Service) execute(ctx context.Context, j Job) error {
 	c, e := s.den.GetReviewContext(ctx, j.Admission.Key)
 	if e != nil {
+		if errors.Is(e, ErrStaleRound) {
+			return s.terminal(ctx, j, Stale, e.Error())
+		}
 		return s.terminal(ctx, j, Failed, fmt.Sprintf("get review context: %v", e))
 	}
 	if !c.ReviewableFor(j.Admission.Key) {
@@ -139,6 +156,11 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 		return e
 	})
 	current, getErr := s.store.Get(ctx, j.ID)
+	if getErr != nil && ctx.Err() != nil {
+		// A cancelled process context can no longer be used for the local
+		// recovery write/read, but the durable job must remain resumable.
+		current, getErr = s.store.Get(context.Background(), j.ID)
+	}
 	if getErr != nil {
 		return getErr
 	}
@@ -147,6 +169,13 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 	}
 	if current.State != Finalizing {
 		if runErr != nil {
+			if ctx.Err() != nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+				_, requeueErr := s.store.Requeue(context.Background(), j.ID)
+				if requeueErr != nil {
+					return requeueErr
+				}
+				return runErr
+			}
 			return s.terminal(ctx, j, Failed, runErr.Error())
 		}
 		if !completionStored {

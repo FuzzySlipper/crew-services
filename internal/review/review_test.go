@@ -153,6 +153,25 @@ func TestAdmissionConflictAndSafeProjection(t *testing.T) {
 	}
 }
 
+func TestSnapshotReportsConfiguredBackendWithoutWorkerIdentity(t *testing.T) {
+	_, store, den, runtime, _ := fixture(t, 1)
+	defer store.Close()
+	svc, err := New(store, den, runtime, "profile", WithBackend(" codex "))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := svc.Snapshot(context.Background(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Backend != "codex" {
+		t.Fatalf("snapshot backend = %q, want codex", snapshot.Backend)
+	}
+	if len(snapshot.Recent) != 0 || len(snapshot.Retained) != 0 {
+		t.Fatalf("empty projection unexpectedly exposed worker data: %+v", snapshot)
+	}
+}
+
 func TestFinalizationRecoveryAndCancellation(t *testing.T) {
 	svc, store, den, _, a := fixture(t, 1)
 	defer store.Close()
@@ -265,6 +284,35 @@ func TestLateRuntimeResultCannotResurrectCancelledJob(t *testing.T) {
 	got, err := svc.Get(context.Background(), j.ID)
 	if err != nil || got.State != Cancelled {
 		t.Fatalf("late result changed job=%+v err=%v", got, err)
+	}
+}
+
+func TestProcessCancellationRequeuesInFlightJob(t *testing.T) {
+	svc, store, _, runtime, a := fixture(t, 1)
+	defer store.Close()
+	j, _, err := svc.Admit(context.Background(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.start = make(chan struct{}, 1)
+	runtime.release = make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, runErr := svc.RunOne(ctx)
+		done <- runErr
+	}()
+	<-runtime.start
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunOne cancellation error = %v", err)
+	}
+	got, err := svc.Get(context.Background(), j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != Queued {
+		t.Fatalf("cancelled job state = %s, want queued", got.State)
 	}
 }
 
