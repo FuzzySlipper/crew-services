@@ -16,18 +16,19 @@ import (
 )
 
 type fakeServer struct {
-	mu           sync.Mutex
-	handler      func(context.Context, json.RawMessage) (json.RawMessage, error)
-	options      []codexadapter.EphemeralThreadOptions
-	next         int
-	starts       chan string
-	waits        map[string]chan codexadapter.TurnCompletion
-	forgotten    []string
-	closed       bool
-	startErr     error
-	interactions []codexadapter.NativeInteraction
-	interrupts   []string
-	startBlock   chan struct{}
+	mu            sync.Mutex
+	handler       func(context.Context, json.RawMessage) (json.RawMessage, error)
+	options       []codexadapter.EphemeralThreadOptions
+	next          int
+	starts        chan string
+	waits         map[string]chan codexadapter.TurnCompletion
+	forgotten     []string
+	closed        bool
+	startErr      error
+	interactions  []codexadapter.NativeInteraction
+	interrupts    []string
+	startBlock    chan struct{}
+	turnStartHook func(thread, turn string)
 }
 
 func (f *fakeServer) Initialize(context.Context) error { return nil }
@@ -54,7 +55,6 @@ func (f *fakeServer) StartEphemeralThread(_ context.Context, o codexadapter.Ephe
 }
 func (f *fakeServer) StartEphemeralTurn(_ context.Context, thread, _ string) (codexadapter.StartedTurn, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.next++
 	id := "turn-" + itoa(f.next)
 	if f.waits == nil {
@@ -63,6 +63,11 @@ func (f *fakeServer) StartEphemeralTurn(_ context.Context, thread, _ string) (co
 	f.waits[thread+"/"+id] = make(chan codexadapter.TurnCompletion, 1)
 	if f.starts != nil {
 		f.starts <- thread + "/" + id
+	}
+	hook := f.turnStartHook
+	f.mu.Unlock()
+	if hook != nil {
+		hook(thread, id)
 	}
 	return codexadapter.StartedTurn{ID: id}, nil
 }
@@ -137,6 +142,9 @@ func TestEphemeralProfileAndSchema(t *testing.T) {
 	}
 	if len(s.options) != 1 || !s.options[0].ReadOnly || s.options[0].CWD != "/repo" || !strings.Contains(s.options[0].DeveloperInstructions, "Managed review runtime") {
 		t.Fatalf("options=%+v", s.options)
+	}
+	if !strings.Contains(s.options[0].DeveloperInstructions, "blocking_bug, acceptance_gap, test_weakness, or follow_up_candidate") || !strings.Contains(s.options[0].DeveloperInstructions, "verified_fixed, not_fixed, superseded, or split_to_follow_up") {
+		t.Fatalf("instructions do not name allowed values: %q", s.options[0].DeveloperInstructions)
 	}
 	raw, _ := json.Marshal(completionTool())
 	if strings.Contains(string(raw), "project_id") || strings.Contains(string(raw), "review_round_id") || strings.Contains(string(raw), "correlation_id") {
@@ -287,6 +295,64 @@ func TestMissingCompletionPoolBoundAndRelease(t *testing.T) {
 		t.Fatal("released worker accepted")
 	}
 }
+func TestMissingCompletionIncludesRejectedToolReason(t *testing.T) {
+	r, s := runtimeFixture(t)
+	s.starts = make(chan string, 1)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	done := make(chan error, 1)
+	go func() { done <- r.Run(context.Background(), w, "review", func(review.Completion) error { return nil }) }()
+	parts := strings.Split(<-s.starts, "/")
+	out, e := s.handler(context.Background(), callWithArguments(parts[0], parts[1], map[string]any{"verdict": "changes_requested", "new_findings": []map[string]any{{"category": "not_an_allowed_category", "summary": "bad enum"}}}))
+	if e != nil || !strings.Contains(string(out), "invalid completion arguments") {
+		t.Fatalf("tool result=%s err=%v", out, e)
+	}
+	s.finish(parts[0], parts[1])
+	if e := <-done; e == nil || !strings.Contains(e.Error(), "without complete_review: invalid completion arguments") {
+		t.Fatalf("run result=%v", e)
+	}
+}
+func TestSecondTurnAcceptsCompletionBeforeStartReturns(t *testing.T) {
+	r, s := runtimeFixture(t)
+	s.starts = make(chan string, 2)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	run := func() chan error {
+		done := make(chan error, 1)
+		go func() { done <- r.Run(context.Background(), w, "review", func(review.Completion) error { return nil }) }()
+		return done
+	}
+	firstDone := run()
+	first := strings.Split(<-s.starts, "/")
+	if _, e := s.handler(context.Background(), call(first[0], first[1], "looks_good")); e != nil {
+		t.Fatal(e)
+	}
+	s.finish(first[0], first[1])
+	if e := <-firstDone; e != nil {
+		t.Fatal(e)
+	}
+
+	toolResult := make(chan json.RawMessage, 1)
+	s.mu.Lock()
+	s.turnStartHook = func(thread, turn string) {
+		out, _ := s.handler(context.Background(), call(thread, turn, "changes_requested"))
+		toolResult <- out
+	}
+	s.mu.Unlock()
+	secondDone := run()
+	second := strings.Split(<-s.starts, "/")
+	if out := <-toolResult; !strings.Contains(string(out), "completion accepted") {
+		t.Fatalf("pre-return completion=%s", out)
+	}
+	s.finish(second[0], second[1])
+	if e := <-secondDone; e != nil {
+		t.Fatal(e)
+	}
+}
 func TestToolRejectsLateAndForeignThread(t *testing.T) {
 	r, s := runtimeFixture(t)
 	if _, e := s.handler(context.Background(), call("gone", "turn", "looks_good")); e != nil {
@@ -326,7 +392,9 @@ func TestInteractionInterruptsOnlyExactTurn(t *testing.T) {
 	go func() { done <- r.Run(context.Background(), w, "review", func(review.Completion) error { return nil }) }()
 	pair := <-s.starts
 	parts := strings.Split(pair, "/")
+	s.mu.Lock()
 	s.interactions = []codexadapter.NativeInteraction{{ThreadID: "other", TurnID: parts[1]}}
+	s.mu.Unlock()
 	time.Sleep(35 * time.Millisecond)
 	if len(s.interrupts) != 0 {
 		t.Fatal("other interaction interrupted active review")

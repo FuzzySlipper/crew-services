@@ -40,6 +40,7 @@ type worker struct {
 	candidate      *review.Completion
 	candidateTurn  string
 	callbackErr    error
+	rejectedReason string
 }
 
 func New(ctx context.Context, cfg Config) (*Runtime, error) {
@@ -73,7 +74,7 @@ func NewWithServer(ctx context.Context, server codexadapter.EphemeralServer, cap
 	if e != nil {
 		return nil, fmt.Errorf("read reviewer profile: %w", e)
 	}
-	r := &Runtime{server: server, capacity: capacity, profile: string(profile) + "\n\nManaged review runtime: use only the controller-bound complete_review tool for a normal review verdict. Do not call Den directly. The controller owns project, task, round, correlation, and reviewer identity.\n", workers: map[string]*worker{}}
+	r := &Runtime{server: server, capacity: capacity, profile: string(profile) + "\n\nManaged review runtime: use only the controller-bound complete_review tool for a normal review verdict. Do not call Den directly. The controller owns project, task, round, correlation, and reviewer identity. New findings may use only these categories: blocking_bug, acceptance_gap, test_weakness, or follow_up_candidate. Prior-finding resolutions must use one of these terminal statuses: verified_fixed, not_fixed, superseded, or split_to_follow_up.\n", workers: map[string]*worker{}}
 	server.SetDynamicToolHandler(r.dynamicTool)
 	if e = server.Initialize(ctx); e != nil {
 		return nil, e
@@ -160,11 +161,19 @@ func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, com
 	}
 	w.busy = true
 	w.complete = complete
+	w.turnID = ""
 	w.candidate = nil
 	w.candidateTurn = ""
 	w.callbackErr = nil
+	w.rejectedReason = ""
 	r.mu.Unlock()
-	defer func() { r.mu.Lock(); w.busy = false; w.complete = nil; r.mu.Unlock() }()
+	defer func() {
+		r.mu.Lock()
+		w.busy = false
+		w.complete = nil
+		w.turnID = ""
+		r.mu.Unlock()
+	}()
 	turn, e := r.server.StartEphemeralTurn(ctx, w.threadID, prompt)
 	if e != nil {
 		return e
@@ -219,6 +228,9 @@ completed:
 		return w.callbackErr
 	}
 	if w.candidate == nil {
+		if w.rejectedReason != "" {
+			return fmt.Errorf("Codex turn completed without complete_review: %s", w.rejectedReason)
+		}
 		return errors.New("Codex turn completed without complete_review")
 	}
 	return nil
@@ -264,9 +276,7 @@ func (r *Runtime) dynamicTool(_ context.Context, raw json.RawMessage) (json.RawM
 		return toolResult(false, "invalid managed completion call"), nil
 	}
 	var candidate review.Completion
-	if json.Unmarshal(call.Arguments, &candidate) != nil || !candidate.Valid() {
-		return toolResult(false, "invalid completion arguments"), nil
-	}
+	invalidArguments := json.Unmarshal(call.Arguments, &candidate) != nil || !candidate.Valid()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var w *worker
@@ -276,20 +286,29 @@ func (r *Runtime) dynamicTool(_ context.Context, raw json.RawMessage) (json.RawM
 			break
 		}
 	}
+	if invalidArguments {
+		if w != nil && !w.released && w.busy {
+			w.rejectedReason = "invalid completion arguments"
+		}
+		return toolResult(false, "invalid completion arguments"), nil
+	}
 	if w == nil || w.released || !w.busy {
 		return toolResult(false, "review worker is no longer active"), nil
 	}
 	if w.turnID != "" && w.turnID != call.TurnID {
-		return toolResult(false, "stale review turn"), nil
+		w.rejectedReason = "stale review turn"
+		return toolResult(false, w.rejectedReason), nil
 	}
 	if w.candidate != nil {
 		if reflect.DeepEqual(*w.candidate, candidate) {
 			if w.callbackErr != nil {
-				return toolResult(false, w.callbackErr.Error()), nil
+				w.rejectedReason = w.callbackErr.Error()
+				return toolResult(false, w.rejectedReason), nil
 			}
 			return toolResult(true, "completion already accepted"), nil
 		}
-		return toolResult(false, "conflicting second completion"), nil
+		w.rejectedReason = "conflicting second completion"
+		return toolResult(false, w.rejectedReason), nil
 	}
 	w.candidateTurn = call.TurnID
 	copy := candidate
@@ -303,7 +322,8 @@ func (r *Runtime) dynamicTool(_ context.Context, raw json.RawMessage) (json.RawM
 	r.mu.Lock()
 	w.callbackErr = err
 	if err != nil {
-		return toolResult(false, err.Error()), nil
+		w.rejectedReason = err.Error()
+		return toolResult(false, w.rejectedReason), nil
 	}
 	return toolResult(true, "completion accepted"), nil
 }
