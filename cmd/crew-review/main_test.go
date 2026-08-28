@@ -10,12 +10,16 @@ import (
 
 func TestParseConfigUsesFlagsAndEnvironment(t *testing.T) {
 	env := map[string]string{
-		"DEN_MCP_URL":              "https://den.example/mcp",
-		"DEN_MCP_TOKEN":            "env-token",
-		"CREW_REVIEW_PROFILE":      "/tmp/reviewer.md",
-		"CODEX_COMMAND":            "/usr/local/bin/codex",
-		"CREW_REVIEW_CAPACITY":     "4",
-		"CREW_REVIEW_RUN_INTERVAL": "2s",
+		"DEN_MCP_URL":                  "https://den.example/mcp",
+		"DEN_MCP_TOKEN":                "env-token",
+		"CREW_REVIEW_PROFILE":          "/tmp/reviewer.md",
+		"CREW_REVIEW_LISTEN":           "127.0.0.1:9001",
+		"CREW_REVIEW_DB":               "/tmp/reviews.sqlite",
+		"CREW_REVIEW_MODEL":            "gpt-5.6-sol",
+		"CREW_REVIEW_REASONING_EFFORT": "medium",
+		"CODEX_COMMAND":                "/usr/local/bin/codex",
+		"CREW_REVIEW_CAPACITY":         "4",
+		"CREW_REVIEW_RUN_INTERVAL":     "2s",
 	}
 	getenv := func(name string) string { return env[name] }
 	cfg, err := parseConfig([]string{
@@ -31,6 +35,9 @@ func TestParseConfigUsesFlagsAndEnvironment(t *testing.T) {
 	}
 	if cfg.denURL != "https://den.example/mcp" || cfg.denToken != "flag-token" || cfg.profile != "/tmp/reviewer.md" {
 		t.Fatalf("Den/profile config = %+v", cfg)
+	}
+	if cfg.listen != "127.0.0.1:9001" || cfg.db != "/tmp/reviews.sqlite" || cfg.codexModel != "gpt-5.6-sol" || cfg.codexEffort != "medium" {
+		t.Fatalf("service/reviewer config = %+v", cfg)
 	}
 	if cfg.capacity != 3 || cfg.runInterval != 250*time.Millisecond || cfg.codexCommand != "codex-test" {
 		t.Fatalf("runtime config = %+v", cfg)

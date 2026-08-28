@@ -20,12 +20,16 @@ type Config struct {
 	Args        []string
 	Capacity    int
 	ProfilePath string
+	Model       string
+	Effort      string
 }
 type Runtime struct {
 	mu       sync.Mutex
 	server   codexadapter.EphemeralServer
 	capacity int
 	profile  string
+	model    string
+	effort   string
 	workers  map[string]*worker
 	reserved int
 	next     int
@@ -57,7 +61,7 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	if e != nil {
 		return nil, e
 	}
-	r, e := NewWithServer(ctx, server, cfg.Capacity, cfg.ProfilePath)
+	r, e := newWithServer(ctx, server, cfg.Capacity, cfg.ProfilePath, cfg.Model, cfg.Effort)
 	if e != nil {
 		_ = server.Close()
 	}
@@ -67,6 +71,9 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	return r, e
 }
 func NewWithServer(ctx context.Context, server codexadapter.EphemeralServer, capacity int, profilePath string) (*Runtime, error) {
+	return newWithServer(ctx, server, capacity, profilePath, "", "")
+}
+func newWithServer(ctx context.Context, server codexadapter.EphemeralServer, capacity int, profilePath, model, effort string) (*Runtime, error) {
 	if server == nil || capacity < 1 {
 		return nil, errors.New("Codex server and positive capacity are required")
 	}
@@ -74,7 +81,7 @@ func NewWithServer(ctx context.Context, server codexadapter.EphemeralServer, cap
 	if e != nil {
 		return nil, fmt.Errorf("read reviewer profile: %w", e)
 	}
-	r := &Runtime{server: server, capacity: capacity, profile: string(profile) + "\n\nManaged review runtime: use only the controller-bound complete_review tool for a normal review verdict. Do not call Den directly. The controller owns project, task, round, correlation, and reviewer identity. New findings may use only these categories: blocking_bug, acceptance_gap, test_weakness, or follow_up_candidate. A changes_requested verdict requires at least one valid new finding for this current review round; a prior-finding resolution with status not_fixed alone is insufficient. Prior-finding resolutions must use one of these terminal statuses: verified_fixed, not_fixed, superseded, or split_to_follow_up.\n", workers: map[string]*worker{}}
+	r := &Runtime{server: server, capacity: capacity, profile: string(profile) + "\n\nManaged review runtime: use only the controller-bound complete_review tool for a normal review verdict. Do not call Den directly. The controller owns project, task, round, correlation, and reviewer identity. New findings may use only these categories: blocking_bug, acceptance_gap, test_weakness, or follow_up_candidate. A changes_requested verdict requires at least one valid new finding for this current review round; a prior-finding resolution with status not_fixed alone is insufficient. Prior-finding resolutions must use one of these terminal statuses: verified_fixed, not_fixed, superseded, or split_to_follow_up.\n", model: model, effort: effort, workers: map[string]*worker{}}
 	server.SetDynamicToolHandler(r.dynamicTool)
 	if e = server.Initialize(ctx); e != nil {
 		return nil, e
@@ -174,7 +181,7 @@ func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, com
 		w.turnID = ""
 		r.mu.Unlock()
 	}()
-	turn, e := r.server.StartEphemeralTurn(ctx, w.threadID, prompt)
+	turn, e := r.server.StartEphemeralTurn(ctx, w.threadID, prompt, codexadapter.EphemeralTurnOptions{Model: r.model, Effort: r.effort})
 	if e != nil {
 		return e
 	}

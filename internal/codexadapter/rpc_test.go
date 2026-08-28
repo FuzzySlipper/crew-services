@@ -324,6 +324,53 @@ func TestStdioAppServerStartTurnUsesClientMessageIdentity(t *testing.T) {
 	}
 }
 
+func TestStdioAppServerEphemeralTurnUsesConfiguredModelAndEffort(t *testing.T) {
+	writes := make(chan []byte, 1)
+	client := &StdioAppServer{
+		stdin: &testWriteCloser{write: func(value []byte) (int, error) {
+			writes <- append([]byte(nil), value...)
+			return len(value), nil
+		}},
+		pending:           map[string]chan rpcResponse{},
+		interactions:      map[string]pendingInteraction{},
+		done:              make(chan struct{}),
+		handshakeDone:     make(chan struct{}),
+		handshakeComplete: true,
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := client.StartEphemeralTurn(context.Background(), "thread-review", "review", EphemeralTurnOptions{Model: "gpt-5.6-sol", Effort: "medium"})
+		result <- err
+	}()
+	var request struct {
+		Method string `json:"method"`
+		Params struct {
+			Model  string `json:"model"`
+			Effort string `json:"effort"`
+		} `json:"params"`
+	}
+	select {
+	case wire := <-writes:
+		if err := json.Unmarshal(wire, &request); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("turn/start was not written")
+	}
+	if request.Method != "turn/start" || request.Params.Model != "gpt-5.6-sol" || request.Params.Effort != "medium" {
+		t.Fatalf("turn/start request = %+v", request)
+	}
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","id":1,"result":{"turn":{"id":"turn-1"}}}`))
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("turn/start did not receive its response")
+	}
+}
+
 type testWriteCloser struct {
 	write func([]byte) (int, error)
 }

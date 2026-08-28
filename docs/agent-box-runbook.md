@@ -125,16 +125,20 @@ exec "$HOME/.local/bin/crew-review" \
   -listen 127.0.0.1:8413 \
   -db "$HOME/.local/state/crew-review/crew-review.sqlite" \
   -den-mcp-url "${DEN_MCP_URL:-http://192.168.1.10:5199/mcp}" \
-  -review-profile "${CREW_REVIEW_PROFILE:-/home/agents/profiles/reviewer/SOUL.md}" \
+  -review-profile "${CREW_REVIEW_PROFILE:-/home/system/crew-services/reviewer.md}" \
+  -codex-model "${CREW_REVIEW_MODEL:-}" \
+  -codex-effort "${CREW_REVIEW_REASONING_EFFORT:-}" \
   -capacity "${CREW_REVIEW_CAPACITY:-2}"
 ```
 
-The command also accepts `-den-mcp-token`, `-codex-command`, repeated
-`-codex-arg`, and `-run-interval`. `DEN_MCP_TOKEN`, `CODEX_COMMAND`,
-`CREW_REVIEW_PROFILE`, `CREW_REVIEW_CAPACITY`, and
-`CREW_REVIEW_RUN_INTERVAL` are the matching environment settings. Keep the
-Codex executable on the service user's `PATH`; if it is installed in a user
-bin directory, set that `PATH` in the unit below.
+The command also accepts `-den-mcp-token`, `-codex-model`, `-codex-effort`,
+`-codex-command`, repeated `-codex-arg`, and `-run-interval`.
+`CREW_REVIEW_LISTEN`, `CREW_REVIEW_DB`, `DEN_MCP_TOKEN`, `CODEX_COMMAND`,
+`CREW_REVIEW_MODEL`, `CREW_REVIEW_REASONING_EFFORT`, `CREW_REVIEW_PROFILE`,
+`CREW_REVIEW_CAPACITY`, and `CREW_REVIEW_RUN_INTERVAL` are the matching
+environment settings. Keep the installed deployment values in
+`/home/system/crew-services/crew-review.env` and the dedicated instructions in
+the adjacent `reviewer.md`.
 
 For a persistent agent-box service, save this as
 `~/.config/systemd/user/crew-review.service`:
@@ -146,10 +150,8 @@ Wants=crew-messaging.service
 After=crew-messaging.service
 
 [Service]
-Environment=PATH=%h/.npm-global/bin:%h/.local/bin:/usr/local/bin:/usr/bin
-Environment=DEN_MCP_URL=http://192.168.1.10:5199/mcp
-Environment=CREW_REVIEW_PROFILE=/home/agents/profiles/reviewer/SOUL.md
-ExecStart=%h/.local/bin/crew-review -listen 127.0.0.1:8413 -db %h/.local/state/crew-review/crew-review.sqlite -capacity 2
+EnvironmentFile=/home/system/crew-services/crew-review.env
+ExecStart=%h/.local/bin/crew-review
 Restart=on-failure
 RestartSec=2
 

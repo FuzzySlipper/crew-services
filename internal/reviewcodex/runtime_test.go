@@ -29,6 +29,7 @@ type fakeServer struct {
 	interrupts    []string
 	startBlock    chan struct{}
 	turnStartHook func(thread, turn string)
+	turnOptions   []codexadapter.EphemeralTurnOptions
 }
 
 func (f *fakeServer) Initialize(context.Context) error { return nil }
@@ -53,8 +54,9 @@ func (f *fakeServer) StartEphemeralThread(_ context.Context, o codexadapter.Ephe
 	f.options = append(f.options, o)
 	return codexadapter.NativeThread{ID: "thread-" + itoa(f.next)}, nil
 }
-func (f *fakeServer) StartEphemeralTurn(_ context.Context, thread, _ string) (codexadapter.StartedTurn, error) {
+func (f *fakeServer) StartEphemeralTurn(_ context.Context, thread, _ string, options codexadapter.EphemeralTurnOptions) (codexadapter.StartedTurn, error) {
 	f.mu.Lock()
+	f.turnOptions = append(f.turnOptions, options)
 	f.next++
 	id := "turn-" + itoa(f.next)
 	if f.waits == nil {
@@ -156,6 +158,37 @@ func TestEphemeralProfileAndSchema(t *testing.T) {
 	}
 	if e = r.Release(context.Background(), w); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestConfiguredModelAndEffortReachEveryReviewTurn(t *testing.T) {
+	profile := filepath.Join(t.TempDir(), "reviewer.md")
+	if e := os.WriteFile(profile, []byte("review procedure"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	s := &fakeServer{starts: make(chan string, 1)}
+	r, e := newWithServer(context.Background(), s, 1, profile, "gpt-5.6-sol", "medium")
+	if e != nil {
+		t.Fatal(e)
+	}
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "/repo")
+	if e != nil {
+		t.Fatal(e)
+	}
+	done := make(chan error, 1)
+	go func() { done <- r.Run(context.Background(), w, "review", func(review.Completion) error { return nil }) }()
+	parts := strings.Split(<-s.starts, "/")
+	if _, e = s.handler(context.Background(), call(parts[0], parts[1], "looks_good")); e != nil {
+		t.Fatal(e)
+	}
+	s.finish(parts[0], parts[1])
+	if e = <-done; e != nil {
+		t.Fatal(e)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.turnOptions) != 1 || s.turnOptions[0].Model != "gpt-5.6-sol" || s.turnOptions[0].Effort != "medium" {
+		t.Fatalf("turn options = %+v", s.turnOptions)
 	}
 }
 

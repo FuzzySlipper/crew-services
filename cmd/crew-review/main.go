@@ -20,7 +20,7 @@ import (
 	"crew-services/internal/reviewden"
 )
 
-const defaultReviewProfile = "/home/agents/profiles/reviewer/SOUL.md"
+const defaultReviewProfile = "/home/system/crew-services/reviewer.md"
 
 type commandConfig struct {
 	listen       string
@@ -29,6 +29,8 @@ type commandConfig struct {
 	denURL       string
 	denToken     string
 	profile      string
+	codexModel   string
+	codexEffort  string
 	codexCommand string
 	codexArgs    []string
 	runInterval  time.Duration
@@ -75,6 +77,8 @@ func run(args []string) error {
 		Args:        cfg.codexArgs,
 		Capacity:    cfg.capacity,
 		ProfilePath: cfg.profile,
+		Model:       cfg.codexModel,
+		Effort:      cfg.codexEffort,
 	})
 	if err != nil {
 		return err
@@ -117,12 +121,14 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 		getenv = os.Getenv
 	}
 	cfg := commandConfig{
-		listen:       "127.0.0.1:8413",
-		db:           "crew-review.db",
+		listen:       envOr(getenv, "CREW_REVIEW_LISTEN", "127.0.0.1:8413"),
+		db:           envOr(getenv, "CREW_REVIEW_DB", "crew-review.db"),
 		capacity:     2,
 		denURL:       envOr(getenv, "DEN_MCP_URL", reviewden.DefaultMCPURL),
 		denToken:     getenv("DEN_MCP_TOKEN"),
 		profile:      envOr(getenv, "CREW_REVIEW_PROFILE", defaultReviewProfile),
+		codexModel:   strings.TrimSpace(getenv("CREW_REVIEW_MODEL")),
+		codexEffort:  strings.TrimSpace(getenv("CREW_REVIEW_REASONING_EFFORT")),
 		codexCommand: envOr(getenv, "CODEX_COMMAND", "codex"),
 		runInterval:  500 * time.Millisecond,
 	}
@@ -148,6 +154,8 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	flags.StringVar(&cfg.denURL, "den-mcp-url", cfg.denURL, "Den MCP endpoint")
 	flags.StringVar(&cfg.denToken, "den-mcp-token", cfg.denToken, "Den MCP bearer token")
 	flags.StringVar(&cfg.profile, "review-profile", cfg.profile, "reviewer profile file")
+	flags.StringVar(&cfg.codexModel, "codex-model", cfg.codexModel, "Codex reviewer model; empty inherits Codex config")
+	flags.StringVar(&cfg.codexEffort, "codex-effort", cfg.codexEffort, "Codex reviewer reasoning effort; empty inherits Codex config")
 	flags.StringVar(&cfg.codexCommand, "codex-command", cfg.codexCommand, "Codex App Server executable")
 	flags.Var(&codexArgs, "codex-arg", "Codex App Server argument; repeatable")
 	flags.DurationVar(&cfg.runInterval, "run-interval", cfg.runInterval, "delay between bounded single-job runner passes")

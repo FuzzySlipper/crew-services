@@ -59,7 +59,7 @@ implementation omissions; they are outside the first slice.
 `crew-review` is the first managed review runtime. It admits durable review
 jobs locally, asks Den MCP for the current bounded reviewer context, starts
 private ephemeral Codex App Server threads with
-`/home/agents/profiles/reviewer/SOUL.md`, and sends only the structured
+`/home/system/crew-services/reviewer.md`, and sends only the structured
 `complete_review` result back through Den's `finalize_review` tool. Den remains
 the authority for current rounds, finalization, task transitions, and receipts;
 the local SQLite job state is only the retry/recovery ledger.
@@ -72,10 +72,16 @@ go run ./cmd/crew-review \
   -listen 127.0.0.1:8413 \
   -db "$HOME/.local/state/crew-review/crew-review.sqlite" \
   -den-mcp-url "${DEN_MCP_URL:-http://192.168.1.10:5199/mcp}" \
-  -review-profile "${CREW_REVIEW_PROFILE:-/home/agents/profiles/reviewer/SOUL.md}" \
+  -review-profile "${CREW_REVIEW_PROFILE:-/home/system/crew-services/reviewer.md}" \
+  -codex-model "${CREW_REVIEW_MODEL:-}" \
+  -codex-effort "${CREW_REVIEW_REASONING_EFFORT:-}" \
   -capacity 2
 ```
 
+The installed service keeps ordinary machine configuration in
+`/home/system/crew-services/crew-review.env` and its dedicated reviewer
+instructions beside it in `reviewer.md`. `CREW_REVIEW_LISTEN`,
+`CREW_REVIEW_DB`, `CREW_REVIEW_MODEL`, `CREW_REVIEW_REASONING_EFFORT`,
 `DEN_MCP_TOKEN`, `CREW_REVIEW_PROFILE`, `CREW_REVIEW_CAPACITY`,
 `CREW_REVIEW_RUN_INTERVAL`, and `CODEX_COMMAND` may be supplied through the
 environment; all have corresponding flags where they affect the process.

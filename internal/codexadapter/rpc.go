@@ -86,6 +86,10 @@ type EphemeralThreadOptions struct {
 	DynamicTools          []map[string]any
 	ReadOnly              bool
 }
+type EphemeralTurnOptions struct {
+	Model  string
+	Effort string
+}
 type TurnCompletion struct {
 	ThreadID string
 	TurnID   string
@@ -94,7 +98,7 @@ type TurnCompletion struct {
 type EphemeralServer interface {
 	Initialize(context.Context) error
 	StartEphemeralThread(context.Context, EphemeralThreadOptions) (NativeThread, error)
-	StartEphemeralTurn(context.Context, string, string) (StartedTurn, error)
+	StartEphemeralTurn(context.Context, string, string, EphemeralTurnOptions) (StartedTurn, error)
 	WaitTurn(context.Context, string, string) (TurnCompletion, error)
 	ForgetThread(string)
 	Interactions() []NativeInteraction
@@ -242,8 +246,8 @@ func (c *StdioAppServer) StartEphemeralThread(ctx context.Context, options Ephem
 	c.mu.Unlock()
 	return thread, nil
 }
-func (c *StdioAppServer) StartEphemeralTurn(ctx context.Context, threadID, text string) (StartedTurn, error) {
-	return c.StartTurn(ctx, threadID, text, "crew-review:"+threadID+":"+strconv.FormatInt(time.Now().UnixNano(), 10))
+func (c *StdioAppServer) StartEphemeralTurn(ctx context.Context, threadID, text string, options EphemeralTurnOptions) (StartedTurn, error) {
+	return c.startTurn(ctx, threadID, text, "crew-review:"+threadID+":"+strconv.FormatInt(time.Now().UnixNano(), 10), options)
 }
 func turnKey(threadID, turnID string) string { return threadID + "\x00" + turnID }
 func (c *StdioAppServer) WaitTurn(ctx context.Context, threadID, turnID string) (TurnCompletion, error) {
@@ -424,6 +428,10 @@ func (c *StdioAppServer) ReadThread(ctx context.Context, threadID string) (Nativ
 // adapter-owned clientUserMessageId so a lost RPC response can be reconciled
 // from canonical thread history without replaying the prompt.
 func (c *StdioAppServer) StartTurn(ctx context.Context, threadID, text, clientUserMessageID string) (StartedTurn, error) {
+	return c.startTurn(ctx, threadID, text, clientUserMessageID, EphemeralTurnOptions{})
+}
+
+func (c *StdioAppServer) startTurn(ctx context.Context, threadID, text, clientUserMessageID string, options EphemeralTurnOptions) (StartedTurn, error) {
 	var response struct {
 		Turn struct {
 			ID string `json:"id"`
@@ -432,9 +440,16 @@ func (c *StdioAppServer) StartTurn(ctx context.Context, threadID, text, clientUs
 	if err := c.awaitInitialized(ctx); err != nil {
 		return StartedTurn{}, err
 	}
-	if err := c.sendRequest(ctx, "turn/start", map[string]any{
+	params := map[string]any{
 		"threadId": threadID, "input": []map[string]any{{"type": "text", "text": text, "text_elements": []any{}}}, "clientUserMessageId": clientUserMessageID,
-	}, &response); err != nil {
+	}
+	if options.Model != "" {
+		params["model"] = options.Model
+	}
+	if options.Effort != "" {
+		params["effort"] = options.Effort
+	}
+	if err := c.sendRequest(ctx, "turn/start", params, &response); err != nil {
 		return StartedTurn{}, err
 	}
 	return StartedTurn{ID: response.Turn.ID}, nil
