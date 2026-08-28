@@ -12,7 +12,8 @@ import (
 
 type testClock struct{ now time.Time }
 
-func (c *testClock) Now() time.Time { return c.now }
+func (c *testClock) Now() time.Time          { return c.now }
+func (c *testClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
 
 type fakeDen struct {
 	mu       sync.Mutex
@@ -66,6 +67,7 @@ type fakeRuntime struct {
 	release        chan struct{}
 	completion     Completion
 	acquired       int
+	released       int
 	skipCompletion bool
 	runErr         error
 }
@@ -105,8 +107,13 @@ func (r *fakeRuntime) Run(ctx context.Context, _ Worker, _ string, complete func
 	r.mu.Unlock()
 	return e
 }
-func (*fakeRuntime) Release(context.Context, Worker) error { return nil }
-func (*fakeRuntime) Close() error                          { return nil }
+func (r *fakeRuntime) Release(context.Context, Worker) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.released++
+	return nil
+}
+func (*fakeRuntime) Close() error { return nil }
 
 func fixture(t *testing.T, capacity int) (*Service, *SQLiteStore, *fakeDen, *fakeRuntime, Admission) {
 	t.Helper()
@@ -437,5 +444,193 @@ func TestRunningRestartAndWrongContextKey(t *testing.T) {
 	got, e = svc.Get(context.Background(), j.ID)
 	if e != nil || got.State != Stale || runtime.acquired != 0 {
 		t.Fatalf("wrong context=%+v acquired=%d err=%v", got, runtime.acquired, e)
+	}
+}
+
+func TestChangesRequestedRetainsRereviewRefreshesAndExpiryReleases(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)}
+	store, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), clock, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	key := Key{ProjectID: "dsh", TaskID: 1, ReviewRoundID: 1, CorrelationID: "c1"}
+	den := &fakeDen{contexts: map[int64]Context{1: {Key: key, NextState: "source_review_ready"}}, receipts: map[int64]Receipt{}}
+	runtime := &fakeRuntime{completion: Completion{Verdict: "changes_requested"}}
+	svc, err := New(store, den, runtime, "profile", WithClock(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := Admission{IdempotencyKey: "one", Key: key, Reviewer: "reviewer"}
+	if _, _, err = svc.Admit(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.acquired != 1 || runtime.released != 0 {
+		t.Fatalf("initial acquired=%d released=%d", runtime.acquired, runtime.released)
+	}
+	clock.Advance(time.Hour)
+	a.IdempotencyKey = "two"
+	a.Key.ReviewRoundID = 2
+	a.Key.CorrelationID = "c2"
+	den.contexts[2] = Context{Key: a.Key, NextState: "source_review_ready"}
+	if _, replay, err := svc.Admit(context.Background(), a); err != nil || replay {
+		t.Fatalf("rereview replay=%v err=%v", replay, err)
+	}
+	if _, err = svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.acquired != 1 {
+		t.Fatalf("rereview acquired new worker %d", runtime.acquired)
+	}
+	snap, err := svc.Snapshot(context.Background(), 5)
+	if err != nil || len(snap.Retained) != 1 || snap.Retained[0].TaskID != 1 {
+		t.Fatalf("snapshot=%+v err=%v", snap, err)
+	}
+	clock.Advance(12 * time.Hour)
+	if _, err = svc.Snapshot(context.Background(), 5); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.released != 1 {
+		t.Fatalf("expiry releases=%d", runtime.released)
+	}
+}
+
+func TestLooksGoodReleasesRatherThanRetains(t *testing.T) {
+	svc, store, _, runtime, a := fixture(t, 1)
+	defer store.Close()
+	runtime.completion = Completion{Verdict: "looks_good"}
+	if _, _, err := svc.Admit(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.released != 1 {
+		t.Fatalf("looks good release=%d", runtime.released)
+	}
+	snap, err := svc.Snapshot(context.Background(), 5)
+	if err != nil || len(snap.Retained) != 0 {
+		t.Fatalf("snapshot=%+v err=%v", snap, err)
+	}
+}
+
+func TestRetainedTaskClaimBeatsOlderNewTask(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)}
+	store, e := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), clock, 1)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer store.Close()
+	first := Key{ProjectID: "dsh", TaskID: 1, ReviewRoundID: 1, CorrelationID: "a"}
+	den := &fakeDen{contexts: map[int64]Context{1: {Key: first, NextState: "source_review_ready"}}, receipts: map[int64]Receipt{}}
+	runtime := &fakeRuntime{completion: Completion{Verdict: "changes_requested"}}
+	svc, e := New(store, den, runtime, "profile", WithClock(clock))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = svc.Admit(context.Background(), Admission{IdempotencyKey: "first", Key: first, Reviewer: "r"}); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = svc.RunOne(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	newTask := Key{ProjectID: "dsh", TaskID: 2, ReviewRoundID: 2, CorrelationID: "new"}
+	den.contexts[2] = Context{Key: newTask, NextState: "source_review_ready"}
+	older, _, e := svc.Admit(context.Background(), Admission{IdempotencyKey: "older", Key: newTask, Reviewer: "r"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	rereview := first
+	rereview.ReviewRoundID = 3
+	rereview.CorrelationID = "again"
+	den.contexts[3] = Context{Key: rereview, NextState: "source_review_ready"}
+	newer, _, e := svc.Admit(context.Background(), Admission{IdempotencyKey: "rereview", Key: rereview, Reviewer: "r"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = svc.RunOne(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	got, e := svc.Get(context.Background(), newer.ID)
+	if e != nil || got.State != Succeeded {
+		t.Fatalf("rereview=%+v err=%v", got, e)
+	}
+	got, e = svc.Get(context.Background(), older.ID)
+	if e != nil || got.State != Queued {
+		t.Fatalf("older new task=%+v err=%v", got, e)
+	}
+	if runtime.acquired != 1 {
+		t.Fatalf("rereview did not reuse worker: acquired=%d", runtime.acquired)
+	}
+}
+
+func TestReplayDoesNotRefreshAffinityDeadlineOrRestartPersistIt(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)}
+	store, e := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), clock, 1)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer store.Close()
+	key := Key{ProjectID: "dsh", TaskID: 1, ReviewRoundID: 1, CorrelationID: "a"}
+	den := &fakeDen{contexts: map[int64]Context{1: {Key: key, NextState: "source_review_ready"}}, receipts: map[int64]Receipt{}}
+	runtime := &fakeRuntime{completion: Completion{Verdict: "changes_requested"}}
+	svc, e := New(store, den, runtime, "profile", WithClock(clock))
+	if e != nil {
+		t.Fatal(e)
+	}
+	a := Admission{IdempotencyKey: "one", Key: key, Reviewer: "r"}
+	if _, _, e = svc.Admit(context.Background(), a); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = svc.RunOne(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	before, _ := svc.Snapshot(context.Background(), 5)
+	clock.Advance(time.Hour)
+	if _, replayed, e := svc.Admit(context.Background(), a); e != nil || !replayed {
+		t.Fatalf("replay=%v err=%v", replayed, e)
+	}
+	after, _ := svc.Snapshot(context.Background(), 5)
+	if !after.Retained[0].ExpiresAt.Equal(before.Retained[0].ExpiresAt) {
+		t.Fatal("replay refreshed TTL")
+	}
+	fresh, e := New(store, den, runtime, "profile", WithClock(clock))
+	if e != nil {
+		t.Fatal(e)
+	}
+	snap, e := fresh.Snapshot(context.Background(), 5)
+	if e != nil || len(snap.Retained) != 0 {
+		t.Fatalf("restart affinity=%+v err=%v", snap, e)
+	}
+}
+
+func TestManualAffinityReleaseRejectsBusyThenReleasesIdle(t *testing.T) {
+	svc, store, _, runtime, a := fixture(t, 1)
+	defer store.Close()
+	runtime.completion = Completion{Verdict: "changes_requested"}
+	if _, _, e := svc.Admit(context.Background(), a); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := svc.RunOne(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	key := a.Key.Task()
+	svc.mu.Lock()
+	svc.affinities[key].busy = true
+	svc.mu.Unlock()
+	if e := svc.ReleaseAffinity(context.Background(), key); !errors.Is(e, ErrAffinityBusy) {
+		t.Fatalf("busy release=%v", e)
+	}
+	svc.mu.Lock()
+	svc.affinities[key].busy = false
+	svc.mu.Unlock()
+	if e := svc.ReleaseAffinity(context.Background(), key); e != nil {
+		t.Fatal(e)
+	}
+	if runtime.released != 1 {
+		t.Fatalf("released=%d", runtime.released)
 	}
 }

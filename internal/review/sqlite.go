@@ -183,6 +183,57 @@ func (s *SQLiteStore) Claim(ctx context.Context) (Job, bool, error) {
 	j, e := s.Get(ctx, id)
 	return j, true, e
 }
+
+// ClaimPreferred is the small scheduler hook used for an already-retained
+// task. It still gives durable finalization reconciliation priority.
+func (s *SQLiteStore) ClaimPreferred(ctx context.Context, task TaskKey) (Job, bool, error) {
+	tx, e := s.db.BeginTx(ctx, nil)
+	if e != nil {
+		return Job{}, false, e
+	}
+	defer tx.Rollback()
+	var finalizingID string
+	if e = tx.QueryRowContext(ctx, `SELECT id FROM crew_review_jobs WHERE state=? AND finalizing_claim=0 ORDER BY updated_at LIMIT 1`, Finalizing).Scan(&finalizingID); e == nil {
+		result, claimErr := tx.ExecContext(ctx, `UPDATE crew_review_jobs SET finalizing_claim=1,updated_at=? WHERE id=? AND state=? AND finalizing_claim=0`, stamp(s.clock.Now()), finalizingID, Finalizing)
+		if claimErr != nil {
+			return Job{}, false, claimErr
+		}
+		n, _ := result.RowsAffected()
+		if n != 1 {
+			return Job{}, false, nil
+		}
+		if e = tx.Commit(); e != nil {
+			return Job{}, false, e
+		}
+		j, e := s.Get(ctx, finalizingID)
+		return j, e == nil, e
+	}
+	if !errors.Is(e, sql.ErrNoRows) {
+		return Job{}, false, e
+	}
+	row := tx.QueryRowContext(ctx, `SELECT j.id FROM crew_review_jobs j WHERE j.state=? AND json_extract(j.admission_json,'$.key.project_id')=? AND json_extract(j.admission_json,'$.key.task_id')=? AND NOT EXISTS (SELECT 1 FROM crew_review_jobs x WHERE x.state IN (?,?) AND json_extract(x.admission_json,'$.key.project_id')=json_extract(j.admission_json,'$.key.project_id') AND json_extract(x.admission_json,'$.key.task_id')=json_extract(j.admission_json,'$.key.task_id')) ORDER BY j.created_at LIMIT 1`, Queued, task.ProjectID, task.TaskID, Running, Finalizing)
+	var id string
+	if e = row.Scan(&id); errors.Is(e, sql.ErrNoRows) {
+		return Job{}, false, nil
+	}
+	if e != nil {
+		return Job{}, false, e
+	}
+	now := stamp(s.clock.Now())
+	result, e := tx.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,updated_at=? WHERE id=? AND state=?`, Running, now, id, Queued)
+	if e != nil {
+		return Job{}, false, e
+	}
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return Job{}, false, nil
+	}
+	if e = tx.Commit(); e != nil {
+		return Job{}, false, e
+	}
+	j, e := s.Get(ctx, id)
+	return j, e == nil, e
+}
 func (s *SQLiteStore) PutFinalization(ctx context.Context, id string, f Finalization) (Job, error) {
 	b, e := json.Marshal(f)
 	if e != nil {
@@ -243,6 +294,13 @@ func (s *SQLiteStore) Cancel(ctx context.Context, id string) (Job, error) {
 		return Job{}, ErrTooLate
 	}
 	return s.Fail(ctx, id, Cancelled, "cancelled")
+}
+func (s *SQLiteStore) Requeue(ctx context.Context, id string) (Job, error) {
+	_, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,updated_at=? WHERE id=? AND state=?`, Queued, stamp(s.clock.Now()), id, Running)
+	if e != nil {
+		return Job{}, e
+	}
+	return s.Get(ctx, id)
 }
 func (s *SQLiteStore) Recover(ctx context.Context) error {
 	_, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,updated_at=? WHERE state=?`, Queued, stamp(s.clock.Now()), Running)

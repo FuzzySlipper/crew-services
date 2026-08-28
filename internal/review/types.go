@@ -27,8 +27,10 @@ var (
 	ErrNotFound = errors.New("review job not found")
 	ErrTooLate  = errors.New("review job is already finalizing or terminal")
 	// Adapter implementations classify Den's authoritative terminal responses.
-	ErrStaleRound  = errors.New("Den review round is stale")
-	ErrDenConflict = errors.New("Den review finalization conflicts")
+	ErrStaleRound   = errors.New("Den review round is stale")
+	ErrDenConflict  = errors.New("Den review finalization conflicts")
+	ErrCapacity     = errors.New("reviewer runtime is at capacity")
+	ErrAffinityBusy = errors.New("retained reviewer is busy")
 )
 
 // Key is Den's logical review identity. Source evidence is intentionally not part of it.
@@ -168,6 +170,12 @@ type Clock interface{ Now() time.Time }
 type SystemClock struct{}
 
 func (SystemClock) Now() time.Time { return time.Now().UTC() }
+
+type RetainedAffinity struct {
+	ProjectID string    `json:"project_id"`
+	TaskID    int64     `json:"task_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
 
 // UnavailableRuntime makes the command safe to run for admission/readback before #7414.
 type UnavailableRuntime struct{}

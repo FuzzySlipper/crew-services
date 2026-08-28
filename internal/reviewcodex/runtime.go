@@ -89,7 +89,7 @@ func (r *Runtime) Acquire(ctx context.Context, task review.TaskKey, _ string, wo
 	r.mu.Lock()
 	if len(r.workers)+r.reserved >= r.capacity {
 		r.mu.Unlock()
-		return nil, errors.New("Codex reviewer pool is at capacity")
+		return nil, review.ErrCapacity
 	}
 	r.next++
 	id := fmt.Sprintf("reviewer-%d", r.next)

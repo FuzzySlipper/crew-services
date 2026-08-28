@@ -49,6 +49,18 @@ func NewHandler(s *Service) http.Handler {
 		}
 		write(w, 200, j.Projection())
 	})
+	m.HandleFunc("DELETE /v1/review-affinities/{project}/{task}", func(w http.ResponseWriter, r *http.Request) {
+		task, e := strconv.ParseInt(r.PathValue("task"), 10, 64)
+		if e != nil {
+			errJSON(w, e)
+			return
+		}
+		if e = s.ReleaseAffinity(r.Context(), TaskKey{ProjectID: r.PathValue("project"), TaskID: task}); e != nil {
+			errJSON(w, e)
+			return
+		}
+		write(w, 200, map[string]bool{"released": true})
+	})
 	m.HandleFunc("GET /v1/review-pool", func(w http.ResponseWriter, r *http.Request) {
 		n, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		v, e := s.Snapshot(r.Context(), n)
@@ -87,7 +99,7 @@ func errJSON(w http.ResponseWriter, e error) {
 		status = 404
 		code = "not_found"
 	}
-	if errors.Is(e, ErrConflict) {
+	if errors.Is(e, ErrConflict) || errors.Is(e, ErrAffinityBusy) {
 		status = 409
 		code = "conflict"
 	}
