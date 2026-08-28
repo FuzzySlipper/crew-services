@@ -4,6 +4,10 @@ import "context"
 
 type Store interface {
 	Admit(context.Context, Admission) (Job, bool, error)
+	// AdmitRound returns the existing job for a Den review round when one is
+	// already present. A round is the Den-owned unit of review execution; this
+	// guard prevents two submission retries from creating two local jobs.
+	AdmitRound(context.Context, Admission) (Job, bool, error)
 	Get(context.Context, string) (Job, error)
 	Claim(context.Context) (Job, bool, error)
 	ClaimPreferred(context.Context, TaskKey) (Job, bool, error)
@@ -17,6 +21,12 @@ type Store interface {
 	Snapshot(context.Context, int) (Snapshot, error)
 	Ready(context.Context) error
 	Close() error
+}
+
+type SubmissionStore interface {
+	AdmitSubmission(context.Context, SubmissionRequest, string, string) (SubmissionRecord, bool, error)
+	GetSubmission(context.Context, string) (SubmissionRecord, error)
+	TransitionSubmission(context.Context, string, SubmissionPhase, SubmissionTransition) (SubmissionRecord, error)
 }
 
 type Snapshot struct {

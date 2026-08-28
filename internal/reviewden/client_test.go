@@ -7,10 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"crew-services/internal/review"
 )
+
+const reviewDenTestSHA = "0123456789abcdef0123456789abcdef01234567"
 
 func TestGetReviewContextMapsTypedStructuredContent(t *testing.T) {
 	var gotRequest struct {
@@ -75,6 +78,75 @@ func TestGetReviewContextTypedNoCurrentRoundIsStale(t *testing.T) {
 	_, err = client.GetReviewContext(context.Background(), review.Key{ProjectID: "dsh-crew", TaskID: 7416, ReviewRoundID: 12, CorrelationID: "corr"})
 	if !errors.Is(err, review.ErrStaleRound) {
 		t.Fatalf("error = %v, want stale round", err)
+	}
+}
+
+func TestRequestReviewAndGitHubGateMethodsMapDenAuthority(t *testing.T) {
+	var calls []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		var arguments map[string]any
+		if err := json.Unmarshal(request.Params.Arguments, &arguments); err != nil {
+			t.Fatalf("decode arguments: %v", err)
+		}
+		calls = append(calls, map[string]any{"name": request.Params.Name, "arguments": arguments})
+		switch request.Params.Name {
+		case "request_review":
+			writeToolResult(w, map[string]any{"id": 12, "project_id": "dsh-crew", "task_id": 7416, "review_round_id": 12})
+		case "watch_github_checks":
+			writeToolResult(w, map[string]any{
+				"id": 44, "project_id": "dsh-crew", "task_id": 7416, "repository": "owner/repo",
+				"commit_sha": reviewDenTestSHA, "ref": "main", "status": "pending",
+			})
+		case "get_github_check_gate":
+			writeToolResult(w, map[string]any{
+				"id": 44, "project_id": "dsh-crew", "task_id": 7416, "repository": "owner/repo",
+				"commit_sha": reviewDenTestSHA, "ref": "main", "status": "failed",
+				"terminal_reason": "required_checks_missing", "failure_summary": "lint was not observed",
+			})
+		default:
+			t.Fatalf("unexpected Den tool %q", request.Params.Name)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := review.SubmissionRequest{
+		ProjectID: "dsh-crew", TaskID: 7416, Repository: "owner/repo", CommitSHA: reviewDenTestSHA,
+		Ref: "main", RequiredChecks: []string{"lint"}, ReviewSummary: "Please review this exact commit.", Reviewer: "@reviewer",
+	}
+	round, err := client.RequestReview(context.Background(), request)
+	if err != nil || round.ID != 12 || round.ProjectID != request.ProjectID || round.TaskID != request.TaskID {
+		t.Fatalf("round=%+v err=%v", round, err)
+	}
+	gateRequest := review.GateRequest{ProjectID: request.ProjectID, TaskID: request.TaskID, Repository: request.Repository, CommitSHA: request.CommitSHA, Ref: request.Ref, RequiredChecks: request.RequiredChecks, RequestedBy: request.Reviewer}
+	pending, err := client.WatchGitHubChecks(context.Background(), gateRequest)
+	if err != nil || pending.Handle != "44" || pending.Status != "pending" || pending.CommitSHA != request.CommitSHA {
+		t.Fatalf("pending gate=%+v err=%v", pending, err)
+	}
+	failed, err := client.GetGitHubCheckGate(context.Background(), gateRequest)
+	if err != nil || failed.Status != "failed" || failed.TerminalReason != "required_checks_missing" || failed.FailureSummary != "lint was not observed" {
+		t.Fatalf("failed gate=%+v err=%v", failed, err)
+	}
+	if len(calls) != 3 || calls[0]["name"] != "request_review" || calls[1]["name"] != "watch_github_checks" || calls[2]["name"] != "get_github_check_gate" {
+		t.Fatalf("calls=%v", calls)
+	}
+	requestArgs := calls[0]["arguments"].(map[string]any)
+	if requestArgs["task_id"] != float64(7416) || requestArgs["requested_by"] != "@reviewer" || !strings.Contains(requestArgs["notes"].(string), reviewDenTestSHA) {
+		t.Fatalf("request args=%#v", requestArgs)
+	}
+	if _, present := requestArgs["project_id"]; present {
+		t.Fatal("task-scoped request_review must not send project_id")
 	}
 }
 

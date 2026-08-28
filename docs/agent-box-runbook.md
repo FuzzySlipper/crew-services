@@ -109,9 +109,11 @@ remain outside the projected event surface.
 ## Codex-backed review service
 
 The separate `crew-review` command owns the local review job ledger and its
-ephemeral Codex worker pool. It calls the current Den MCP endpoint directly for
-`get_review_context` and `finalize_review`; it does not import Den or Rusty Crew
-code and does not create review rounds. Den remains the review authority.
+ephemeral runtime pool. It calls the current Den MCP endpoint directly for
+`request_review`, exact-SHA GitHub gate operations, `get_review_context`, and
+`finalize_review`; it does not import Den or Rusty Crew code. Den remains the
+review authority, while crew-review owns durable submission admission and the
+runtime choice.
 
 Build it beside the messaging binaries and keep its SQLite file separate:
 
@@ -158,11 +160,47 @@ WantedBy=default.target
 Then enable it with `systemctl --user daemon-reload` and
 `systemctl --user enable --now crew-review.service`. `GET
 http://127.0.0.1:8413/healthz` checks SQLite readiness; `GET
-http://127.0.0.1:8413/v1/review-pool` reports the configured `codex` backend,
+http://127.0.0.1:8413/v1/review-pool` reports the configured runtime backend,
 queued/running jobs, recent terminal projections, and retained task affinity.
 Ephemeral Codex thread IDs are process-local and disappear on service restart;
 an in-flight job is requeued when the process context is cancelled so the next
 start can run it fresh.
+
+When Den MCP runs on a separate service box, keep `crew-review` loopback-only
+and carry its backend connection over SSH. On the agent box, a persistent
+reverse tunnel such as the following makes the agent-box listener available as
+`127.0.0.1:8413` on `den-srv` without opening a LAN listener:
+
+```ini
+[Unit]
+Description=Expose the local Crew review runner to Den MCP over SSH
+After=network-online.target crew-review.service
+Wants=network-online.target crew-review.service
+
+[Service]
+ExecStart=/usr/bin/ssh -NT -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 127.0.0.1:8413:127.0.0.1:8413 den-srv
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+```
+
+Save that unit as `~/.config/systemd/user/crew-review-den-tunnel.service`, then
+enable it after `crew-review.service`. The Den MCP `crew-review` backend remains
+`http://127.0.0.1:8413`; from its point of view that address is the remote end
+of the tunnel. This topology requires the service account's existing key-only
+SSH route to `den-srv` and remote forwarding support.
+
+The Den MCP facade's `submit_task_for_review` tool forwards the public
+project/task/repository/exact-SHA/checks/summary envelope to
+`POST /v1/review-submissions` on the loopback `crew-review` backend. Configure
+that backend in the MCP route/config files before enabling the tool. The
+receipt is immediately `gate_pending` when checks are not terminal; retry the
+same envelope after Den advances the gate. A passed gate is admitted exactly
+once for its Den review round. If the backend is down, the MCP response is a
+retryable `den_backend_unavailable` result; the route never falls back to
+Rusty or dispatches a second review authority.
 
 With an ordinary logged-in local Codex CLI, an opt-in scratch-DB smoke reads one
 existing native thread and projects it without mutating Codex:

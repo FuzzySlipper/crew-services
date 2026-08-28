@@ -83,10 +83,16 @@ The command starts a fixed number of bounded runner lanes (one durable job per
 lane at a time), reports `backend: "codex"` from `GET /v1/review-pool`, and
 never exposes ephemeral Codex worker or thread IDs in that projection.
 
-The Den request/gate submission gateway is intentionally a later integration
-slice. Until it lands, a trusted caller must POST an admitted job to
-`/v1/review-jobs`; the runner itself does not discover or create Den review
-rounds.
+The managed submission boundary is `POST /v1/review-submissions`. The Den MCP
+facade routes its `submit_task_for_review` green path to this endpoint through
+the separately configured `crew-review` backend. A first call records the Den
+round and exact-SHA gate; it returns `phase: "gate_pending"` while checks are
+pending, and later retries of the same target advance to `phase:
+"job_admitted"` once Den reports the gate passed and the current review context
+is source-review-ready. Submission state and round-scoped job admission are
+durable in the local SQLite file, so an uncertain retry reconciles instead of
+starting a second job. An unavailable crew-review backend is returned as an
+actionable retryable result; there is no automatic Rusty fallback.
 
 ## Project selected Codex threads
 

@@ -33,6 +33,24 @@ func NewHandler(s *Service) http.Handler {
 		}
 		write(w, status, map[string]any{"job": j.Projection(), "replayed": replay})
 	})
+	m.HandleFunc("POST /v1/review-submissions", func(w http.ResponseWriter, r *http.Request) {
+		var request SubmissionRequest
+		if !decode(w, r, &request) {
+			return
+		}
+		request.IdempotencyKey = r.Header.Get("Idempotency-Key")
+		receipt, replayed, err := s.SubmitTaskForReview(r.Context(), request)
+		if err != nil {
+			errJSON(w, err)
+			return
+		}
+		receipt.Replayed = replayed
+		status := http.StatusCreated
+		if replayed {
+			status = http.StatusOK
+		}
+		write(w, status, receipt)
+	})
 	m.HandleFunc("GET /v1/review-jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		j, e := s.Get(r.Context(), r.PathValue("id"))
 		if e != nil {

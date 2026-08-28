@@ -39,6 +39,8 @@ type Client struct {
 	request  atomic.Uint64
 }
 
+var _ review.SubmissionDenClient = (*Client)(nil)
+
 // New constructs a Den MCP client after validating its endpoint.
 func New(endpoint, token string, httpClient *http.Client) (*Client, error) {
 	parsed, err := url.Parse(strings.TrimSpace(endpoint))
@@ -265,6 +267,120 @@ func (c *Client) GetReviewContext(ctx context.Context, key review.Key) (review.C
 		workspace = strings.TrimSpace(response.Task.RepositoryHandle)
 	}
 	return review.Context{Key: key, NextState: strings.TrimSpace(response.NextState), Workspace: workspace}, nil
+}
+
+type requestReviewResponse struct {
+	ID            int64  `json:"id"`
+	ProjectID     string `json:"project_id"`
+	TaskID        int64  `json:"task_id"`
+	ReviewRoundID *int64 `json:"review_round_id"`
+}
+
+// RequestReview starts or reuses Den's current review round. Source revision
+// evidence remains in the Den request notes/gate; this adapter does not copy a
+// second review lifecycle into crew-services.
+func (c *Client) RequestReview(ctx context.Context, request review.SubmissionRequest) (review.ReviewRoundRef, error) {
+	data, err := c.call(ctx, "request_review", map[string]any{
+		"task_id":      request.TaskID,
+		"requested_by": request.Reviewer,
+		"branch":       request.Ref,
+		"base_branch":  request.Ref,
+		"tests_run":    []string{},
+		"notes":        reviewRequestNotes(request),
+	})
+	if err != nil {
+		return review.ReviewRoundRef{}, err
+	}
+	var response requestReviewResponse
+	if err := json.Unmarshal(data, &response); err != nil {
+		return review.ReviewRoundRef{}, fmt.Errorf("decode Den review request: %w", err)
+	}
+	roundID := response.ID
+	if response.ReviewRoundID != nil {
+		roundID = *response.ReviewRoundID
+	}
+	if roundID <= 0 {
+		return review.ReviewRoundRef{}, errors.New("Den request_review returned no review round id")
+	}
+	if response.ProjectID != "" && response.ProjectID != request.ProjectID || response.TaskID != 0 && response.TaskID != request.TaskID {
+		return review.ReviewRoundRef{}, fmt.Errorf("%w: Den request_review returned %s/%d", review.ErrDenConflict, response.ProjectID, response.TaskID)
+	}
+	return review.ReviewRoundRef{ID: roundID, ProjectID: request.ProjectID, TaskID: request.TaskID}, nil
+}
+
+type gateResponse struct {
+	ID             int64    `json:"id"`
+	GateID         int64    `json:"gate_id"`
+	ProjectID      string   `json:"project_id"`
+	TaskID         int64    `json:"task_id"`
+	Repository     string   `json:"repository"`
+	CommitSHA      string   `json:"commit_sha"`
+	Ref            string   `json:"ref"`
+	Status         string   `json:"status"`
+	TerminalReason string   `json:"terminal_reason"`
+	FailureSummary string   `json:"failure_summary"`
+	RequiredChecks []string `json:"required_checks"`
+}
+
+func (c *Client) WatchGitHubChecks(ctx context.Context, request review.GateRequest) (review.GateEvidence, error) {
+	data, err := c.call(ctx, "watch_github_checks", map[string]any{
+		"task_id":         request.TaskID,
+		"repository":      request.Repository,
+		"commit_sha":      request.CommitSHA,
+		"ref":             request.Ref,
+		"required_checks": request.RequiredChecks,
+		"requested_by":    request.RequestedBy,
+	})
+	if err != nil {
+		return review.GateEvidence{}, err
+	}
+	return parseGateResponse(data, request)
+}
+
+func (c *Client) GetGitHubCheckGate(ctx context.Context, request review.GateRequest) (review.GateEvidence, error) {
+	data, err := c.call(ctx, "get_github_check_gate", map[string]any{
+		"task_id":    request.TaskID,
+		"commit_sha": request.CommitSHA,
+	})
+	if err != nil {
+		return review.GateEvidence{}, err
+	}
+	return parseGateResponse(data, request)
+}
+
+func parseGateResponse(data json.RawMessage, request review.GateRequest) (review.GateEvidence, error) {
+	var response gateResponse
+	if err := json.Unmarshal(data, &response); err != nil {
+		return review.GateEvidence{}, fmt.Errorf("decode Den GitHub check gate: %w", err)
+	}
+	gateID := response.ID
+	if response.GateID != 0 {
+		gateID = response.GateID
+	}
+	if gateID <= 0 || strings.TrimSpace(response.Status) == "" {
+		return review.GateEvidence{}, errors.New("Den GitHub check gate response omitted id or status")
+	}
+	if response.ProjectID != "" && response.ProjectID != request.ProjectID || response.TaskID != 0 && response.TaskID != request.TaskID || response.Repository != "" && response.Repository != request.Repository || response.CommitSHA != "" && !strings.EqualFold(response.CommitSHA, request.CommitSHA) {
+		return review.GateEvidence{}, fmt.Errorf("%w: Den GitHub check gate identity does not match submission", review.ErrDenConflict)
+	}
+	return review.GateEvidence{
+		Repository:     request.Repository,
+		Ref:            request.Ref,
+		CommitSHA:      request.CommitSHA,
+		Status:         strings.TrimSpace(response.Status),
+		Handle:         strconv.FormatInt(gateID, 10),
+		TerminalReason: strings.TrimSpace(response.TerminalReason),
+		FailureSummary: strings.TrimSpace(response.FailureSummary),
+	}, nil
+}
+
+func reviewRequestNotes(request review.SubmissionRequest) string {
+	notes := request.ReviewSummary
+	notes += "\n\nManaged submission source: " + request.Repository + " @ " + request.CommitSHA + " (" + request.Ref + ")."
+	if request.BaseCommit != "" {
+		notes += " Diff base: " + request.BaseCommit + "."
+	}
+	return notes
 }
 
 type finalizeResponse struct {

@@ -51,6 +51,24 @@ func OpenSQLite(ctx context.Context, path string, clock Clock, capacity int) (*S
 			return nil, err
 		}
 	}
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('crew_review_jobs') WHERE name='round_identity'`).Scan(&columns); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if columns == 0 {
+		if _, err = db.ExecContext(ctx, `ALTER TABLE crew_review_jobs ADD COLUMN round_identity TEXT`); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+	if _, err = db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS crew_review_jobs_round_identity ON crew_review_jobs(round_identity) WHERE round_identity IS NOT NULL`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate crew review round identity: %w", err)
+	}
+	if _, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS crew_review_submissions (id TEXT PRIMARY KEY, idem_key TEXT NOT NULL UNIQUE, material_hash TEXT NOT NULL, request_json TEXT NOT NULL, phase TEXT NOT NULL, review_round_id INTEGER NOT NULL DEFAULT 0, gate_json TEXT, job_id TEXT NOT NULL DEFAULT '', failure TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate crew review submissions: %w", err)
+	}
 	if err = s.Recover(ctx); err != nil {
 		db.Close()
 		return nil, err
@@ -70,6 +88,10 @@ func material(a Admission) (string, error) {
 	return hex.EncodeToString(h[:]), nil
 }
 func (s *SQLiteStore) Admit(ctx context.Context, a Admission) (Job, bool, error) {
+	return s.admit(ctx, a, "")
+}
+
+func (s *SQLiteStore) admit(ctx context.Context, a Admission, roundIdentity string) (Job, bool, error) {
 	if !a.Key.valid() || a.IdempotencyKey == "" || a.Reviewer == "" {
 		return Job{}, false, errors.New("invalid review job admission")
 	}
@@ -80,14 +102,13 @@ func (s *SQLiteStore) Admit(ctx context.Context, a Admission) (Job, bool, error)
 	b, _ := json.Marshal(a)
 	now := stamp(s.clock.Now())
 	id := uuid.NewString()
-	_, e = s.db.ExecContext(ctx, `INSERT INTO crew_review_jobs(id,idem_key,material_hash,admission_json,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, a.IdempotencyKey, h, string(b), Queued, now, now)
+	_, e = s.db.ExecContext(ctx, `INSERT INTO crew_review_jobs(id,idem_key,material_hash,admission_json,state,created_at,updated_at,round_identity) VALUES(?,?,?,?,?,?,?,?)`, id, a.IdempotencyKey, h, string(b), Queued, now, now, nullableRoundIdentity(roundIdentity))
 	if e == nil {
 		j, _ := s.Get(ctx, id)
 		return j, false, nil
 	}
 	var oldHash, id2 string
-	e = s.db.QueryRowContext(ctx, `SELECT material_hash,id FROM crew_review_jobs WHERE idem_key=?`, a.IdempotencyKey).Scan(&oldHash, &id2)
-	if e != nil {
+	if lookupErr := s.db.QueryRowContext(ctx, `SELECT material_hash,id FROM crew_review_jobs WHERE idem_key=?`, a.IdempotencyKey).Scan(&oldHash, &id2); lookupErr != nil {
 		return Job{}, false, e
 	}
 	if oldHash != h {
@@ -95,6 +116,73 @@ func (s *SQLiteStore) Admit(ctx context.Context, a Admission) (Job, bool, error)
 	}
 	j, e := s.Get(ctx, id2)
 	return j, true, e
+}
+
+func nullableRoundIdentity(identity string) any {
+	if identity == "" {
+		return nil
+	}
+	return identity
+}
+
+func reviewRoundIdentity(key Key) string {
+	identity, _ := json.Marshal(struct {
+		ProjectID     string `json:"project_id"`
+		TaskID        int64  `json:"task_id"`
+		ReviewRoundID int64  `json:"review_round_id"`
+	}{key.ProjectID, key.TaskID, key.ReviewRoundID})
+	digest := sha256.Sum256(identity)
+	return "crew-review-round:" + hex.EncodeToString(digest[:])
+}
+
+// AdmitRound is the round-scoped idempotency guard for the managed submission
+// path. The ordinary Admission idempotency key protects one caller retry; the
+// round lookup also protects two distinct callers that race after Den reused
+// one current round.
+func (s *SQLiteStore) AdmitRound(ctx context.Context, a Admission) (Job, bool, error) {
+	if !a.Key.valid() || a.IdempotencyKey == "" || a.Reviewer == "" {
+		return Job{}, false, errors.New("invalid review job admission")
+	}
+	h, err := material(a)
+	if err != nil {
+		return Job{}, false, err
+	}
+	var existingHash, existingID string
+	err = s.db.QueryRowContext(ctx, `SELECT material_hash,id FROM crew_review_jobs WHERE idem_key=?`, a.IdempotencyKey).Scan(&existingHash, &existingID)
+	if err == nil {
+		if existingHash != h {
+			return Job{}, false, ErrConflict
+		}
+		job, getErr := s.Get(ctx, existingID)
+		return job, true, getErr
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Job{}, false, err
+	}
+	// review_round_id is inside the immutable admission envelope. SQLite's
+	// JSON extraction keeps the round guard additive without another job table
+	// migration and is already used by same-task serialization below.
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM crew_review_jobs WHERE json_extract(admission_json,'$.key.project_id')=? AND json_extract(admission_json,'$.key.task_id')=? AND json_extract(admission_json,'$.key.review_round_id')=? ORDER BY created_at LIMIT 1`, a.Key.ProjectID, a.Key.TaskID, a.Key.ReviewRoundID).Scan(&existingID)
+	if err == nil {
+		job, getErr := s.Get(ctx, existingID)
+		return job, true, getErr
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Job{}, false, err
+	}
+	roundIdentity := reviewRoundIdentity(a.Key)
+	job, replayed, err := s.admit(ctx, a, roundIdentity)
+	if err == nil {
+		return job, replayed, nil
+	}
+	// A distinct submission key can race past the read above. The unique round
+	// index makes one insert win; reconcile the loser to that durable winner.
+	var winnerID string
+	if lookupErr := s.db.QueryRowContext(ctx, `SELECT id FROM crew_review_jobs WHERE round_identity=?`, roundIdentity).Scan(&winnerID); lookupErr == nil {
+		job, getErr := s.Get(ctx, winnerID)
+		return job, true, getErr
+	}
+	return Job{}, false, err
 }
 func (s *SQLiteStore) Get(ctx context.Context, id string) (Job, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id,admission_json,state,finalization_json,receipt_json,failure,created_at,updated_at FROM crew_review_jobs WHERE id=?`, id)

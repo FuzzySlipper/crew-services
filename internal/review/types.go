@@ -27,10 +27,12 @@ var (
 	ErrNotFound = errors.New("review job not found")
 	ErrTooLate  = errors.New("review job is already finalizing or terminal")
 	// Adapter implementations classify Den's authoritative terminal responses.
-	ErrStaleRound   = errors.New("Den review round is stale")
-	ErrDenConflict  = errors.New("Den review finalization conflicts")
-	ErrCapacity     = errors.New("reviewer runtime is at capacity")
-	ErrAffinityBusy = errors.New("retained reviewer is busy")
+	ErrStaleRound        = errors.New("Den review round is stale")
+	ErrDenConflict       = errors.New("Den review finalization conflicts")
+	ErrCapacity          = errors.New("reviewer runtime is at capacity")
+	ErrAffinityBusy      = errors.New("retained reviewer is busy")
+	ErrSubmissionChanged = errors.New("review submission changed while it was being advanced")
+	ErrSubmissionStore   = errors.New("review submission store is not configured")
 )
 
 // Key is Den's logical review identity. Source evidence is intentionally not part of it.
@@ -52,11 +54,13 @@ type TaskKey struct {
 }
 
 type GateEvidence struct {
-	Repository string `json:"repository,omitempty"`
-	Ref        string `json:"ref,omitempty"`
-	CommitSHA  string `json:"commit_sha,omitempty"`
-	Status     string `json:"status,omitempty"`
-	Handle     string `json:"handle,omitempty"`
+	Repository     string `json:"repository,omitempty"`
+	Ref            string `json:"ref,omitempty"`
+	CommitSHA      string `json:"commit_sha,omitempty"`
+	Status         string `json:"status,omitempty"`
+	Handle         string `json:"handle,omitempty"`
+	TerminalReason string `json:"terminal_reason,omitempty"`
+	FailureSummary string `json:"failure_summary,omitempty"`
 }
 
 type Admission struct {
@@ -67,6 +71,114 @@ type Admission struct {
 	Branch         string       `json:"branch,omitempty"`
 	Gate           GateEvidence `json:"gate,omitempty"`
 	PacketHandle   string       `json:"packet_handle,omitempty"`
+}
+
+// SubmissionRequest is the runtime-neutral managed review entry point. It is
+// deliberately the same small envelope callers already use for managed Den
+// reviews; the service derives retry identity when no transport idempotency
+// key is available.
+type SubmissionRequest struct {
+	ProjectID      string   `json:"project_id"`
+	TaskID         int64    `json:"task_id"`
+	Repository     string   `json:"repository"`
+	CommitSHA      string   `json:"commit_sha"`
+	Ref            string   `json:"ref"`
+	RequiredChecks []string `json:"required_checks"`
+	BaseCommit     string   `json:"base_commit,omitempty"`
+	ReviewSummary  string   `json:"review_summary_md"`
+	Reviewer       string   `json:"reviewer,omitempty"`
+
+	// IdempotencyKey is transport metadata, not part of the public MCP tool
+	// schema. A direct HTTP caller may supply Idempotency-Key; the Den gateway
+	// uses the deterministic target identity derived by the service.
+	IdempotencyKey string `json:"-"`
+}
+
+type ReviewRoundRef struct {
+	ID        int64
+	ProjectID string
+	TaskID    int64
+}
+
+type GateRequest struct {
+	ProjectID      string
+	TaskID         int64
+	Repository     string
+	CommitSHA      string
+	Ref            string
+	RequiredChecks []string
+	RequestedBy    string
+}
+
+type SubmissionPhase string
+
+const (
+	SubmissionAccepted      SubmissionPhase = "accepted"
+	SubmissionRoundRecorded SubmissionPhase = "review_round_recorded"
+	SubmissionGatePending   SubmissionPhase = "gate_pending"
+	SubmissionGatePassed    SubmissionPhase = "gate_passed"
+	SubmissionGateFailed    SubmissionPhase = "gate_failed"
+	SubmissionJobAdmitted   SubmissionPhase = "job_admitted"
+	SubmissionUnavailable   SubmissionPhase = "unavailable"
+	SubmissionStale         SubmissionPhase = "stale"
+)
+
+func (p SubmissionPhase) Terminal() bool {
+	return p == SubmissionGateFailed || p == SubmissionJobAdmitted || p == SubmissionStale
+}
+
+// SubmissionRecord is the durable handoff ledger between the caller, Den's
+// review/gate authorities, and the local job queue. It contains no runtime
+// worker or provider details.
+type SubmissionRecord struct {
+	ID             string
+	IdempotencyKey string
+	MaterialHash   string
+	Request        SubmissionRequest
+	Phase          SubmissionPhase
+	ReviewRoundID  int64
+	Gate           GateEvidence
+	JobID          string
+	Failure        string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type SubmissionTransition struct {
+	Phase         SubmissionPhase
+	ReviewRoundID *int64
+	Gate          *GateEvidence
+	JobID         *string
+	Failure       *string
+}
+
+// SubmissionReceipt is intentionally provider-neutral. It reports Den
+// review/gate handles and the local durable job id, but never a native worker
+// session or model identity.
+type SubmissionReceipt struct {
+	Schema             string          `json:"schema"`
+	SchemaVersion      int             `json:"schema_version"`
+	OK                 bool            `json:"ok"`
+	Retryable          bool            `json:"retryable,omitempty"`
+	SubmissionID       string          `json:"submission_id"`
+	ProjectID          string          `json:"project_id"`
+	TaskID             int64           `json:"task_id"`
+	Repository         string          `json:"repository"`
+	CommitSHA          string          `json:"commit_sha"`
+	Ref                string          `json:"ref"`
+	RequiredChecks     []string        `json:"required_checks"`
+	BaseCommit         string          `json:"base_commit,omitempty"`
+	Reviewer           string          `json:"reviewer"`
+	Phase              SubmissionPhase `json:"phase"`
+	ReviewRoundID      int64           `json:"review_round_id,omitempty"`
+	GateID             string          `json:"gate_id,omitempty"`
+	GateStatus         string          `json:"gate_status,omitempty"`
+	GateTerminalReason string          `json:"gate_terminal_reason,omitempty"`
+	JobID              string          `json:"job_id,omitempty"`
+	ErrorCode          string          `json:"error_code,omitempty"`
+	Error              string          `json:"error,omitempty"`
+	Summary            string          `json:"summary"`
+	Replayed           bool            `json:"replayed,omitempty"`
 }
 
 type Completion struct {
@@ -158,6 +270,16 @@ func (c Context) ReviewableFor(k Key) bool { return c.Key == k && c.NextState ==
 type DenReviewClient interface {
 	GetReviewContext(context.Context, Key) (Context, error)
 	FinalizeReview(context.Context, Finalization) (Receipt, error)
+}
+
+// SubmissionDenClient is the additional narrow seam used only by the
+// managed-submission boundary. Keeping it separate means existing job tests
+// and alternate Den adapters do not need to implement submission orchestration
+// until they opt into that route.
+type SubmissionDenClient interface {
+	RequestReview(context.Context, SubmissionRequest) (ReviewRoundRef, error)
+	WatchGitHubChecks(context.Context, GateRequest) (GateEvidence, error)
+	GetGitHubCheckGate(context.Context, GateRequest) (GateEvidence, error)
 }
 type Worker interface{}
 type ReviewerRuntime interface {
