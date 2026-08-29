@@ -232,6 +232,10 @@ func TestFinalizeReviewClassifiesStaleAndConflict(t *testing.T) {
 			message: `{"error":"den_backend_request_failed","message":"{\"error\":{\"code\":\"review_request_too_large\",\"message\":\"review request exceeds the bounded payload budget\"}}"}`,
 			want:    review.ErrDenRejected,
 		},
+		"unresolved findings": {
+			message: `{"error":"den_backend_request_failed","message":"{\"error\":{\"code\":\"unresolved_review_findings\",\"message\":\"looks_good requires no unresolved findings for the task\"}}"}`,
+			want:    review.ErrDenRejected,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -261,7 +265,7 @@ func TestValidateFinalizationUsesEncodedDenRequestSize(t *testing.T) {
 	finalization := review.Finalization{
 		Key:        review.Key{ProjectID: "dsh-crew", TaskID: 7416, ReviewRoundID: 12, CorrelationID: "corr"},
 		Reviewer:   "reviewer",
-		Completion: review.Completion{Verdict: "looks_good", Notes: strings.Repeat(">", 700)},
+		Completion: review.Completion{Verdict: "looks_good", Notes: strings.Repeat(">", 2800)},
 	}
 	if err := client.ValidateFinalization(finalization); !errors.Is(err, review.ErrDenRejected) {
 		t.Fatalf("encoded oversize validation error = %v", err)
@@ -269,6 +273,10 @@ func TestValidateFinalizationUsesEncodedDenRequestSize(t *testing.T) {
 	finalization.Completion.Notes = "concise"
 	if err := client.ValidateFinalization(finalization); err != nil {
 		t.Fatalf("concise finalization rejected: %v", err)
+	}
+	finalization.Completion.NewFindings = []review.NewFinding{{Category: "follow_up_candidate", Summary: "non-blocking note"}}
+	if err := client.ValidateFinalization(finalization); !errors.Is(err, review.ErrDenRejected) {
+		t.Fatalf("looks_good with new finding validation error = %v", err)
 	}
 }
 

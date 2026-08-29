@@ -211,6 +211,12 @@ func (c Completion) valid() bool {
 	if c.Verdict != "looks_good" && c.Verdict != "changes_requested" {
 		return false
 	}
+	// Den creates every new finding as open. A looks_good decision carrying a
+	// new finding can therefore never satisfy Den's no-unresolved-findings
+	// invariant; non-blocking observations belong in notes instead.
+	if c.Verdict == "looks_good" && len(c.NewFindings) > 0 {
+		return false
+	}
 	// A changes_requested verdict is actionable only when it records a new
 	// finding for this controller-bound review round. Prior resolutions describe
 	// earlier findings and cannot stand in for a current-round finding.

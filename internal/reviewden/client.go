@@ -26,7 +26,7 @@ import (
 const (
 	DefaultMCPURL               = "http://192.168.1.10:5199/mcp"
 	maxResponseBytes            = 1 << 20
-	maxFinalizationRequestBytes = 4096
+	maxFinalizationRequestBytes = 16 * 1024
 )
 
 // Client is a deliberately small stateless caller for the Den MCP endpoint.
@@ -208,7 +208,10 @@ func classifyCode(operation, code, message string) error {
 	if strings.Contains(lower, "review_finalization_conflict") || strings.Contains(lower, "finalization conflict") || strings.Contains(lower, "different decision identity") {
 		return fmt.Errorf("%w: %s", review.ErrDenConflict, text)
 	}
-	if permanentFinalizationCode(strings.ToLower(strings.TrimSpace(code))) || strings.Contains(lower, "review_request_too_large") {
+	if permanentFinalizationCode(strings.ToLower(strings.TrimSpace(code))) ||
+		strings.Contains(lower, "review_request_too_large") ||
+		strings.Contains(lower, "unresolved_review_findings") ||
+		strings.Contains(lower, "actionable_review_finding_required") {
 		return fmt.Errorf("%w: %s", review.ErrDenRejected, text)
 	}
 	return fmt.Errorf("Den MCP %s: %s", operation, text)
@@ -219,7 +222,9 @@ func permanentFinalizationCode(code string) bool {
 		strings.HasPrefix(code, "invalid_") ||
 		strings.HasPrefix(code, "missing_") ||
 		code == "unresolved_findings" ||
+		code == "unresolved_review_findings" ||
 		code == "actionable_finding" ||
+		code == "actionable_review_finding_required" ||
 		code == "task_not_reviewable"
 }
 
@@ -465,8 +470,11 @@ func (c *Client) FinalizeReview(ctx context.Context, finalization review.Finaliz
 
 // ValidateFinalization mirrors the compact body emitted by Den's MCP Review
 // adapter. Go's JSON encoder escapes characters such as '>', so counting raw
-// model text is not sufficient to enforce Den's 4 KiB request contract.
+// model text is not sufficient to enforce Den's 16 KiB request contract.
 func (c *Client) ValidateFinalization(finalization review.Finalization) error {
+	if !finalization.Completion.Valid() {
+		return fmt.Errorf("%w: invalid finalization verdict/finding combination", review.ErrDenRejected)
+	}
 	encoded, err := json.Marshal(finalizationArguments(finalization))
 	if err != nil {
 		return fmt.Errorf("encode Den finalization arguments: %w", err)

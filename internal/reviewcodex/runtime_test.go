@@ -149,7 +149,7 @@ func TestEphemeralProfileAndSchema(t *testing.T) {
 	if len(s.options) != 1 || !s.options[0].ReadOnly || s.options[0].CWD != "/repo" || !strings.Contains(s.options[0].DeveloperInstructions, "Managed review runtime") {
 		t.Fatalf("options=%+v", s.options)
 	}
-	if !strings.Contains(s.options[0].DeveloperInstructions, "blocking_bug, acceptance_gap, test_weakness, or follow_up_candidate") || !strings.Contains(s.options[0].DeveloperInstructions, "verified_fixed, not_fixed, superseded, or split_to_follow_up") || !strings.Contains(s.options[0].DeveloperInstructions, "prior-finding resolution with status not_fixed alone is insufficient") {
+	if !strings.Contains(s.options[0].DeveloperInstructions, "blocking_bug, acceptance_gap, test_weakness, or follow_up_candidate") || !strings.Contains(s.options[0].DeveloperInstructions, "verified_fixed, not_fixed, superseded, or split_to_follow_up") || !strings.Contains(s.options[0].DeveloperInstructions, "looks_good verdict must not include new_findings") || !strings.Contains(s.options[0].DeveloperInstructions, "prior-finding resolution with status not_fixed alone is insufficient") {
 		t.Fatalf("instructions do not name allowed values: %q", s.options[0].DeveloperInstructions)
 	}
 	raw, _ := json.Marshal(completionTool())
@@ -209,7 +209,7 @@ func TestCompletionToolConstrainsDenFindingValues(t *testing.T) {
 	if len(tools) != 1 {
 		t.Fatalf("tool count=%d", len(tools))
 	}
-	if !strings.Contains(tools[0].Description, "changes_requested verdict requires at least one valid new finding") || !strings.Contains(tools[0].Description, "not_fixed alone is insufficient") {
+	if !strings.Contains(tools[0].Description, "looks_good verdict must not include new findings") || !strings.Contains(tools[0].Description, "changes_requested verdict requires at least one valid new finding") || !strings.Contains(tools[0].Description, "not_fixed alone is insufficient") {
 		t.Fatalf("tool description does not explain actionable findings: %q", tools[0].Description)
 	}
 	assertNestedEnum(t, tools[0].InputSchema.Properties["new_findings"], []string{"blocking_bug", "acceptance_gap", "test_weakness", "follow_up_candidate"})
@@ -253,6 +253,7 @@ func TestToolRejectsInvalidDenFindingValues(t *testing.T) {
 		arguments map[string]any
 	}{
 		{name: "changes requested without finding", arguments: map[string]any{"verdict": "changes_requested"}},
+		{name: "looks good with new finding", arguments: map[string]any{"verdict": "looks_good", "new_findings": []map[string]any{{"category": "follow_up_candidate", "summary": "non-blocking note"}}}},
 		{name: "prior not fixed without current finding", arguments: map[string]any{"verdict": "changes_requested", "prior_finding_resolutions": []map[string]any{{"finding_id": 1, "status": "not_fixed", "verification_note": "still fails"}}}},
 		{name: "category", arguments: map[string]any{"verdict": "changes_requested", "new_findings": []map[string]any{{"category": "arbitrary", "summary": "bad enum"}}}},
 		{name: "resolution status", arguments: map[string]any{"verdict": "looks_good", "prior_finding_resolutions": []map[string]any{{"finding_id": 1, "status": "arbitrary", "verification_note": "bad enum"}}}},
