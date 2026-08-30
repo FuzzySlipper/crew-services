@@ -74,11 +74,15 @@ type fakeRuntime struct {
 	completed       chan struct{}
 	afterCompletion chan struct{}
 	prompt          string
+	capacity        int
 }
 
 func (r *fakeRuntime) Acquire(context.Context, TaskKey, string, string) (Worker, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.capacity > 0 && r.acquired-r.released >= r.capacity {
+		return nil, ErrCapacity
+	}
 	r.acquired++
 	return r.acquired, nil
 }
@@ -697,6 +701,51 @@ func TestLooksGoodReleasesRatherThanRetains(t *testing.T) {
 	snap, err := svc.Snapshot(context.Background(), 5)
 	if err != nil || len(snap.Retained) != 0 {
 		t.Fatalf("snapshot=%+v err=%v", snap, err)
+	}
+}
+
+func TestIdleAffinityYieldsCapacityToUnrelatedQueuedReview(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)}
+	store, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), clock, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	first := Key{ProjectID: "dsh", TaskID: 1, ReviewRoundID: 1, CorrelationID: "first"}
+	second := Key{ProjectID: "dsh", TaskID: 2, ReviewRoundID: 2, CorrelationID: "second"}
+	den := &fakeDen{contexts: map[int64]Context{
+		1: {Key: first, NextState: "source_review_ready"},
+		2: {Key: second, NextState: "source_review_ready"},
+	}, receipts: map[int64]Receipt{}}
+	runtime := &fakeRuntime{capacity: 1, completion: changesRequestedCompletion()}
+	svc, err := New(store, den, runtime, "profile", WithClock(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = svc.Admit(context.Background(), Admission{IdempotencyKey: "first", Key: first, Reviewer: "reviewer"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	runtime.completion = Completion{Verdict: "looks_good"}
+	job, _, err := svc.Admit(context.Background(), Admission{IdempotencyKey: "second", Key: second, Reviewer: "reviewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Get(context.Background(), job.ID)
+	if err != nil || got.State != Succeeded {
+		t.Fatalf("unrelated review = %+v, err=%v", got, err)
+	}
+	if runtime.acquired != 2 || runtime.released != 2 {
+		t.Fatalf("acquired=%d released=%d", runtime.acquired, runtime.released)
+	}
+	snapshot, err := svc.Snapshot(context.Background(), 5)
+	if err != nil || len(snapshot.Retained) != 0 {
+		t.Fatalf("snapshot=%+v err=%v", snapshot, err)
 	}
 }
 

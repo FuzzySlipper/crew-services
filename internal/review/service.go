@@ -272,7 +272,37 @@ func (s *Service) workerFor(ctx context.Context, key TaskKey, workspace string) 
 	}
 	s.mu.Unlock()
 	worker, err := s.runtime.Acquire(ctx, key, s.profile, workspace)
+	if errors.Is(err, ErrCapacity) {
+		// Retained workers are an optimization for same-task rereviews, not a
+		// reservation that may starve unrelated queued work. Reclaim the idle
+		// affinity nearest expiry and retry the acquisition once.
+		idle := s.takeIdleAffinity()
+		if idle != nil {
+			if releaseErr := s.runtime.Release(ctx, idle); releaseErr != nil {
+				return nil, false, fmt.Errorf("release idle review affinity under capacity pressure: %w", releaseErr)
+			}
+			worker, err = s.runtime.Acquire(ctx, key, s.profile, workspace)
+		}
+	}
 	return worker, false, err
+}
+
+func (s *Service) takeIdleAffinity() Worker {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var selectedKey TaskKey
+	var selected *affinity
+	for key, candidate := range s.affinities {
+		if candidate.busy || selected != nil && !candidate.expiresAt.Before(selected.expiresAt) {
+			continue
+		}
+		selectedKey, selected = key, candidate
+	}
+	if selected == nil {
+		return nil
+	}
+	delete(s.affinities, selectedKey)
+	return selected.worker
 }
 func (s *Service) retain(key TaskKey, worker Worker, admitted time.Time) {
 	s.mu.Lock()
