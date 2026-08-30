@@ -1,7 +1,6 @@
 package reviewden
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,14 +16,14 @@ import (
 const reviewDenTestSHA = "0123456789abcdef0123456789abcdef01234567"
 
 func TestGetReviewContextMapsTypedStructuredContent(t *testing.T) {
-	var gotRequest struct {
+	var gotRequests []struct {
 		Method string `json:"method"`
 		Params struct {
 			Name      string          `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
 		} `json:"params"`
 	}
-	structured := map[string]any{
+	reviewStructured := map[string]any{
 		"schema": "den_review.reviewer_context.v1", "schema_version": 1,
 		"project_id": "dsh-crew", "task_id": 7416,
 		"task":            map[string]any{"id": 7416, "project_id": "dsh-crew", "root_path": "/home/dev/dsh-crew"},
@@ -33,18 +32,34 @@ func TestGetReviewContextMapsTypedStructuredContent(t *testing.T) {
 		"prior_findings":  []map[string]any{{"id": "R7416-1", "summary": "recheck claim expiry"}},
 		"rereview_packet": map[string]any{"round": 12, "addresses": []string{"R7416-1"}},
 	}
-	wantMaterial, err := json.Marshal(structured)
-	if err != nil {
-		t.Fatal(err)
+	taskStructured := map[string]any{
+		"schema_version": "1", "project_id": "dsh-crew", "task_id": 7416,
+		"task":            map[string]any{"id": 7416, "project_id": "dsh-crew", "title": "Review task", "description": "canonical task description", "status": "review"},
+		"recent_messages": []map[string]any{{"id": 71, "sender": "implementer", "content": "The implementation is ready for review."}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
 			t.Fatalf("authorization = %q", got)
 		}
+		var gotRequest struct {
+			Method string `json:"method"`
+			Params struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"params"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		writeToolResult(w, structured)
+		gotRequests = append(gotRequests, gotRequest)
+		switch gotRequest.Params.Name {
+		case "get_review_context":
+			writeToolResult(w, reviewStructured)
+		case "get_task_context":
+			writeToolResult(w, taskStructured)
+		default:
+			t.Fatalf("unexpected Den tool %q", gotRequest.Params.Name)
+		}
 	}))
 	defer server.Close()
 	client, err := New(server.URL, "secret", server.Client())
@@ -59,14 +74,22 @@ func TestGetReviewContextMapsTypedStructuredContent(t *testing.T) {
 	if got.Key != key || got.NextState != "source_review_ready" || got.Workspace != "/home/dev/dsh-crew" {
 		t.Fatalf("context = %+v", got)
 	}
-	if !bytes.Equal(got.Material, wantMaterial) {
-		t.Fatalf("material = %s, want %s", got.Material, wantMaterial)
+	var material map[string]any
+	if err := json.Unmarshal(got.Material, &material); err != nil {
+		t.Fatalf("material is not JSON: %v", err)
 	}
-	if gotRequest.Method != "tools/call" || gotRequest.Params.Name != "get_review_context" {
-		t.Fatalf("request = %+v", gotRequest)
+	materialTask, ok := material["task"].(map[string]any)
+	if !ok || materialTask["description"] != "canonical task description" || materialTask["root_path"] != "/home/dev/dsh-crew" {
+		t.Fatalf("merged task material = %#v", material["task"])
+	}
+	if _, ok := material["recent_messages"]; !ok {
+		t.Fatalf("merged material omitted recent_messages: %s", got.Material)
+	}
+	if len(gotRequests) != 2 || gotRequests[0].Method != "tools/call" || gotRequests[0].Params.Name != "get_review_context" || gotRequests[1].Params.Name != "get_task_context" {
+		t.Fatalf("requests = %+v", gotRequests)
 	}
 	var args map[string]any
-	if err := json.Unmarshal(gotRequest.Params.Arguments, &args); err != nil {
+	if err := json.Unmarshal(gotRequests[0].Params.Arguments, &args); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(args, map[string]any{"task_id": float64(7416)}) {
@@ -158,6 +181,65 @@ func TestRequestReviewAndGitHubGateMethodsMapDenAuthority(t *testing.T) {
 	}
 	if _, present := requestArgs["project_id"]; present {
 		t.Fatal("task-scoped request_review must not send project_id")
+	}
+}
+
+func TestManualReviewMethodsUseCanonicalTaskAndNoInventedSourceSHA(t *testing.T) {
+	var calls []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		var arguments map[string]any
+		if err := json.Unmarshal(request.Params.Arguments, &arguments); err != nil {
+			t.Fatalf("decode arguments: %v", err)
+		}
+		calls = append(calls, map[string]any{"name": request.Params.Name, "arguments": arguments})
+		switch request.Params.Name {
+		case "get_task_context":
+			writeToolResult(w, map[string]any{
+				"schema_version": "1", "project_id": "dsh-crew", "task_id": 7416,
+				"task":            map[string]any{"id": 7416, "project_id": "dsh-crew", "status": "review", "description": "review this"},
+				"recent_messages": []map[string]any{{"id": 5, "content": "ready"}},
+				"workflow":        map[string]any{"current_review_round": map[string]any{"id": 19}},
+			})
+		case "request_review":
+			writeToolResult(w, map[string]any{"id": 19, "project_id": "dsh-crew", "task_id": 7416, "review_round_id": 19})
+		default:
+			t.Fatalf("unexpected Den operation %q", request.Params.Name)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := client.GetTaskContext(context.Background(), review.TaskKey{ProjectID: "dsh-crew", TaskID: 7416})
+	if err != nil || task.Status != "review" || task.CurrentReviewRoundID != 19 {
+		t.Fatalf("task=%+v err=%v", task, err)
+	}
+	request := review.ManualReviewRequest{ProjectID: "dsh-crew", TaskID: 7416, Ref: "main", Reviewer: "@reviewer", Preamble: "review current code on main"}
+	round, err := client.RequestManualReview(context.Background(), request)
+	if err != nil || round.ID != 19 || round.ProjectID != request.ProjectID || round.TaskID != request.TaskID {
+		t.Fatalf("round=%+v err=%v", round, err)
+	}
+	if len(calls) != 2 || calls[0]["name"] != "get_task_context" || calls[1]["name"] != "request_review" {
+		t.Fatalf("calls=%v", calls)
+	}
+	arguments := calls[1]["arguments"].(map[string]any)
+	if arguments["task_id"] != float64(7416) || arguments["branch"] != "main" || arguments["base_branch"] != "main" || arguments["notes"] != request.Preamble {
+		t.Fatalf("manual request arguments=%#v", arguments)
+	}
+	for _, sourceField := range []string{"repository", "commit_sha", "ref"} {
+		if _, present := arguments[sourceField]; present {
+			t.Fatalf("manual request fabricated source field %q: %#v", sourceField, arguments)
+		}
 	}
 }
 

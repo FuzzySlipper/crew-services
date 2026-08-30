@@ -41,6 +41,7 @@ type Client struct {
 }
 
 var _ review.SubmissionDenClient = (*Client)(nil)
+var _ review.ManualReviewDenClient = (*Client)(nil)
 
 // New constructs a Den MCP client after validating its endpoint.
 func New(endpoint, token string, httpClient *http.Client) (*Client, error) {
@@ -202,6 +203,9 @@ func classifyToolError(operation string, envelope toolEnvelope) error {
 func classifyCode(operation, code, message string) error {
 	text := strings.TrimSpace(strings.TrimSpace(code) + ": " + strings.TrimSpace(message))
 	lower := strings.ToLower(text)
+	if strings.TrimSpace(strings.ToLower(code)) == "task_not_reviewable" {
+		return fmt.Errorf("%w: %s", review.ErrTaskNotReviewable, text)
+	}
 	if strings.Contains(lower, "stale_review_round") || strings.Contains(lower, "review round is no longer current") || strings.Contains(lower, "round is stale") {
 		return fmt.Errorf("%w: %s", review.ErrStaleRound, text)
 	}
@@ -252,6 +256,28 @@ type contextRound struct {
 	TaskID    int64  `json:"task_id"`
 }
 
+type taskContextResponse struct {
+	ProjectID      string              `json:"project_id"`
+	TaskID         int64               `json:"task_id"`
+	Task           json.RawMessage     `json:"task"`
+	RecentMessages json.RawMessage     `json:"recent_messages"`
+	Workflow       taskContextWorkflow `json:"workflow"`
+}
+
+type taskContextTask struct {
+	ID        int64  `json:"id"`
+	ProjectID string `json:"project_id"`
+	Status    string `json:"status"`
+}
+
+type taskContextWorkflow struct {
+	CurrentReviewRound json.RawMessage `json:"current_review_round"`
+}
+
+type taskContextReviewRound struct {
+	ID int64 `json:"id"`
+}
+
 // GetReviewContext maps Den's bounded task-scoped context to the runner's
 // identity. Project/task/round identities are checked against the admitted
 // key; the correlation ID is local admission identity and is retained by the
@@ -280,6 +306,17 @@ func (c *Client) GetReviewContext(ctx context.Context, key review.Key) (review.C
 	if response.CurrentRound.ID != key.ReviewRoundID || response.CurrentRound.ProjectID != "" && response.CurrentRound.ProjectID != key.ProjectID || response.CurrentRound.TaskID != 0 && response.CurrentRound.TaskID != key.TaskID {
 		return review.Context{}, fmt.Errorf("%w: Den context round %d does not match admitted round %d", review.ErrStaleRound, response.CurrentRound.ID, key.ReviewRoundID)
 	}
+	taskData, err := c.call(ctx, "get_task_context", map[string]any{"task_id": key.TaskID})
+	if err != nil {
+		return review.Context{}, err
+	}
+	if _, _, _, err := decodeTaskContext(taskData, key.Task()); err != nil {
+		return review.Context{}, err
+	}
+	material, err := mergeTaskContext(data, taskData, key.Task())
+	if err != nil {
+		return review.Context{}, err
+	}
 	workspace := strings.TrimSpace(response.Task.RootPath)
 	if workspace == "" {
 		workspace = strings.TrimSpace(response.Task.RepositoryHandle)
@@ -288,8 +325,114 @@ func (c *Client) GetReviewContext(ctx context.Context, key review.Key) (review.C
 		Key:       key,
 		NextState: strings.TrimSpace(response.NextState),
 		Workspace: workspace,
-		Material:  append(json.RawMessage(nil), data...),
+		Material:  material,
 	}, nil
+}
+
+// GetTaskContext reads the canonical task context for manual-review
+// authorization. Project scope is still derived from the requested path by
+// the caller; the task itself remains the authority for status.
+func (c *Client) GetTaskContext(ctx context.Context, key review.TaskKey) (review.TaskContext, error) {
+	data, err := c.call(ctx, "get_task_context", map[string]any{"task_id": key.TaskID})
+	if err != nil {
+		return review.TaskContext{}, err
+	}
+	task, _, _, err := decodeTaskContext(data, key)
+	if err != nil {
+		return review.TaskContext{}, err
+	}
+	return task, nil
+}
+
+func decodeTaskContext(data json.RawMessage, key review.TaskKey) (review.TaskContext, json.RawMessage, json.RawMessage, error) {
+	var response taskContextResponse
+	if err := json.Unmarshal(data, &response); err != nil {
+		return review.TaskContext{}, nil, nil, fmt.Errorf("decode Den task context: %w", err)
+	}
+	var task taskContextTask
+	if len(response.Task) > 0 && string(response.Task) != "null" {
+		if err := json.Unmarshal(response.Task, &task); err != nil {
+			return review.TaskContext{}, nil, nil, fmt.Errorf("decode Den task identity: %w", err)
+		}
+	}
+	projectID := strings.TrimSpace(response.ProjectID)
+	if projectID == "" {
+		projectID = strings.TrimSpace(task.ProjectID)
+	}
+	taskID := response.TaskID
+	if taskID == 0 {
+		taskID = task.ID
+	}
+	if projectID != key.ProjectID || taskID != key.TaskID || task.ProjectID != "" && strings.TrimSpace(task.ProjectID) != key.ProjectID || task.ID != 0 && task.ID != key.TaskID {
+		return review.TaskContext{}, nil, nil, fmt.Errorf("%w: Den task context identity is %s/%d, requested %s/%d", review.ErrConflict, projectID, taskID, key.ProjectID, key.TaskID)
+	}
+	currentRoundID, err := taskContextCurrentReviewRoundID(response.Workflow.CurrentReviewRound)
+	if err != nil {
+		return review.TaskContext{}, nil, nil, err
+	}
+	return review.TaskContext{ProjectID: projectID, TaskID: taskID, Status: strings.TrimSpace(task.Status), CurrentReviewRoundID: currentRoundID}, append(json.RawMessage(nil), response.Task...), append(json.RawMessage(nil), response.RecentMessages...), nil
+}
+
+func taskContextCurrentReviewRoundID(raw json.RawMessage) (int64, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, nil
+	}
+	var round taskContextReviewRound
+	if err := json.Unmarshal(raw, &round); err != nil {
+		return 0, fmt.Errorf("decode Den current review round: %w", err)
+	}
+	if round.ID < 0 {
+		return 0, errors.New("Den current review round id must not be negative")
+	}
+	return round.ID, nil
+}
+
+func mergeTaskContext(reviewData, taskData json.RawMessage, key review.TaskKey) (json.RawMessage, error) {
+	_, taskRaw, messagesRaw, err := decodeTaskContext(taskData, key)
+	if err != nil {
+		return nil, err
+	}
+	var reviewObject map[string]json.RawMessage
+	if err := json.Unmarshal(reviewData, &reviewObject); err != nil {
+		return nil, fmt.Errorf("decode Den review context for task merge: %w", err)
+	}
+	var reviewTask map[string]json.RawMessage
+	if raw := reviewObject["task"]; len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &reviewTask); err != nil {
+			return nil, fmt.Errorf("decode Den review task for task merge: %w", err)
+		}
+	} else {
+		reviewTask = make(map[string]json.RawMessage)
+	}
+	var canonicalTask map[string]json.RawMessage
+	if len(taskRaw) > 0 && string(taskRaw) != "null" {
+		if err := json.Unmarshal(taskRaw, &canonicalTask); err != nil {
+			return nil, fmt.Errorf("decode Den canonical task for task merge: %w", err)
+		}
+	}
+	for field, value := range canonicalTask {
+		// The canonical task context is the authority for user-facing task
+		// content and status. The review context contributes only review
+		// infrastructure fields such as root_path and repository_handle.
+		if field == "description" || field == "title" || field == "status" || field == "id" || field == "project_id" {
+			reviewTask[field] = value
+		} else if _, exists := reviewTask[field]; !exists {
+			reviewTask[field] = value
+		}
+	}
+	encodedTask, err := json.Marshal(reviewTask)
+	if err != nil {
+		return nil, fmt.Errorf("encode merged Den task context: %w", err)
+	}
+	reviewObject["task"] = encodedTask
+	if len(messagesRaw) > 0 && string(messagesRaw) != "null" {
+		reviewObject["recent_messages"] = messagesRaw
+	}
+	encoded, err := json.Marshal(reviewObject)
+	if err != nil {
+		return nil, fmt.Errorf("encode merged Den review context: %w", err)
+	}
+	return encoded, nil
 }
 
 type requestReviewResponse struct {
@@ -327,6 +470,38 @@ func (c *Client) RequestReview(ctx context.Context, request review.SubmissionReq
 	}
 	if response.ProjectID != "" && response.ProjectID != request.ProjectID || response.TaskID != 0 && response.TaskID != request.TaskID {
 		return review.ReviewRoundRef{}, fmt.Errorf("%w: Den request_review returned %s/%d", review.ErrDenConflict, response.ProjectID, response.TaskID)
+	}
+	return review.ReviewRoundRef{ID: roundID, ProjectID: request.ProjectID, TaskID: request.TaskID}, nil
+}
+
+// RequestManualReview creates or reuses the Den round using only the
+// task-scoped request fields. In particular, it never manufactures a commit
+// SHA or submits a source-control gate for a best-effort review.
+func (c *Client) RequestManualReview(ctx context.Context, request review.ManualReviewRequest) (review.ReviewRoundRef, error) {
+	data, err := c.call(ctx, "request_review", map[string]any{
+		"task_id":      request.TaskID,
+		"requested_by": request.Reviewer,
+		"branch":       request.Ref,
+		"base_branch":  request.Ref,
+		"tests_run":    []string{},
+		"notes":        request.Preamble,
+	})
+	if err != nil {
+		return review.ReviewRoundRef{}, err
+	}
+	var response requestReviewResponse
+	if err := json.Unmarshal(data, &response); err != nil {
+		return review.ReviewRoundRef{}, fmt.Errorf("decode Den manual review request: %w", err)
+	}
+	roundID := response.ID
+	if response.ReviewRoundID != nil {
+		roundID = *response.ReviewRoundID
+	}
+	if roundID <= 0 {
+		return review.ReviewRoundRef{}, errors.New("Den manual review request returned no review round id")
+	}
+	if response.ProjectID != "" && response.ProjectID != request.ProjectID || response.TaskID != 0 && response.TaskID != request.TaskID {
+		return review.ReviewRoundRef{}, fmt.Errorf("%w: Den manual review request returned %s/%d", review.ErrDenConflict, response.ProjectID, response.TaskID)
 	}
 	return review.ReviewRoundRef{ID: roundID, ProjectID: request.ProjectID, TaskID: request.TaskID}, nil
 }

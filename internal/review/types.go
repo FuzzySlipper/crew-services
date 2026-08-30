@@ -28,6 +28,10 @@ var (
 	ErrConflict = errors.New("review job idempotency conflict")
 	ErrNotFound = errors.New("review job not found")
 	ErrTooLate  = errors.New("review job is already finalizing or terminal")
+	// ErrTaskNotReviewable is returned by the browser-facing manual admission
+	// surface when the authoritative Den task is no longer in review. The
+	// caller should refresh its capability rather than retrying the same click.
+	ErrTaskNotReviewable = errors.New("task is no longer in review")
 	// Adapter implementations classify Den's authoritative terminal responses.
 	ErrStaleRound        = errors.New("Den review round is stale")
 	ErrDenConflict       = errors.New("Den review finalization conflicts")
@@ -74,6 +78,72 @@ type Admission struct {
 	Branch         string       `json:"branch,omitempty"`
 	Gate           GateEvidence `json:"gate,omitempty"`
 	PacketHandle   string       `json:"packet_handle,omitempty"`
+	// ReviewPreamble is controller-owned prompt context for a manual
+	// best-effort admission. It is intentionally persisted with the private
+	// admission envelope, while Job.Projection never exposes it.
+	ReviewPreamble string `json:"review_preamble,omitempty"`
+}
+
+type ManualReviewMode string
+
+const (
+	ManualReviewExact      ManualReviewMode = "exact"
+	ManualReviewBestEffort ManualReviewMode = "best_effort"
+)
+
+type ManualReviewSource struct {
+	Repository string `json:"repository"`
+	CommitSHA  string `json:"commit_sha"`
+	Ref        string `json:"ref"`
+}
+
+// ManualReviewCapability is the small read model used by Den Web to decide
+// whether its contextual manual-review button should be shown. Den remains
+// authoritative for task status; crew-review only reports the source evidence
+// it can safely reuse from its durable submission ledger.
+type ManualReviewCapability struct {
+	Eligible bool                `json:"eligible"`
+	Mode     ManualReviewMode    `json:"mode"`
+	Label    string              `json:"label"`
+	Detail   string              `json:"detail"`
+	Source   *ManualReviewSource `json:"source,omitempty"`
+}
+
+// ManualReviewSubmissionRequest carries only browser transport metadata. The
+// service resolves task status, review round, and source evidence itself.
+type ManualReviewSubmissionRequest struct {
+	ProjectID      string
+	TaskID         int64
+	IdempotencyKey string
+	Reviewer       string
+}
+
+type ManualReviewReceipt struct {
+	Mode    ManualReviewMode `json:"mode"`
+	Status  string           `json:"status"`
+	Message string           `json:"message"`
+	JobID   string           `json:"job_id,omitempty"`
+	RoundID int64            `json:"round_id,omitempty"`
+}
+
+// ManualReviewRequest is sent by the review-specific Den adapter to create or
+// reuse a Den review round without fabricating source-control evidence.
+type ManualReviewRequest struct {
+	ProjectID string
+	TaskID    int64
+	Ref       string
+	Reviewer  string
+	Preamble  string
+}
+
+// TaskContext is the authoritative subset needed by the manual admission
+// gate. The adapter separately retains the complete bounded task context in
+// the private reviewer material.
+type TaskContext struct {
+	ProjectID            string
+	TaskID               int64
+	Status               string
+	CurrentReviewRoundID int64
 }
 
 // SubmissionRequest is the runtime-neutral managed review entry point. It is
@@ -324,6 +394,15 @@ func (c Context) ReviewableFor(k Key) bool { return c.Key == k && c.NextState ==
 type DenReviewClient interface {
 	GetReviewContext(context.Context, Key) (Context, error)
 	FinalizeReview(context.Context, Finalization) (Receipt, error)
+}
+
+// ManualReviewDenClient is implemented only by the review-specific adapter.
+// It keeps task authorization and commitless round creation out of the
+// runtime-neutral messaging core.
+type ManualReviewDenClient interface {
+	DenReviewClient
+	GetTaskContext(context.Context, TaskKey) (TaskContext, error)
+	RequestManualReview(context.Context, ManualReviewRequest) (ReviewRoundRef, error)
 }
 
 // FinalizationValidator is an optional adapter capability for checking the

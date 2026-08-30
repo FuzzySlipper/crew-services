@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -42,6 +43,53 @@ func (s *SQLiteStore) AdmitSubmission(ctx context.Context, request SubmissionReq
 func (s *SQLiteStore) GetSubmission(ctx context.Context, id string) (SubmissionRecord, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id,idem_key,material_hash,request_json,phase,review_round_id,gate_json,job_id,failure,created_at,updated_at FROM crew_review_submissions WHERE id=?`, id)
 	return scanSubmission(row)
+}
+
+// LatestReusableSubmission returns the newest exact-source submission for a
+// task that can still be retried. A failed gate or stale Den round is not a
+// reusable source for the manual button: the caller should use the explicit
+// best-effort path instead. IDs are collected before loading records because
+// this store intentionally uses one SQLite connection.
+func (s *SQLiteStore) LatestReusableSubmission(ctx context.Context, projectID string, taskID int64) (SubmissionRecord, bool, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" || taskID <= 0 {
+		return SubmissionRecord{}, false, errors.New("project_id and task_id are required")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM crew_review_submissions WHERE json_extract(request_json,'$.project_id')=? AND json_extract(request_json,'$.task_id')=? AND phase NOT IN (?,?) ORDER BY updated_at DESC, created_at DESC, id DESC`, projectID, taskID, SubmissionGateFailed, SubmissionStale)
+	if err != nil {
+		return SubmissionRecord{}, false, err
+	}
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return SubmissionRecord{}, false, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return SubmissionRecord{}, false, err
+	}
+	if err := rows.Close(); err != nil {
+		return SubmissionRecord{}, false, err
+	}
+	for _, id := range ids {
+		record, err := s.GetSubmission(ctx, id)
+		if err != nil {
+			return SubmissionRecord{}, false, err
+		}
+		request := record.Request
+		if record.Phase == SubmissionGateFailed || record.Phase == SubmissionStale ||
+			request.ProjectID != projectID || request.TaskID != taskID ||
+			!validRepository(request.Repository) || !githubCommitPattern.MatchString(strings.ToLower(strings.TrimSpace(request.CommitSHA))) ||
+			strings.TrimSpace(request.Ref) == "" || strings.TrimSpace(request.ReviewSummary) == "" {
+			continue
+		}
+		return record, true, nil
+	}
+	return SubmissionRecord{}, false, nil
 }
 
 func scanSubmission(row scanner) (SubmissionRecord, error) {
@@ -130,3 +178,4 @@ func boolInt(value bool) int {
 }
 
 var _ SubmissionStore = (*SQLiteStore)(nil)
+var _ ManualReviewSubmissionStore = (*SQLiteStore)(nil)

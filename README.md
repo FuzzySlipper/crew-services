@@ -107,6 +107,16 @@ durable in the local SQLite file, so an uncertain retry reconciles instead of
 starting a second job. An unavailable crew-review backend is returned as an
 actionable retryable result; there is no automatic Rusty fallback.
 
+Den Web's contextual manual action uses
+`GET /v1/projects/{project_id}/tasks/{task_id}/manual-review` to read a
+server-evaluated capability and `POST` to the same path to admit it. The
+service resumes an exact submission only when its durable source record
+matches Den's current review round. Otherwise it admits an explicitly
+commitless best-effort review of current `main`, with the canonical task
+description and bounded task messages included in the reviewer context. Both
+paths recheck that the task is still in `review`, and POST retries converge
+through `Idempotency-Key`.
+
 ## Project selected Codex threads
 
 `crew-codex` is a separate runtime adapter command. It supervises the ordinary

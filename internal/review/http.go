@@ -51,6 +51,43 @@ func NewHandler(s *Service) http.Handler {
 		}
 		write(w, status, receipt)
 	})
+	m.HandleFunc("GET /v1/projects/{project_id}/tasks/{task_id}/manual-review", func(w http.ResponseWriter, r *http.Request) {
+		taskID, err := strconv.ParseInt(r.PathValue("task_id"), 10, 64)
+		if err != nil {
+			errJSON(w, err)
+			return
+		}
+		capability, err := s.GetManualReviewCapability(r.Context(), r.PathValue("project_id"), taskID)
+		if err != nil {
+			errJSON(w, err)
+			return
+		}
+		write(w, http.StatusOK, capability)
+	})
+	m.HandleFunc("POST /v1/projects/{project_id}/tasks/{task_id}/manual-review", func(w http.ResponseWriter, r *http.Request) {
+		taskID, err := strconv.ParseInt(r.PathValue("task_id"), 10, 64)
+		if err != nil {
+			errJSON(w, err)
+			return
+		}
+		receipt, replayed, err := s.SubmitManualReview(r.Context(), ManualReviewSubmissionRequest{
+			ProjectID:      r.PathValue("project_id"),
+			TaskID:         taskID,
+			IdempotencyKey: r.Header.Get("Idempotency-Key"),
+			Reviewer:       r.Header.Get("X-Review-Actor"),
+		})
+		if err != nil {
+			errJSON(w, err)
+			return
+		}
+		status := http.StatusCreated
+		if replayed {
+			status = http.StatusOK
+		} else if receipt.Status == "pending" {
+			status = http.StatusAccepted
+		}
+		write(w, status, receipt)
+	})
 	m.HandleFunc("GET /v1/review-jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		j, e := s.Get(r.Context(), r.PathValue("id"))
 		if e != nil {
@@ -120,6 +157,14 @@ func errJSON(w http.ResponseWriter, e error) {
 	if errors.Is(e, ErrConflict) || errors.Is(e, ErrAffinityBusy) {
 		status = 409
 		code = "conflict"
+	}
+	if errors.Is(e, ErrTaskNotReviewable) {
+		status = http.StatusConflict
+		code = "task_not_reviewable"
+	}
+	if errors.Is(e, ErrStaleRound) {
+		status = http.StatusConflict
+		code = "stale_review_round"
 	}
 	if errors.Is(e, ErrTooLate) {
 		status = 409

@@ -29,6 +29,14 @@ type SubmissionStore interface {
 	TransitionSubmission(context.Context, string, SubmissionPhase, SubmissionTransition) (SubmissionRecord, error)
 }
 
+// ManualReviewSubmissionStore is an additive capability. Keeping it
+// separate preserves the existing managed-submission seam for alternate
+// adapters that have not opted into the browser-facing capability read model.
+type ManualReviewSubmissionStore interface {
+	SubmissionStore
+	LatestReusableSubmission(context.Context, string, int64) (SubmissionRecord, bool, error)
+}
+
 type Snapshot struct {
 	Backend    string             `json:"backend"`
 	Capacity   int                `json:"capacity"`
