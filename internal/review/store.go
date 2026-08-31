@@ -17,6 +17,10 @@ type Store interface {
 	Fail(context.Context, string, State, string) (Job, error)
 	Cancel(context.Context, string) (Job, error)
 	Requeue(context.Context, string) (Job, error)
+	// RetryFailed deliberately permits only an operator-directed retry of a
+	// terminal failed job. It keeps the original durable identity while
+	// clearing material that belongs to the failed attempt.
+	RetryFailed(context.Context, string) (Job, error)
 	Recover(context.Context) error
 	Snapshot(context.Context, int) (Snapshot, error)
 	Ready(context.Context) error

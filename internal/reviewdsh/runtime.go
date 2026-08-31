@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -89,6 +90,10 @@ func New(cfg Config) (*Runtime, error) {
 }
 
 func (r *Runtime) Acquire(ctx context.Context, _ review.TaskKey, _ string, workspace string) (review.Worker, error) {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" || !filepath.IsAbs(workspace) {
+		return nil, fmt.Errorf("%w; set Den project root_path (got %q)", review.ErrWorkspaceRequired, workspace)
+	}
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()

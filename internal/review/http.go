@@ -104,6 +104,16 @@ func NewHandler(s *Service) http.Handler {
 		}
 		write(w, 200, j.Projection())
 	})
+	// Retry is deliberately separate from admission replay: it is an
+	// operator-directed fresh attempt for one exact terminal failed job.
+	m.HandleFunc("POST /v1/review-jobs/{id}/retry", func(w http.ResponseWriter, r *http.Request) {
+		j, e := s.RetryFailed(r.Context(), r.PathValue("id"))
+		if e != nil {
+			errJSON(w, e)
+			return
+		}
+		write(w, http.StatusOK, map[string]any{"job": j.Projection(), "retried": true})
+	})
 	m.HandleFunc("DELETE /v1/review-affinities/{project}/{task}", func(w http.ResponseWriter, r *http.Request) {
 		task, e := strconv.ParseInt(r.PathValue("task"), 10, 64)
 		if e != nil {

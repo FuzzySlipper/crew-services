@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -306,6 +307,10 @@ func (c *Client) GetReviewContext(ctx context.Context, key review.Key) (review.C
 	if response.CurrentRound.ID != key.ReviewRoundID || response.CurrentRound.ProjectID != "" && response.CurrentRound.ProjectID != key.ProjectID || response.CurrentRound.TaskID != 0 && response.CurrentRound.TaskID != key.TaskID {
 		return review.Context{}, fmt.Errorf("%w: Den context round %d does not match admitted round %d", review.ErrStaleRound, response.CurrentRound.ID, key.ReviewRoundID)
 	}
+	workspace := strings.TrimSpace(response.Task.RootPath)
+	if workspace == "" || !filepath.IsAbs(workspace) {
+		return review.Context{}, fmt.Errorf("%w; set Den project root_path (got %q)", review.ErrWorkspaceRequired, response.Task.RootPath)
+	}
 	taskData, err := c.call(ctx, "get_task_context", map[string]any{"task_id": key.TaskID})
 	if err != nil {
 		return review.Context{}, err
@@ -316,10 +321,6 @@ func (c *Client) GetReviewContext(ctx context.Context, key review.Key) (review.C
 	material, err := mergeTaskContext(data, taskData, key.Task())
 	if err != nil {
 		return review.Context{}, err
-	}
-	workspace := strings.TrimSpace(response.Task.RootPath)
-	if workspace == "" {
-		workspace = strings.TrimSpace(response.Task.RepositoryHandle)
 	}
 	return review.Context{
 		Key:       key,

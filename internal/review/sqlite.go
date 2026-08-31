@@ -394,6 +394,27 @@ func (s *SQLiteStore) Requeue(ctx context.Context, id string) (Job, error) {
 	}
 	return s.Get(ctx, id)
 }
+func (s *SQLiteStore) RetryFailed(ctx context.Context, id string) (Job, error) {
+	// A retry is a new runtime attempt for the same Den-owned review round, not
+	// a new admission. Clear every attempt-specific terminal value together so
+	// a runner can only observe either the intact failed attempt or a clean
+	// queued attempt.
+	result, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,finalizing_claim=0,failure='',finalization_json=NULL,receipt_json=NULL,updated_at=? WHERE id=? AND state=?`, Queued, stamp(s.clock.Now()), id, Failed)
+	if e != nil {
+		return Job{}, e
+	}
+	changed, e := result.RowsAffected()
+	if e != nil {
+		return Job{}, e
+	}
+	if changed == 0 {
+		if _, e := s.Get(ctx, id); e != nil {
+			return Job{}, e
+		}
+		return Job{}, ErrTooLate
+	}
+	return s.Get(ctx, id)
+}
 func (s *SQLiteStore) Recover(ctx context.Context) error {
 	_, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,updated_at=? WHERE state=?`, Queued, stamp(s.clock.Now()), Running)
 	if e != nil {

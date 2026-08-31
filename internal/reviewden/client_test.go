@@ -115,6 +115,49 @@ func TestGetReviewContextTypedNoCurrentRoundIsStale(t *testing.T) {
 	}
 }
 
+func TestGetReviewContextRequiresAbsoluteRootPathNotRepositoryHandle(t *testing.T) {
+	for name, rootPath := range map[string]string{
+		"missing":    "",
+		"whitespace": " \t ",
+		"relative":   "checkout",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var calls int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				var request struct {
+					Params struct {
+						Name string `json:"name"`
+					} `json:"params"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Params.Name != "get_review_context" {
+					t.Fatalf("unexpected Den request %q", request.Params.Name)
+				}
+				writeToolResult(w, map[string]any{
+					"project_id": "dsh-crew", "task_id": 7416,
+					"task":          map[string]any{"id": 7416, "project_id": "dsh-crew", "root_path": rootPath, "repository_handle": "owner/repo"},
+					"current_round": map[string]any{"id": 12, "project_id": "dsh-crew", "task_id": 7416},
+				})
+			}))
+			defer server.Close()
+			client, err := New(server.URL, "", server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.GetReviewContext(context.Background(), review.Key{ProjectID: "dsh-crew", TaskID: 7416, ReviewRoundID: 12, CorrelationID: "corr"})
+			if !errors.Is(err, review.ErrWorkspaceRequired) || !strings.Contains(err.Error(), "set Den project root_path") {
+				t.Fatalf("error = %v", err)
+			}
+			if calls != 1 {
+				t.Fatalf("Den calls = %d, want only get_review_context", calls)
+			}
+		})
+	}
+}
+
 func TestRequestReviewAndGitHubGateMethodsMapDenAuthority(t *testing.T) {
 	var calls []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

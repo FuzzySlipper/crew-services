@@ -42,8 +42,11 @@ var (
 	// a service restart into a terminal review failure.
 	ErrRuntimeUnavailable = errors.New("reviewer runtime is unavailable")
 	ErrAffinityBusy       = errors.New("retained reviewer is busy")
-	ErrSubmissionChanged  = errors.New("review submission changed while it was being advanced")
-	ErrSubmissionStore    = errors.New("review submission store is not configured")
+	// ErrWorkspaceRequired marks an absent or non-absolute Den checkout. A
+	// repository handle is logical identity, not a local filesystem workspace.
+	ErrWorkspaceRequired = errors.New("Den project root_path must be an absolute local checkout path")
+	ErrSubmissionChanged = errors.New("review submission changed while it was being advanced")
+	ErrSubmissionStore   = errors.New("review submission store is not configured")
 )
 
 // Key is Den's logical review identity. Source evidence is intentionally not part of it.
@@ -439,6 +442,7 @@ func (SystemClock) Now() time.Time { return time.Now().UTC() }
 type RetainedAffinity struct {
 	ProjectID string    `json:"project_id"`
 	TaskID    int64     `json:"task_id"`
+	Workspace string    `json:"workspace"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
 

@@ -98,6 +98,29 @@ func TestRuntimeEnforcesLocalCapacity(t *testing.T) {
 	}
 }
 
+func TestRuntimeRejectsInvalidWorkspaceBeforeReservationOrHTTP(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(`{"worker_id":"unexpected"}`))
+	}))
+	defer server.Close()
+	runtime := newRuntime(t, server.URL, 1)
+	for _, workspace := range []string{"", " \t ", "relative-checkout", "owner/repo"} {
+		if _, err := runtime.Acquire(context.Background(), review.TaskKey{}, "", workspace); !errors.Is(err, review.ErrWorkspaceRequired) {
+			t.Fatalf("Acquire(%q) error = %v, want workspace error", workspace, err)
+		}
+	}
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("HTTP calls = %d, want zero", got)
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.reserved != 0 || len(runtime.workers) != 0 {
+		t.Fatalf("invalid workspace leaked pool state: reserved=%d workers=%d", runtime.reserved, len(runtime.workers))
+	}
+}
+
 func TestRuntimeRejectsBusyRunAndRelease(t *testing.T) {
 	started := make(chan struct{})
 	releaseRun := make(chan struct{})

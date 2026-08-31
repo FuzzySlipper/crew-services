@@ -21,6 +21,7 @@ type Service struct {
 }
 type affinity struct {
 	worker    Worker
+	workspace string
 	expiresAt time.Time
 	busy      bool
 }
@@ -80,6 +81,24 @@ func (s *Service) admit(ctx context.Context, a Admission, admit func(context.Con
 }
 func (s *Service) Get(ctx context.Context, id string) (Job, error)    { return s.store.Get(ctx, id) }
 func (s *Service) Cancel(ctx context.Context, id string) (Job, error) { return s.store.Cancel(ctx, id) }
+
+// RetryFailed explicitly starts a fresh runtime attempt for the same durable
+// failed job. Its retained worker is released before the durable transition so
+// this retry cannot reuse a worker implicated in the failed attempt. If that
+// release cannot happen, the job remains failed and safe to inspect or retry.
+func (s *Service) RetryFailed(ctx context.Context, id string) (Job, error) {
+	j, err := s.store.Get(ctx, id)
+	if err != nil {
+		return Job{}, err
+	}
+	if j.State != Failed {
+		return Job{}, ErrTooLate
+	}
+	if err := s.discardAffinityForRetry(ctx, j.Admission.Key.Task()); err != nil {
+		return Job{}, err
+	}
+	return s.store.RetryFailed(ctx, id)
+}
 func (s *Service) Snapshot(ctx context.Context, n int) (Snapshot, error) {
 	s.reapExpired(ctx)
 	v, err := s.store.Snapshot(ctx, n)
@@ -91,7 +110,7 @@ func (s *Service) Snapshot(ctx context.Context, n int) (Snapshot, error) {
 	}
 	s.mu.Lock()
 	for key, value := range s.affinities {
-		v.Retained = append(v.Retained, RetainedAffinity{ProjectID: key.ProjectID, TaskID: key.TaskID, ExpiresAt: value.expiresAt})
+		v.Retained = append(v.Retained, RetainedAffinity{ProjectID: key.ProjectID, TaskID: key.TaskID, Workspace: value.workspace, ExpiresAt: value.expiresAt})
 	}
 	s.mu.Unlock()
 	return v, nil
@@ -132,7 +151,7 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 	if !c.ReviewableFor(j.Admission.Key) {
 		return s.terminal(ctx, j, Stale, "review round is no longer source_review_ready")
 	}
-	w, reused, e := s.workerFor(ctx, j.Admission.Key.Task(), first(c.Workspace, j.Admission.Workspace))
+	w, reused, e := s.workerFor(ctx, j.Admission.Key.Task(), c.Workspace)
 	if e != nil {
 		if errors.Is(e, ErrCapacity) || errors.Is(e, ErrAffinityBusy) || errors.Is(e, ErrRuntimeUnavailable) {
 			_, requeueErr := s.store.Requeue(ctx, j.ID)
@@ -205,7 +224,7 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 			return readErr
 		}
 		if completed.Receipt != nil && completed.Receipt.Verdict == "changes_requested" {
-			s.retain(j.Admission.Key.Task(), w, j.CreatedAt)
+			s.retain(j.Admission.Key.Task(), w, c.Workspace, j.CreatedAt)
 			retain = true
 		}
 	}
@@ -256,12 +275,6 @@ func (s *Service) terminal(ctx context.Context, j Job, state State, why string) 
 	_, e := s.store.Fail(ctx, j.ID, state, why)
 	return e
 }
-func first(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}
 func (s *Service) workerFor(ctx context.Context, key TaskKey, workspace string) (Worker, bool, error) {
 	s.mu.Lock()
 	if retained := s.affinities[key]; retained != nil {
@@ -269,12 +282,35 @@ func (s *Service) workerFor(ctx context.Context, key TaskKey, workspace string) 
 			s.mu.Unlock()
 			return nil, true, ErrAffinityBusy
 		}
+		if retained.workspace == workspace {
+			retained.busy = true
+			worker := retained.worker
+			s.mu.Unlock()
+			return worker, true, nil
+		}
+		// A task can move to a different checkout between review rounds. Keep
+		// the old worker reserved while releasing it so no concurrent runner can
+		// borrow an agent bound to the wrong checkout.
 		retained.busy = true
-		worker := retained.worker
+		stale := retained
 		s.mu.Unlock()
-		return worker, true, nil
+		if err := s.runtime.Release(ctx, stale.worker); err != nil {
+			s.mu.Lock()
+			if current := s.affinities[key]; current == stale {
+				current.busy = false
+			}
+			s.mu.Unlock()
+			return nil, false, fmt.Errorf("release retained reviewer for changed workspace: %w", err)
+		}
+		s.mu.Lock()
+		if current := s.affinities[key]; current == stale {
+			delete(s.affinities, key)
+		}
+		s.mu.Unlock()
+		// Acquire below. The new worker is necessarily bound to workspace.
+	} else {
+		s.mu.Unlock()
 	}
-	s.mu.Unlock()
 	worker, err := s.runtime.Acquire(ctx, key, s.profile, workspace)
 	if errors.Is(err, ErrCapacity) {
 		// Retained workers are an optimization for same-task rereviews, not a
@@ -308,13 +344,13 @@ func (s *Service) takeIdleAffinity() Worker {
 	delete(s.affinities, selectedKey)
 	return selected.worker
 }
-func (s *Service) retain(key TaskKey, worker Worker, admitted time.Time) {
+func (s *Service) retain(key TaskKey, worker Worker, workspace string, admitted time.Time) {
 	s.mu.Lock()
 	deadline := admitted.Add(12 * time.Hour)
-	if existing := s.affinities[key]; existing != nil && existing.worker == worker && existing.expiresAt.After(deadline) {
+	if existing := s.affinities[key]; existing != nil && existing.worker == worker && existing.workspace == workspace && existing.expiresAt.After(deadline) {
 		deadline = existing.expiresAt
 	}
-	s.affinities[key] = &affinity{worker: worker, expiresAt: deadline}
+	s.affinities[key] = &affinity{worker: worker, workspace: workspace, expiresAt: deadline}
 	s.mu.Unlock()
 }
 func (s *Service) releaseWorker(worker Worker, key TaskKey, reused bool) {
@@ -356,6 +392,39 @@ func (s *Service) ReleaseAffinity(ctx context.Context, key TaskKey) error {
 	delete(s.affinities, key)
 	s.mu.Unlock()
 	return s.runtime.Release(ctx, value.worker)
+}
+
+// discardAffinityForRetry reserves the idle affinity while its opaque runtime
+// worker is being released. Keeping it marked busy prevents a concurrent
+// runner from borrowing it in the small release-before-requeue window.
+func (s *Service) discardAffinityForRetry(ctx context.Context, key TaskKey) error {
+	s.mu.Lock()
+	value := s.affinities[key]
+	if value == nil {
+		s.mu.Unlock()
+		return nil
+	}
+	if value.busy {
+		s.mu.Unlock()
+		return ErrAffinityBusy
+	}
+	value.busy = true
+	s.mu.Unlock()
+
+	if err := s.runtime.Release(ctx, value.worker); err != nil {
+		s.mu.Lock()
+		if current := s.affinities[key]; current == value {
+			current.busy = false
+		}
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Lock()
+	if current := s.affinities[key]; current == value {
+		delete(s.affinities, key)
+	}
+	s.mu.Unlock()
+	return nil
 }
 func (s *Service) Close() error {
 	s.mu.Lock()

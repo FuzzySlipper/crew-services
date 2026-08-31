@@ -76,15 +76,19 @@ type fakeRuntime struct {
 	afterCompletion chan struct{}
 	prompt          string
 	capacity        int
+	releasedWorkers []Worker
+	releaseErr      error
+	workspaces      []string
 }
 
-func (r *fakeRuntime) Acquire(context.Context, TaskKey, string, string) (Worker, error) {
+func (r *fakeRuntime) Acquire(_ context.Context, _ TaskKey, _ string, workspace string) (Worker, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.capacity > 0 && r.acquired-r.released >= r.capacity {
 		return nil, ErrCapacity
 	}
 	r.acquired++
+	r.workspaces = append(r.workspaces, workspace)
 	return r.acquired, nil
 }
 func (r *fakeRuntime) Run(ctx context.Context, _ Worker, prompt string, complete func(Completion) error) error {
@@ -127,10 +131,14 @@ func (r *fakeRuntime) Run(ctx context.Context, _ Worker, prompt string, complete
 	r.mu.Unlock()
 	return e
 }
-func (r *fakeRuntime) Release(context.Context, Worker) error {
+func (r *fakeRuntime) Release(_ context.Context, worker Worker) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.releaseErr != nil {
+		return r.releaseErr
+	}
 	r.released++
+	r.releasedWorkers = append(r.releasedWorkers, worker)
 	return nil
 }
 func (*fakeRuntime) Close() error { return nil }
@@ -664,7 +672,7 @@ func TestChangesRequestedRetainsRereviewRefreshesAndExpiryReleases(t *testing.T)
 	}
 	defer store.Close()
 	key := Key{ProjectID: "dsh", TaskID: 1, ReviewRoundID: 1, CorrelationID: "c1"}
-	den := &fakeDen{contexts: map[int64]Context{1: {Key: key, NextState: "source_review_ready"}}, receipts: map[int64]Receipt{}}
+	den := &fakeDen{contexts: map[int64]Context{1: {Key: key, NextState: "source_review_ready", Workspace: "/repo"}}, receipts: map[int64]Receipt{}}
 	runtime := &fakeRuntime{completion: changesRequestedCompletion()}
 	svc, err := New(store, den, runtime, "profile", WithClock(clock))
 	if err != nil {
@@ -684,7 +692,7 @@ func TestChangesRequestedRetainsRereviewRefreshesAndExpiryReleases(t *testing.T)
 	a.IdempotencyKey = "two"
 	a.Key.ReviewRoundID = 2
 	a.Key.CorrelationID = "c2"
-	den.contexts[2] = Context{Key: a.Key, NextState: "source_review_ready"}
+	den.contexts[2] = Context{Key: a.Key, NextState: "source_review_ready", Workspace: "/repo"}
 	if _, replay, err := svc.Admit(context.Background(), a); err != nil || replay {
 		t.Fatalf("rereview replay=%v err=%v", replay, err)
 	}
@@ -704,6 +712,59 @@ func TestChangesRequestedRetainsRereviewRefreshesAndExpiryReleases(t *testing.T)
 	}
 	if runtime.released != 1 {
 		t.Fatalf("expiry releases=%d", runtime.released)
+	}
+}
+
+func TestChangedWorkspaceReleasesIdleAffinityAndAcquiresFreshWorker(t *testing.T) {
+	svc, store, den, runtime, firstAdmission := fixture(t, 2)
+	defer store.Close()
+	runtime.completion = changesRequestedCompletion()
+	den.contexts[firstAdmission.Key.ReviewRoundID] = Context{Key: firstAdmission.Key, NextState: "source_review_ready", Workspace: "/old-checkout"}
+	firstAdmission.Workspace = "/old-checkout"
+	if _, _, err := svc.Admit(context.Background(), firstAdmission); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	secondAdmission := firstAdmission
+	secondAdmission.IdempotencyKey = "second-round"
+	secondAdmission.Key.ReviewRoundID = 2
+	secondAdmission.Key.CorrelationID = "second-correlation"
+	secondAdmission.Workspace = "/old-checkout" // persisted admission is not current checkout authority.
+	den.contexts[2] = Context{Key: secondAdmission.Key, NextState: "source_review_ready", Workspace: "/new-checkout"}
+	if _, _, err := svc.Admit(context.Background(), secondAdmission); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.acquired != 2 || runtime.released != 1 || len(runtime.releasedWorkers) != 1 || runtime.releasedWorkers[0] != Worker(1) {
+		t.Fatalf("changed checkout did not release old worker and acquire fresh: acquired=%d released=%d released_workers=%#v", runtime.acquired, runtime.released, runtime.releasedWorkers)
+	}
+	if got, want := runtime.workspaces, []string{"/old-checkout", "/new-checkout"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("acquire workspaces = %#v, want %#v", got, want)
+	}
+	snapshot, err := svc.Snapshot(context.Background(), 5)
+	if err != nil || len(snapshot.Retained) != 1 || snapshot.Retained[0].Workspace != "/new-checkout" {
+		t.Fatalf("new affinity = %+v, err=%v", snapshot, err)
+	}
+}
+
+func TestChangedWorkspaceDoesNotReuseOrReleaseBusyAffinity(t *testing.T) {
+	svc, store, _, runtime, admission := fixture(t, 1)
+	defer store.Close()
+	key := admission.Key.Task()
+	svc.retain(key, Worker("old-worker"), "/old-checkout", svc.clock.Now())
+	svc.mu.Lock()
+	svc.affinities[key].busy = true
+	svc.mu.Unlock()
+	if _, reused, err := svc.workerFor(context.Background(), key, "/new-checkout"); !errors.Is(err, ErrAffinityBusy) || !reused {
+		t.Fatalf("changed checkout with busy affinity reused=%v err=%v", reused, err)
+	}
+	if runtime.acquired != 0 || runtime.released != 0 {
+		t.Fatalf("busy affinity touched runtime: acquired=%d released=%d", runtime.acquired, runtime.released)
 	}
 }
 
@@ -829,7 +890,7 @@ func TestReplayDoesNotRefreshAffinityDeadlineOrRestartPersistIt(t *testing.T) {
 	}
 	defer store.Close()
 	key := Key{ProjectID: "dsh", TaskID: 1, ReviewRoundID: 1, CorrelationID: "a"}
-	den := &fakeDen{contexts: map[int64]Context{1: {Key: key, NextState: "source_review_ready"}}, receipts: map[int64]Receipt{}}
+	den := &fakeDen{contexts: map[int64]Context{1: {Key: key, NextState: "source_review_ready", Workspace: "/old-checkout"}}, receipts: map[int64]Receipt{}}
 	runtime := &fakeRuntime{completion: changesRequestedCompletion()}
 	svc, e := New(store, den, runtime, "profile", WithClock(clock))
 	if e != nil {
@@ -859,6 +920,22 @@ func TestReplayDoesNotRefreshAffinityDeadlineOrRestartPersistIt(t *testing.T) {
 	if e != nil || len(snap.Retained) != 0 {
 		t.Fatalf("restart affinity=%+v err=%v", snap, e)
 	}
+	// An affinity owns an opaque in-process worker and is deliberately not
+	// durable. After a restart, the next round must acquire a new worker even
+	// when its task key is unchanged (and here its checkout also changed).
+	next := key
+	next.ReviewRoundID = 2
+	next.CorrelationID = "after-restart"
+	den.contexts[next.ReviewRoundID] = Context{Key: next, NextState: "source_review_ready", Workspace: "/new-checkout"}
+	if _, _, e = fresh.Admit(context.Background(), Admission{IdempotencyKey: "after-restart", Key: next, Reviewer: "r", Workspace: "/old-checkout"}); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = fresh.RunOne(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	if runtime.acquired != 2 || len(runtime.workspaces) != 2 || runtime.workspaces[1] != "/new-checkout" {
+		t.Fatalf("restart reused worker or stale checkout: acquired=%d workspaces=%#v", runtime.acquired, runtime.workspaces)
+	}
 }
 
 func TestManualAffinityReleaseRejectsBusyThenReleasesIdle(t *testing.T) {
@@ -886,5 +963,151 @@ func TestManualAffinityReleaseRejectsBusyThenReleasesIdle(t *testing.T) {
 	}
 	if runtime.released != 1 {
 		t.Fatalf("released=%d", runtime.released)
+	}
+}
+
+func TestRetryFailedRequeuesExactJobAndDiscardsAffinity(t *testing.T) {
+	svc, store, _, runtime, admission := fixture(t, 1)
+	defer store.Close()
+	job, _, err := svc.Admit(context.Background(), admission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = store.Claim(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.PutFinalization(context.Background(), job.ID, Finalization{Key: admission.Key, Reviewer: admission.Reviewer, Completion: Completion{Verdict: "looks_good"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Fail(context.Background(), job.ID, Failed, "reviewer turn completed without complete_review"); err != nil {
+		t.Fatal(err)
+	}
+	poisoned := Worker("failed-reviewer")
+	svc.retain(admission.Key.Task(), poisoned, "/repo", svc.clock.Now())
+
+	retried, err := svc.RetryFailed(context.Background(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.ID != job.ID || retried.State != Queued || retried.Failure != "" || retried.Finalization != nil || retried.Receipt != nil {
+		t.Fatalf("retried job = %+v", retried)
+	}
+	if runtime.released != 1 || len(runtime.releasedWorkers) != 1 || runtime.releasedWorkers[0] != poisoned {
+		t.Fatalf("released workers = %#v", runtime.releasedWorkers)
+	}
+	snapshot, err := svc.Snapshot(context.Background(), 5)
+	if err != nil || len(snapshot.Retained) != 0 {
+		t.Fatalf("retry left stale affinity: snapshot=%+v err=%v", snapshot, err)
+	}
+	if _, err = svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := svc.Get(context.Background(), job.ID)
+	if err != nil || completed.State != Succeeded || runtime.acquired != 1 {
+		t.Fatalf("fresh retry result = %+v acquired=%d err=%v", completed, runtime.acquired, err)
+	}
+}
+
+func TestRetryFailedRejectsBusyAffinityAndDoubleRetry(t *testing.T) {
+	svc, store, _, runtime, admission := fixture(t, 1)
+	defer store.Close()
+	job, _, err := svc.Admit(context.Background(), admission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Fail(context.Background(), job.ID, Failed, "failed"); err != nil {
+		t.Fatal(err)
+	}
+	svc.retain(admission.Key.Task(), Worker("busy-reviewer"), "/repo", svc.clock.Now())
+	svc.mu.Lock()
+	svc.affinities[admission.Key.Task()].busy = true
+	svc.mu.Unlock()
+	if _, err = svc.RetryFailed(context.Background(), job.ID); !errors.Is(err, ErrAffinityBusy) {
+		t.Fatalf("busy retry error = %v", err)
+	}
+	stillFailed, err := svc.Get(context.Background(), job.ID)
+	if err != nil || stillFailed.State != Failed || runtime.released != 0 {
+		t.Fatalf("busy retry mutated job=%+v released=%d err=%v", stillFailed, runtime.released, err)
+	}
+	svc.mu.Lock()
+	svc.affinities[admission.Key.Task()].busy = false
+	svc.mu.Unlock()
+	if _, err = svc.RetryFailed(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.RetryFailed(context.Background(), job.ID); !errors.Is(err, ErrTooLate) {
+		t.Fatalf("double retry error = %v", err)
+	}
+	if _, err = svc.RetryFailed(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing retry error = %v", err)
+	}
+}
+
+func TestRetryFailedRejectsNonFailedJobs(t *testing.T) {
+	for _, target := range []State{Queued, Running, Finalizing, Succeeded} {
+		t.Run(string(target), func(t *testing.T) {
+			svc, store, _, _, admission := fixture(t, 1)
+			defer store.Close()
+			job, _, err := svc.Admit(context.Background(), admission)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if target == Queued {
+				if _, err = svc.RetryFailed(context.Background(), job.ID); !errors.Is(err, ErrTooLate) {
+					t.Fatalf("queued retry error = %v", err)
+				}
+				return
+			}
+			if _, _, err = store.Claim(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if target == Running {
+				if _, err = svc.RetryFailed(context.Background(), job.ID); !errors.Is(err, ErrTooLate) {
+					t.Fatalf("running retry error = %v", err)
+				}
+				return
+			}
+			finalization := Finalization{Key: admission.Key, Reviewer: admission.Reviewer, Completion: Completion{Verdict: "looks_good"}}
+			if _, err = store.PutFinalization(context.Background(), job.ID, finalization); err != nil {
+				t.Fatal(err)
+			}
+			if target == Finalizing {
+				if _, err = svc.RetryFailed(context.Background(), job.ID); !errors.Is(err, ErrTooLate) {
+					t.Fatalf("finalizing retry error = %v", err)
+				}
+				return
+			}
+			if _, err = store.Complete(context.Background(), job.ID, Receipt{Verdict: "looks_good"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = svc.RetryFailed(context.Background(), job.ID); !errors.Is(err, ErrTooLate) {
+				t.Fatalf("succeeded retry error = %v", err)
+			}
+		})
+	}
+}
+
+func TestRetryFailedLeavesJobAndAffinityIntactWhenReleaseFails(t *testing.T) {
+	svc, store, _, runtime, admission := fixture(t, 1)
+	defer store.Close()
+	job, _, err := svc.Admit(context.Background(), admission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Fail(context.Background(), job.ID, Failed, "failed"); err != nil {
+		t.Fatal(err)
+	}
+	runtime.releaseErr = errors.New("runtime release failed")
+	svc.retain(admission.Key.Task(), Worker("failed-reviewer"), "/repo", svc.clock.Now())
+	if _, err = svc.RetryFailed(context.Background(), job.ID); !errors.Is(err, runtime.releaseErr) {
+		t.Fatalf("retry error = %v", err)
+	}
+	stillFailed, err := svc.Get(context.Background(), job.ID)
+	if err != nil || stillFailed.State != Failed {
+		t.Fatalf("release failure changed job=%+v err=%v", stillFailed, err)
+	}
+	snapshot, err := svc.Snapshot(context.Background(), 5)
+	if err != nil || len(snapshot.Retained) != 1 {
+		t.Fatalf("release failure lost affinity: snapshot=%+v err=%v", snapshot, err)
 	}
 }

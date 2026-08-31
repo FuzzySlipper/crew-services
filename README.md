@@ -96,6 +96,13 @@ in the same turn. Deterministic Den validation failures become one terminal
 job failure, while ambiguous transport failures retain the exact request for
 idempotent retry.
 
+An operator may deliberately retry one terminal failed job with `POST
+/v1/review-jobs/{id}/retry`. The action preserves the exact durable job and
+Den round, releases any idle retained worker for that task before requeueing,
+and clears the failed attempt's finalization, receipt, and failure detail. It
+rejects missing, nonfailed, or busy-affinity jobs rather than replaying an
+admission or retrying automatically.
+
 The managed submission boundary is `POST /v1/review-submissions`. The Den MCP
 facade routes its `submit_task_for_review` green path to this endpoint through
 the separately configured `crew-review` backend. A first call records the Den
