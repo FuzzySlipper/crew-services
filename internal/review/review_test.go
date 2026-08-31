@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -415,6 +416,27 @@ func TestProcessCancellationRequeuesInFlightJob(t *testing.T) {
 	}
 	if got.State != Queued {
 		t.Fatalf("cancelled job state = %s, want queued", got.State)
+	}
+}
+
+func TestRuntimeRestartRequeuesInFlightJob(t *testing.T) {
+	svc, store, _, runtime, a := fixture(t, 1)
+	defer store.Close()
+	j, _, err := svc.Admit(context.Background(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.skipCompletion = true
+	runtime.runErr = fmt.Errorf("DSH restarted: %w", ErrRuntimeUnavailable)
+	if _, err = svc.RunOne(context.Background()); !errors.Is(err, ErrRuntimeUnavailable) {
+		t.Fatalf("RunOne error = %v, want ErrRuntimeUnavailable", err)
+	}
+	got, err := svc.Get(context.Background(), j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != Queued {
+		t.Fatalf("job state = %s, want queued", got.State)
 	}
 }
 

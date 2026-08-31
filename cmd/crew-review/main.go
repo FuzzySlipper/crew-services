@@ -18,6 +18,7 @@ import (
 	"crew-services/internal/review"
 	"crew-services/internal/reviewcodex"
 	"crew-services/internal/reviewden"
+	"crew-services/internal/reviewdsh"
 )
 
 const defaultReviewProfile = "/home/system/crew-services/reviewer.md"
@@ -29,6 +30,8 @@ type commandConfig struct {
 	denURL       string
 	denToken     string
 	profile      string
+	backend      string
+	dshURL       string
 	codexModel   string
 	codexEffort  string
 	codexCommand string
@@ -72,18 +75,11 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	runtime, err := reviewcodex.New(ctx, reviewcodex.Config{
-		Command:     cfg.codexCommand,
-		Args:        cfg.codexArgs,
-		Capacity:    cfg.capacity,
-		ProfilePath: cfg.profile,
-		Model:       cfg.codexModel,
-		Effort:      cfg.codexEffort,
-	})
+	runtime, err := newRuntime(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	svc, err := review.New(store, den, runtime, cfg.profile, review.WithBackend("codex"))
+	svc, err := review.New(store, den, runtime, cfg.profile, review.WithBackend(cfg.backend))
 	if err != nil {
 		_ = runtime.Close()
 		return err
@@ -127,6 +123,8 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 		denURL:       envOr(getenv, "DEN_MCP_URL", reviewden.DefaultMCPURL),
 		denToken:     getenv("DEN_MCP_TOKEN"),
 		profile:      envOr(getenv, "CREW_REVIEW_PROFILE", defaultReviewProfile),
+		backend:      strings.ToLower(envOr(getenv, "CREW_REVIEW_BACKEND", "codex")),
+		dshURL:       strings.TrimSpace(getenv("CREW_REVIEW_DSH_URL")),
 		codexModel:   strings.TrimSpace(getenv("CREW_REVIEW_MODEL")),
 		codexEffort:  strings.TrimSpace(getenv("CREW_REVIEW_REASONING_EFFORT")),
 		codexCommand: envOr(getenv, "CODEX_COMMAND", "codex"),
@@ -154,6 +152,8 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	flags.StringVar(&cfg.denURL, "den-mcp-url", cfg.denURL, "Den MCP endpoint")
 	flags.StringVar(&cfg.denToken, "den-mcp-token", cfg.denToken, "Den MCP bearer token")
 	flags.StringVar(&cfg.profile, "review-profile", cfg.profile, "reviewer profile file")
+	flags.StringVar(&cfg.backend, "backend", cfg.backend, "reviewer backend: codex or dsh")
+	flags.StringVar(&cfg.dshURL, "dsh-url", cfg.dshURL, "DSH reviewer runtime control URL")
 	flags.StringVar(&cfg.codexModel, "codex-model", cfg.codexModel, "Codex reviewer model; empty inherits Codex config")
 	flags.StringVar(&cfg.codexEffort, "codex-effort", cfg.codexEffort, "Codex reviewer reasoning effort; empty inherits Codex config")
 	flags.StringVar(&cfg.codexCommand, "codex-command", cfg.codexCommand, "Codex App Server executable")
@@ -177,13 +177,41 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	if strings.TrimSpace(cfg.profile) == "" {
 		return commandConfig{}, errors.New("review profile is required")
 	}
-	if strings.TrimSpace(cfg.codexCommand) == "" {
-		return commandConfig{}, errors.New("Codex command is required")
+	cfg.backend = strings.ToLower(strings.TrimSpace(cfg.backend))
+	switch cfg.backend {
+	case "codex":
+		if strings.TrimSpace(cfg.codexCommand) == "" {
+			return commandConfig{}, errors.New("Codex command is required for codex backend")
+		}
+	case "dsh":
+		if strings.TrimSpace(cfg.dshURL) == "" {
+			return commandConfig{}, errors.New("CREW_REVIEW_DSH_URL or -dsh-url is required for dsh backend")
+		}
+	default:
+		return commandConfig{}, fmt.Errorf("unknown CREW_REVIEW_BACKEND %q; expected codex or dsh", cfg.backend)
 	}
 	if cfg.runInterval <= 0 {
 		return commandConfig{}, errors.New("run interval must be positive")
 	}
 	return cfg, nil
+}
+
+func newRuntime(ctx context.Context, cfg commandConfig) (review.ReviewerRuntime, error) {
+	switch cfg.backend {
+	case "codex":
+		return reviewcodex.New(ctx, reviewcodex.Config{
+			Command:     cfg.codexCommand,
+			Args:        cfg.codexArgs,
+			Capacity:    cfg.capacity,
+			ProfilePath: cfg.profile,
+			Model:       cfg.codexModel,
+			Effort:      cfg.codexEffort,
+		})
+	case "dsh":
+		return reviewdsh.New(reviewdsh.Config{URL: cfg.dshURL, Capacity: cfg.capacity})
+	default:
+		return nil, fmt.Errorf("unknown reviewer backend %q", cfg.backend)
+	}
 }
 
 func envOr(getenv func(string) string, name, fallback string) string {

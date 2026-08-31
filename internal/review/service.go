@@ -134,7 +134,7 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 	}
 	w, reused, e := s.workerFor(ctx, j.Admission.Key.Task(), first(c.Workspace, j.Admission.Workspace))
 	if e != nil {
-		if errors.Is(e, ErrCapacity) || errors.Is(e, ErrAffinityBusy) {
+		if errors.Is(e, ErrCapacity) || errors.Is(e, ErrAffinityBusy) || errors.Is(e, ErrRuntimeUnavailable) {
 			_, requeueErr := s.store.Requeue(ctx, j.ID)
 			return requeueErr
 		}
@@ -184,7 +184,7 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 	}
 	if current.State != Finalizing {
 		if runErr != nil {
-			if ctx.Err() != nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+			if ctx.Err() != nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, ErrRuntimeUnavailable) {
 				_, requeueErr := s.store.Requeue(context.Background(), j.ID)
 				if requeueErr != nil {
 					return requeueErr

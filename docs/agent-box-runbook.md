@@ -106,7 +106,7 @@ input and lets Codex automatically start it in FIFO order after the thread
 becomes idle. Native tool activity, partial messages, reasoning, and approvals
 remain outside the projected event surface.
 
-## Codex-backed review service
+## Crew review service backends
 
 The separate `crew-review` command owns the local review job ledger and its
 ephemeral runtime pool. It calls the current Den MCP endpoint directly for
@@ -125,17 +125,31 @@ exec "$HOME/.local/bin/crew-review" \
   -listen 127.0.0.1:8413 \
   -db "$HOME/.local/state/crew-review/crew-review.sqlite" \
   -den-mcp-url "${DEN_MCP_URL:-http://192.168.1.10:5199/mcp}" \
+  -backend "${CREW_REVIEW_BACKEND:-codex}" \
   -review-profile "${CREW_REVIEW_PROFILE:-/home/system/crew-services/reviewer.md}" \
   -codex-model "${CREW_REVIEW_MODEL:-}" \
   -codex-effort "${CREW_REVIEW_REASONING_EFFORT:-}" \
   -capacity "${CREW_REVIEW_CAPACITY:-2}"
 ```
 
-The command also accepts `-den-mcp-token`, `-codex-model`, `-codex-effort`,
-`-codex-command`, repeated `-codex-arg`, and `-run-interval`.
+The command defaults to the existing `codex` backend and also supports `dsh`.
+For `dsh`, configure the DSH plugin's loopback control route with
+`CREW_REVIEW_DSH_URL` (or `-dsh-url`), for example:
+
+```sh
+CREW_REVIEW_BACKEND=dsh
+CREW_REVIEW_DSH_URL=http://127.0.0.1:3080/plugins/dsh-crew-messaging/reviewer-runtime
+```
+
+The DSH plugin owns its reviewer model, provider, preset, and reviewer-profile
+injection. Do not add those settings to `crew-review`; it only sends workspace
+and controller-owned review prompts to an opaque DSH worker. The command also
+accepts `-den-mcp-token`, `-codex-model`, `-codex-effort`, `-codex-command`,
+repeated `-codex-arg`, and `-run-interval`.
 `CREW_REVIEW_LISTEN`, `CREW_REVIEW_DB`, `DEN_MCP_TOKEN`, `CODEX_COMMAND`,
 `CREW_REVIEW_MODEL`, `CREW_REVIEW_REASONING_EFFORT`, `CREW_REVIEW_PROFILE`,
-`CREW_REVIEW_CAPACITY`, and `CREW_REVIEW_RUN_INTERVAL` are the matching
+`CREW_REVIEW_BACKEND`, `CREW_REVIEW_DSH_URL`, `CREW_REVIEW_CAPACITY`, and
+`CREW_REVIEW_RUN_INTERVAL` are the matching
 environment settings. Keep the installed deployment values in
 `/home/system/crew-services/crew-review.env` and the dedicated instructions in
 the adjacent `reviewer.md`.
@@ -145,7 +159,7 @@ For a persistent agent-box service, save this as
 
 ```ini
 [Unit]
-Description=Codex-backed Crew review runner
+Description=Crew review runner
 Wants=crew-messaging.service
 After=crew-messaging.service
 

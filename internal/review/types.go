@@ -33,13 +33,17 @@ var (
 	// caller should refresh its capability rather than retrying the same click.
 	ErrTaskNotReviewable = errors.New("task is no longer in review")
 	// Adapter implementations classify Den's authoritative terminal responses.
-	ErrStaleRound        = errors.New("Den review round is stale")
-	ErrDenConflict       = errors.New("Den review finalization conflicts")
-	ErrDenRejected       = errors.New("Den rejected the review finalization")
-	ErrCapacity          = errors.New("reviewer runtime is at capacity")
-	ErrAffinityBusy      = errors.New("retained reviewer is busy")
-	ErrSubmissionChanged = errors.New("review submission changed while it was being advanced")
-	ErrSubmissionStore   = errors.New("review submission store is not configured")
+	ErrStaleRound  = errors.New("Den review round is stale")
+	ErrDenConflict = errors.New("Den review finalization conflicts")
+	ErrDenRejected = errors.New("Den rejected the review finalization")
+	ErrCapacity    = errors.New("reviewer runtime is at capacity")
+	// ErrRuntimeUnavailable marks a transient loss or restart of an external
+	// reviewer backend. The durable job returns to the queue instead of turning
+	// a service restart into a terminal review failure.
+	ErrRuntimeUnavailable = errors.New("reviewer runtime is unavailable")
+	ErrAffinityBusy       = errors.New("retained reviewer is busy")
+	ErrSubmissionChanged  = errors.New("review submission changed while it was being advanced")
+	ErrSubmissionStore    = errors.New("review submission store is not configured")
 )
 
 // Key is Den's logical review identity. Source evidence is intentionally not part of it.

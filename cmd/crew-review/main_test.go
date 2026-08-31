@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"crew-services/internal/reviewdsh"
 )
 
 func TestParseConfigUsesFlagsAndEnvironment(t *testing.T) {
@@ -17,6 +19,7 @@ func TestParseConfigUsesFlagsAndEnvironment(t *testing.T) {
 		"CREW_REVIEW_DB":               "/tmp/reviews.sqlite",
 		"CREW_REVIEW_MODEL":            "gpt-5.6-sol",
 		"CREW_REVIEW_REASONING_EFFORT": "medium",
+		"CREW_REVIEW_BACKEND":          "codex",
 		"CODEX_COMMAND":                "/usr/local/bin/codex",
 		"CREW_REVIEW_CAPACITY":         "4",
 		"CREW_REVIEW_RUN_INTERVAL":     "2s",
@@ -44,6 +47,40 @@ func TestParseConfigUsesFlagsAndEnvironment(t *testing.T) {
 	}
 	if len(cfg.codexArgs) != 2 || cfg.codexArgs[0] != "app-server" || cfg.codexArgs[1] != "--stdio" {
 		t.Fatalf("Codex args = %#v", cfg.codexArgs)
+	}
+}
+
+func TestParseConfigSelectsDSHBackend(t *testing.T) {
+	env := map[string]string{
+		"CREW_REVIEW_BACKEND": "dsh",
+		"CREW_REVIEW_DSH_URL": "http://127.0.0.1:3080/plugins/dsh-crew-messaging/reviewer-runtime",
+	}
+	cfg, err := parseConfig(nil, func(name string) string { return env[name] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.backend != "dsh" || cfg.dshURL != env["CREW_REVIEW_DSH_URL"] {
+		t.Fatalf("DSH config = %+v", cfg)
+	}
+	runtime, err := newRuntime(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := runtime.(*reviewdsh.Runtime); !ok {
+		t.Fatalf("runtime = %T, want *reviewdsh.Runtime", runtime)
+	}
+}
+
+func TestParseConfigRejectsUnknownOrIncompleteBackend(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"unknown":         {"CREW_REVIEW_BACKEND": "pi"},
+		"dsh missing URL": {"CREW_REVIEW_BACKEND": "dsh"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseConfig(nil, func(key string) string { return env[key] }); err == nil {
+				t.Fatal("parseConfig succeeded")
+			}
+		})
 	}
 }
 
