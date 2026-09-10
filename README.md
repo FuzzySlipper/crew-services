@@ -1,5 +1,10 @@
 # crew-services
 
+For native-controller game testing, see [Agent playtesting](docs/playtest.md).
+The separate `playtest-service` and `playtest-target` Go processes own sessions
+and input; `playtest` provides CLI/MCP access and a supervised JavaScript worker
+composes actions. This does not depend on the messaging fabric.
+
 `crew-services` is an independent, runtime-neutral successor for selected local
 agent-service capabilities. Its implemented foundation includes a runtime-neutral
 directory, atomic immutable message acceptance, an ordered delivery ledger, and

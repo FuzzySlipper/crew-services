@@ -1,0 +1,11 @@
+[
+  {
+    "id": "todomvc-browser",
+    "backend": "browser",
+    "environment": "service",
+    "description": "Headless browser example using the public Playwright TodoMVC demo. Replace URL with a den-serve LAN endpoint for your repo.",
+    "url": "https://demo.playwright.dev/todomvc/",
+    "controls": {"browser": "Inspect DOM, fill .new-todo, press Enter, click .toggle; use browser operations or supervised JS."},
+    "reset": "Recover starts a fresh isolated browser context; this demo stores items in browser local storage."
+  }
+]

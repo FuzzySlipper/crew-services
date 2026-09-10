@@ -1,0 +1,11 @@
+{
+  "id": "fe4d81a5-0c66-4ff9-859e-69a903b8b51f",
+  "session_id": "6aaa0527-2c4f-4f23-9755-04063c8b8cd9",
+  "phase": "cancelled",
+  "started_at": "2026-09-08T04:43:47.343275287Z",
+  "ended_at": "2026-09-08T04:43:48.841054287Z",
+  "error": "context canceled",
+  "source_path": "/home/agent/.local/state/crew-playtest/scripts/fe4d81a5-0c66-4ff9-859e-69a903b8b51f/source.js",
+  "events_path": "/home/agent/.local/state/crew-playtest/scripts/fe4d81a5-0c66-4ff9-859e-69a903b8b51f/events.jsonl",
+  "calls": 1
+}

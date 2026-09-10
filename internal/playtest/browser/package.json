@@ -1,0 +1,9 @@
+{
+  "name": "crew-playtest-browser",
+  "private": true,
+  "type": "module",
+  "description": "Private Playwright transport for crew-services browser leases",
+  "dependencies": {
+    "playwright": "^1.59.0"
+  }
+}

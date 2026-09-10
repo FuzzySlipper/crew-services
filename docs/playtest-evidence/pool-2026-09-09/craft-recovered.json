@@ -1,0 +1,116 @@
+{
+  "slot_id": "slot-2",
+  "id": "9e01a11a-6976-4dd9-8377-62c4865771c2",
+  "game": "rusty-craftsurvive",
+  "phase": "connected",
+  "created_at": "2026-09-10T01:29:04.689728146Z",
+  "launch": {
+    "browser_startup": "kiosk",
+    "browser_url": "http://localhost:37300/",
+    "compositor": "gamescope",
+    "container": "ccfb7f9c021f",
+    "controls": {
+      "Space": "Jump",
+      "W/A/S/D": "Keyboard movement",
+      "a": "Jump",
+      "b": "Crouch",
+      "ls": "Sprint",
+      "lx/ly": "Strafe / forward, positive Y forward",
+      "rt/lt": "Primary clear / secondary set",
+      "rx/ry": "Look right / up; 15% radial deadzone",
+      "x": "Impulse"
+    },
+    "game_readiness": "requires visual confirmation of this observation",
+    "native_focus_sequence_sent": true,
+    "observation": {
+      "artifact_id": "df362c9a-5dfc-431c-b392-64ed5708efd9",
+      "capture_ended_at_ns": 1789003751263115300,
+      "capture_started_at_ns": 1789003751145902300,
+      "event": "observation",
+      "frame_freshness": "not measured",
+      "game_frame_id": null,
+      "game_readiness": "unknown",
+      "height": 720,
+      "lease_id": "9e01a11a-6976-4dd9-8377-62c4865771c2",
+      "path": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/slots/slot-2/9e01a11a-6976-4dd9-8377-62c4865771c2/df362c9a-5dfc-431c-b392-64ed5708efd9.png",
+      "source": "remote Wolf stream decoded by Moonlight into private X11 window",
+      "target": {
+        "last_input": {
+          "action_id": "cf97eeef-bff5-4346-a7b9-a40d7df952d5",
+          "backend": "wolf-input-api",
+          "cancelled": false,
+          "completed_steps": 3,
+          "elapsed_ms": 302,
+          "ended_at": "2026-09-10T01:29:09Z",
+          "event": "input",
+          "lease_id": "9e01a11a-6976-4dd9-8377-62c4865771c2",
+          "release_errors": [],
+          "started_at": "2026-09-10T01:29:09Z",
+          "steps": [
+            {
+              "height": 720,
+              "kind": "point",
+              "width": 1280,
+              "x": 640,
+              "y": 460
+            },
+            {
+              "kind": "wait",
+              "ms": 200
+            },
+            {
+              "button": 1,
+              "kind": "click",
+              "ms": 100
+            }
+          ],
+          "time": "2026-09-10T01:29:09Z"
+        },
+        "last_release": {
+          "errors": [],
+          "event": "release",
+          "lease_id": "914ef232-2716-448b-91d8-642b169675a4",
+          "reason": "requested",
+          "released": true,
+          "time": "2026-09-10T01:28:56Z"
+        },
+        "lease": {
+          "baseline_lobbies": [],
+          "client_id": "6222875546649202244",
+          "expires_at": 1789004051.1179998,
+          "firefox_launch_name": "Firefox playtest 9e01a11a-6976-4dd9-8377-62c4865771c2",
+          "firefox_lobby_id": "3ffa6b04-f555-4c51-85b0-39b4c5ba0380",
+          "gamepad": true,
+          "id": "9e01a11a-6976-4dd9-8377-62c4865771c2",
+          "lobbies": [
+            "3ffa6b04-f555-4c51-85b0-39b4c5ba0380"
+          ],
+          "ttl_seconds": 300
+        },
+        "lobbies": [
+          {
+            "connected_sessions": [
+              "6222875546649202244"
+            ],
+            "id": "3ffa6b04-f555-4c51-85b0-39b4c5ba0380",
+            "name": "Firefox playtest 9e01a11a-6976-4dd9-8377-62c4865771c2"
+          }
+        ],
+        "sessions": [
+          {
+            "app_id": "134906179",
+            "client_id": "6222875546649202244",
+            "video_height": 720,
+            "video_refresh_rate": 30,
+            "video_width": 1280
+          }
+        ],
+        "target_time": "2026-09-10T01:29:11Z"
+      },
+      "width": 1280
+    },
+    "server_http_ready": true,
+    "url": "http://192.168.1.22:37300/"
+  },
+  "previous_session": "914ef232-2716-448b-91d8-642b169675a4"
+}

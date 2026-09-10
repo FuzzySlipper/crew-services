@@ -1,0 +1,80 @@
+{
+  "artifact_id": "847fb3ff-fb7b-4a7a-9736-5674dc6a5a00",
+  "capture_ended_at_ns": 1788846375833290987,
+  "capture_started_at_ns": 1788846375704967947,
+  "event": "observation",
+  "frame_freshness": "not measured",
+  "game_frame_id": null,
+  "game_readiness": "unknown",
+  "height": 720,
+  "lease_id": "a6eeba98-0b97-4de3-81a5-b064f1728e1e",
+  "path": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/a6eeba98-0b97-4de3-81a5-b064f1728e1e/847fb3ff-fb7b-4a7a-9736-5674dc6a5a00.png",
+  "source": "remote Wolf stream decoded by Moonlight into private X11 window",
+  "target": {
+    "last_input": {
+      "action_id": "6d7cffac-f467-44e2-8e18-a520593fde33",
+      "backend": "wolf-input-api",
+      "cancelled": false,
+      "completed_steps": 1,
+      "elapsed_ms": 102,
+      "ended_at": "2026-09-08T05:46:03Z",
+      "event": "input",
+      "lease_id": "a6eeba98-0b97-4de3-81a5-b064f1728e1e",
+      "release_errors": [],
+      "started_at": "2026-09-08T05:46:03Z",
+      "steps": [
+        {
+          "keys": [
+            17,
+            16,
+            75
+          ],
+          "kind": "hold",
+          "ms": 100
+        }
+      ],
+      "time": "2026-09-08T05:46:03Z"
+    },
+    "last_release": {
+      "errors": [],
+      "event": "release",
+      "lease_id": "665d0ee5-3540-46c8-ace5-f6a12672d29c",
+      "reason": "requested",
+      "released": true,
+      "time": "2026-09-08T05:44:02Z"
+    },
+    "lease": {
+      "baseline_lobbies": [],
+      "client_id": "7411603768457197485",
+      "expires_at": 1788846675.6723447,
+      "firefox_launch_name": "Firefox playtest a6eeba98-0b97-4de3-81a5-b064f1728e1e",
+      "firefox_lobby_id": "67cc0440-6917-4dcf-baae-40029c78c918",
+      "gamepad": true,
+      "id": "a6eeba98-0b97-4de3-81a5-b064f1728e1e",
+      "lobbies": [
+        "67cc0440-6917-4dcf-baae-40029c78c918"
+      ],
+      "ttl_seconds": 300
+    },
+    "lobbies": [
+      {
+        "connected_sessions": [
+          "7411603768457197485"
+        ],
+        "id": "67cc0440-6917-4dcf-baae-40029c78c918",
+        "name": "Firefox playtest a6eeba98-0b97-4de3-81a5-b064f1728e1e"
+      }
+    ],
+    "sessions": [
+      {
+        "app_id": "134906179",
+        "client_id": "7411603768457197485",
+        "video_height": 720,
+        "video_refresh_rate": 30,
+        "video_width": 1280
+      }
+    ],
+    "target_time": "2026-09-08T05:46:15Z"
+  },
+  "width": 1280
+}

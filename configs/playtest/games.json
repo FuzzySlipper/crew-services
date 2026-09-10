@@ -1,0 +1,18 @@
+[
+  {
+    "id": "rusty-space",
+    "description": "Top-down space flight: evaluate steering, thrust, navigation and flight feel.",
+    "url": "http://192.168.1.22:37301/",
+    "window_title": "Rusty Space",
+    "controls": {"rt": "Proportional thrust 0..1", "lx": "Steer -1..1 with 15% deadzone", "lb/rb": "Digital steering", "back": "Reset flight", "W/A/D": "Keyboard thrust / left / right"},
+    "reset": "Native Back button resets flight; inspect the resulting screenshot."
+  },
+  {
+    "id": "rusty-craftsurvive",
+    "description": "First-person courtyard: evaluate movement, aiming, collisions and interactions.",
+    "url": "http://192.168.1.22:37300/",
+    "window_title": "CraftSurvive",
+    "controls": {"lx/ly": "Strafe / forward, positive Y forward", "rx/ry": "Look right / up; 15% radial deadzone", "a": "Jump", "b": "Crouch", "ls": "Sprint", "rt/lt": "Primary clear / secondary set", "x": "Impulse", "W/A/S/D": "Keyboard movement", "Space": "Jump"},
+    "reset": "No certified in-game reset mapping. Explicit recover relaunches the browser and may discard progress."
+  }
+]

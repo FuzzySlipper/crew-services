@@ -1,0 +1,125 @@
+{
+  "slot_id": "slot-1",
+  "id": "5b5e14cd-6c80-4c54-9c18-7cee6f0929f3",
+  "game": "rusty-space",
+  "phase": "connected",
+  "created_at": "2026-09-10T01:28:21.847290726Z",
+  "launch": {
+    "browser_startup": "kiosk",
+    "browser_url": "http://localhost:37301/",
+    "compositor": "gamescope",
+    "container": "9c5e334721cc",
+    "controls": {
+      "W/A/D": "Keyboard thrust / left / right",
+      "back": "Reset flight",
+      "lb/rb": "Digital steering",
+      "lx": "Steer -1..1 with 15% deadzone",
+      "rt": "Proportional thrust 0..1"
+    },
+    "game_readiness": "requires visual confirmation of this observation",
+    "native_focus_sequence_sent": true,
+    "observation": {
+      "artifact_id": "245a0ba0-04f7-46a4-ad80-e5dc82057a37",
+      "capture_ended_at_ns": 1789003708812619800,
+      "capture_started_at_ns": 1789003708752397800,
+      "event": "observation",
+      "frame_freshness": "not measured",
+      "game_frame_id": null,
+      "game_readiness": "unknown",
+      "height": 720,
+      "lease_id": "5b5e14cd-6c80-4c54-9c18-7cee6f0929f3",
+      "path": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/5b5e14cd-6c80-4c54-9c18-7cee6f0929f3/245a0ba0-04f7-46a4-ad80-e5dc82057a37.png",
+      "source": "remote Wolf stream decoded by Moonlight into private X11 window",
+      "target": {
+        "last_input": {
+          "action_id": "6828e91c-2b8e-494c-8a10-c039161ea8ff",
+          "backend": "wolf-input-api",
+          "cancelled": false,
+          "completed_steps": 3,
+          "elapsed_ms": 304,
+          "ended_at": "2026-09-10T01:28:27Z",
+          "event": "input",
+          "lease_id": "5b5e14cd-6c80-4c54-9c18-7cee6f0929f3",
+          "release_errors": [],
+          "started_at": "2026-09-10T01:28:27Z",
+          "steps": [
+            {
+              "height": 720,
+              "kind": "point",
+              "width": 1280,
+              "x": 640,
+              "y": 460
+            },
+            {
+              "kind": "wait",
+              "ms": 200
+            },
+            {
+              "button": 1,
+              "kind": "click",
+              "ms": 100
+            }
+          ],
+          "time": "2026-09-10T01:28:27Z"
+        },
+        "last_release": {
+          "errors": [],
+          "event": "release",
+          "lease_id": "012cbc08-575c-42e3-8e16-44372db873b2",
+          "reason": "requested",
+          "released": true,
+          "time": "2026-09-10T01:27:20Z"
+        },
+        "lease": {
+          "baseline_lobbies": [],
+          "client_id": "7411603768457197485",
+          "expires_at": 1789004008.7227402,
+          "firefox_launch_name": "Firefox playtest 5b5e14cd-6c80-4c54-9c18-7cee6f0929f3",
+          "firefox_lobby_id": "86f46253-cedb-4729-82a9-22f706b9bfb8",
+          "gamepad": true,
+          "id": "5b5e14cd-6c80-4c54-9c18-7cee6f0929f3",
+          "lobbies": [
+            "86f46253-cedb-4729-82a9-22f706b9bfb8"
+          ],
+          "ttl_seconds": 300
+        },
+        "lobbies": [
+          {
+            "connected_sessions": [
+              "6222875546649202244"
+            ],
+            "id": "40718044-3d75-40fb-9df8-a4658377f2a8",
+            "name": "Firefox playtest 914ef232-2716-448b-91d8-642b169675a4"
+          },
+          {
+            "connected_sessions": [
+              "7411603768457197485"
+            ],
+            "id": "86f46253-cedb-4729-82a9-22f706b9bfb8",
+            "name": "Firefox playtest 5b5e14cd-6c80-4c54-9c18-7cee6f0929f3"
+          }
+        ],
+        "sessions": [
+          {
+            "app_id": "134906179",
+            "client_id": "6222875546649202244",
+            "video_height": 720,
+            "video_refresh_rate": 30,
+            "video_width": 1280
+          },
+          {
+            "app_id": "134906179",
+            "client_id": "7411603768457197485",
+            "video_height": 720,
+            "video_refresh_rate": 30,
+            "video_width": 1280
+          }
+        ],
+        "target_time": "2026-09-10T01:28:28Z"
+      },
+      "width": 1280
+    },
+    "server_http_ready": true,
+    "url": "http://192.168.1.22:37301/"
+  }
+}

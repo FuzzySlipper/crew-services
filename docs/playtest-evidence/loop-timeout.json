@@ -1,0 +1,11 @@
+{
+  "id": "46b45a48-351f-43c1-92a1-3197eab10268",
+  "session_id": "0a4ff75c-e365-43c1-8a56-12bba2c09d9e",
+  "phase": "timed_out",
+  "started_at": "2026-09-08T05:37:44.561809973Z",
+  "ended_at": "2026-09-08T05:37:45.05920213Z",
+  "error": "context deadline exceeded",
+  "source_path": "/home/agent/.local/state/crew-playtest/scripts/46b45a48-351f-43c1-92a1-3197eab10268/source.js",
+  "events_path": "/home/agent/.local/state/crew-playtest/scripts/46b45a48-351f-43c1-92a1-3197eab10268/events.jsonl",
+  "calls": 0
+}

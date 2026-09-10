@@ -1,0 +1,111 @@
+{
+  "id": "cff0bcd4-a3b3-4f5c-95f4-9f570d559dd5",
+  "game": "rusty-space",
+  "phase": "connected",
+  "created_at": "2026-09-08T05:52:30.88606832Z",
+  "launch": {
+    "browser_url": "http://localhost:37301/",
+    "container": "74a0ebb3c52e",
+    "controls": {
+      "W/A/D": "Keyboard thrust / left / right",
+      "back": "Reset flight",
+      "lb/rb": "Digital steering",
+      "lx": "Steer -1..1 with 15% deadzone",
+      "rt": "Proportional thrust 0..1"
+    },
+    "game_readiness": "requires visual confirmation of this observation",
+    "native_focus_sequence_sent": true,
+    "observation": {
+      "artifact_id": "c2ed18bf-5a89-4a69-b103-c00a614c1008",
+      "capture_ended_at_ns": 1788846758798468600,
+      "capture_started_at_ns": 1788846758725416700,
+      "event": "observation",
+      "frame_freshness": "not measured",
+      "game_frame_id": null,
+      "game_readiness": "unknown",
+      "height": 720,
+      "lease_id": "cff0bcd4-a3b3-4f5c-95f4-9f570d559dd5",
+      "path": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/cff0bcd4-a3b3-4f5c-95f4-9f570d559dd5/c2ed18bf-5a89-4a69-b103-c00a614c1008.png",
+      "source": "remote Wolf stream decoded by Moonlight into private X11 window",
+      "target": {
+        "last_input": {
+          "action_id": "65f72bfe-90fe-43bc-842c-4fa5e339714f",
+          "backend": "wolf-input-api",
+          "cancelled": false,
+          "completed_steps": 3,
+          "elapsed_ms": 203,
+          "ended_at": "2026-09-08T05:52:37Z",
+          "event": "input",
+          "lease_id": "cff0bcd4-a3b3-4f5c-95f4-9f570d559dd5",
+          "release_errors": [],
+          "started_at": "2026-09-08T05:52:37Z",
+          "steps": [
+            {
+              "height": 720,
+              "kind": "point",
+              "width": 1280,
+              "x": 640,
+              "y": 460
+            },
+            {
+              "button": 1,
+              "kind": "click",
+              "ms": 100
+            },
+            {
+              "keys": [
+                9
+              ],
+              "kind": "hold",
+              "ms": 100
+            }
+          ],
+          "time": "2026-09-08T05:52:37Z"
+        },
+        "last_release": {
+          "errors": [],
+          "event": "release",
+          "lease_id": "a6eeba98-0b97-4de3-81a5-b064f1728e1e",
+          "reason": "requested",
+          "released": true,
+          "time": "2026-09-08T05:49:07Z"
+        },
+        "lease": {
+          "baseline_lobbies": [],
+          "client_id": "7411603768457197485",
+          "expires_at": 1788847058.7098222,
+          "firefox_launch_name": "Firefox playtest cff0bcd4-a3b3-4f5c-95f4-9f570d559dd5",
+          "firefox_lobby_id": "3a96a8c0-9b19-4e03-a7d5-0229eacfa277",
+          "gamepad": true,
+          "id": "cff0bcd4-a3b3-4f5c-95f4-9f570d559dd5",
+          "lobbies": [
+            "3a96a8c0-9b19-4e03-a7d5-0229eacfa277"
+          ],
+          "ttl_seconds": 300
+        },
+        "lobbies": [
+          {
+            "connected_sessions": [
+              "7411603768457197485"
+            ],
+            "id": "3a96a8c0-9b19-4e03-a7d5-0229eacfa277",
+            "name": "Firefox playtest cff0bcd4-a3b3-4f5c-95f4-9f570d559dd5"
+          }
+        ],
+        "sessions": [
+          {
+            "app_id": "134906179",
+            "client_id": "7411603768457197485",
+            "video_height": 720,
+            "video_refresh_rate": 30,
+            "video_width": 1280
+          }
+        ],
+        "target_time": "2026-09-08T05:52:38Z"
+      },
+      "width": 1280
+    },
+    "server_http_ready": true,
+    "url": "http://192.168.1.22:37301/"
+  }
+}

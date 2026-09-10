@@ -1,0 +1,323 @@
+{
+  "pool": {
+    "active_count": 1,
+    "capacity": 2,
+    "observed_at": "2026-09-10T01:28:55.168216061Z",
+    "queued_starts": 0,
+    "slots": [
+      {
+        "occupied": false,
+        "slot_id": "slot-1"
+      },
+      {
+        "game": "rusty-craftsurvive",
+        "occupied": true,
+        "phase": "connected",
+        "session_id": "914ef232-2716-448b-91d8-642b169675a4",
+        "slot_id": "slot-2"
+      }
+    ]
+  },
+  "slots": [
+    {
+      "session": null,
+      "slot_id": "slot-1",
+      "target": {
+        "last_input": {
+          "action_id": "de62f25b-3b66-48fd-9152-21fd68960fc9",
+          "backend": "wolf-input-api",
+          "cancelled": false,
+          "completed_steps": 3,
+          "elapsed_ms": 302,
+          "ended_at": "2026-09-10T01:28:51Z",
+          "event": "input",
+          "input_delivery": {
+            "backend": "wolf-input-api",
+            "completed_steps": 3,
+            "game_consumption": "unknown",
+            "outcome": "target-reported",
+            "requested_steps": 3,
+            "state": "target-reported"
+          },
+          "lease_id": "bff8e5d8-85e1-4f16-a457-4a81317134e7",
+          "pointer_lock": {
+            "backend": "wolf-input-api",
+            "observability": "unavailable",
+            "reason": "the native Wolf target exposes no browser pointer-lock readback",
+            "state": "unknown"
+          },
+          "release_errors": [],
+          "started_at": "2026-09-10T01:28:51Z",
+          "steps": [
+            {
+              "height": 720,
+              "kind": "point",
+              "width": 1280,
+              "x": 640,
+              "y": 460
+            },
+            {
+              "kind": "wait",
+              "ms": 200
+            },
+            {
+              "button": 1,
+              "kind": "click",
+              "ms": 100
+            }
+          ],
+          "time": "2026-09-10T01:28:51Z"
+        },
+        "last_release": {
+          "errors": [],
+          "event": "release",
+          "lease_id": "bff8e5d8-85e1-4f16-a457-4a81317134e7",
+          "reason": "requested",
+          "released": true,
+          "time": "2026-09-10T01:28:54Z"
+        },
+        "lease": null,
+        "lobbies": [
+          {
+            "connected_sessions": [
+              "6222875546649202244"
+            ],
+            "id": "40718044-3d75-40fb-9df8-a4658377f2a8",
+            "name": "Firefox playtest 914ef232-2716-448b-91d8-642b169675a4"
+          }
+        ],
+        "pointer_lock": {
+          "backend": "wolf-input-api",
+          "observability": "unavailable",
+          "reason": "the native Wolf target exposes no browser pointer-lock readback",
+          "state": "unknown"
+        },
+        "sessions": [
+          {
+            "app_id": "134906179",
+            "client_id": "6222875546649202244",
+            "video_height": 720,
+            "video_refresh_rate": 30,
+            "video_width": 1280
+          }
+        ],
+        "target_time": "2026-09-10T01:28:55Z"
+      }
+    },
+    {
+      "session": {
+        "slot_id": "slot-2",
+        "id": "914ef232-2716-448b-91d8-642b169675a4",
+        "game": "rusty-craftsurvive",
+        "phase": "connected",
+        "created_at": "2026-09-10T01:28:21.847290907Z",
+        "launch": {
+          "browser_startup": "kiosk",
+          "browser_url": "http://localhost:37300/",
+          "compositor": "gamescope",
+          "container": "575165642f57",
+          "controls": {
+            "Space": "Jump",
+            "W/A/S/D": "Keyboard movement",
+            "a": "Jump",
+            "b": "Crouch",
+            "ls": "Sprint",
+            "lx/ly": "Strafe / forward, positive Y forward",
+            "rt/lt": "Primary clear / secondary set",
+            "rx/ry": "Look right / up; 15% radial deadzone",
+            "x": "Impulse"
+          },
+          "game_readiness": "requires visual confirmation of this observation",
+          "native_focus_sequence_sent": true,
+          "observation": {
+            "artifact_id": "687a2aca-9fd4-4d43-9d4c-0be3d857e16f",
+            "capture_ended_at_ns": 1789003709254384400,
+            "capture_started_at_ns": 1789003709184866000,
+            "event": "observation",
+            "frame_freshness": "not measured",
+            "game_frame_id": null,
+            "game_readiness": "unknown",
+            "height": 720,
+            "lease_id": "914ef232-2716-448b-91d8-642b169675a4",
+            "path": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/slots/slot-2/914ef232-2716-448b-91d8-642b169675a4/687a2aca-9fd4-4d43-9d4c-0be3d857e16f.png",
+            "source": "remote Wolf stream decoded by Moonlight into private X11 window",
+            "target": {
+              "last_input": {
+                "action_id": "142070f3-d63f-4085-968e-d5a4ef53fcb4",
+                "backend": "wolf-input-api",
+                "cancelled": false,
+                "completed_steps": 3,
+                "elapsed_ms": 302,
+                "ended_at": "2026-09-10T01:28:27Z",
+                "event": "input",
+                "lease_id": "914ef232-2716-448b-91d8-642b169675a4",
+                "release_errors": [],
+                "started_at": "2026-09-10T01:28:27Z",
+                "steps": [
+                  {
+                    "height": 720,
+                    "kind": "point",
+                    "width": 1280,
+                    "x": 640,
+                    "y": 460
+                  },
+                  {
+                    "kind": "wait",
+                    "ms": 200
+                  },
+                  {
+                    "button": 1,
+                    "kind": "click",
+                    "ms": 100
+                  }
+                ],
+                "time": "2026-09-10T01:28:27Z"
+              },
+              "last_release": {
+                "errors": [],
+                "event": "release",
+                "lease_id": "5cc6e286-1570-49ff-888c-a8ed33c350de",
+                "reason": "requested",
+                "released": true,
+                "time": "2026-09-10T01:27:02Z"
+              },
+              "lease": {
+                "baseline_lobbies": [],
+                "client_id": "6222875546649202244",
+                "expires_at": 1789004009.1575916,
+                "firefox_launch_name": "Firefox playtest 914ef232-2716-448b-91d8-642b169675a4",
+                "firefox_lobby_id": "40718044-3d75-40fb-9df8-a4658377f2a8",
+                "gamepad": true,
+                "id": "914ef232-2716-448b-91d8-642b169675a4",
+                "lobbies": [
+                  "40718044-3d75-40fb-9df8-a4658377f2a8"
+                ],
+                "ttl_seconds": 300
+              },
+              "lobbies": [
+                {
+                  "connected_sessions": [
+                    "6222875546649202244"
+                  ],
+                  "id": "40718044-3d75-40fb-9df8-a4658377f2a8",
+                  "name": "Firefox playtest 914ef232-2716-448b-91d8-642b169675a4"
+                },
+                {
+                  "connected_sessions": [
+                    "7411603768457197485"
+                  ],
+                  "id": "86f46253-cedb-4729-82a9-22f706b9bfb8",
+                  "name": "Firefox playtest 5b5e14cd-6c80-4c54-9c18-7cee6f0929f3"
+                }
+              ],
+              "sessions": [
+                {
+                  "app_id": "134906179",
+                  "client_id": "6222875546649202244",
+                  "video_height": 720,
+                  "video_refresh_rate": 30,
+                  "video_width": 1280
+                },
+                {
+                  "app_id": "134906179",
+                  "client_id": "7411603768457197485",
+                  "video_height": 720,
+                  "video_refresh_rate": 30,
+                  "video_width": 1280
+                }
+              ],
+              "target_time": "2026-09-10T01:28:29Z"
+            },
+            "width": 1280
+          },
+          "server_http_ready": true,
+          "url": "http://192.168.1.22:37300/"
+        },
+        "script_id": "738c370b-35c3-4f1e-a347-25ae1240895b"
+      },
+      "slot_id": "slot-2",
+      "target": {
+        "last_input": {
+          "action_id": "82955938-692d-4f65-8e0d-54f7195f6e04",
+          "backend": "wolf-input-api",
+          "cancelled": false,
+          "completed_steps": 1,
+          "elapsed_ms": 1806,
+          "ended_at": "2026-09-10T01:28:35Z",
+          "event": "input",
+          "input_delivery": {
+            "backend": "wolf-input-api",
+            "completed_steps": 1,
+            "game_consumption": "unknown",
+            "outcome": "target-reported",
+            "requested_steps": 1,
+            "state": "target-reported"
+          },
+          "lease_id": "914ef232-2716-448b-91d8-642b169675a4",
+          "pointer_lock": {
+            "backend": "wolf-input-api",
+            "observability": "unavailable",
+            "reason": "the native Wolf target exposes no browser pointer-lock readback",
+            "state": "unknown"
+          },
+          "release_errors": [],
+          "started_at": "2026-09-10T01:28:33Z",
+          "steps": [
+            {
+              "kind": "gamepad",
+              "ms": 1800,
+              "rx": 0.25
+            }
+          ],
+          "time": "2026-09-10T01:28:35Z"
+        },
+        "last_release": {
+          "errors": [],
+          "event": "release",
+          "lease_id": "5cc6e286-1570-49ff-888c-a8ed33c350de",
+          "reason": "requested",
+          "released": true,
+          "time": "2026-09-10T01:27:02Z"
+        },
+        "lease": {
+          "baseline_lobbies": [],
+          "client_id": "6222875546649202244",
+          "expires_at": 1789004033.2195106,
+          "firefox_launch_name": "Firefox playtest 914ef232-2716-448b-91d8-642b169675a4",
+          "firefox_lobby_id": "40718044-3d75-40fb-9df8-a4658377f2a8",
+          "gamepad": true,
+          "id": "914ef232-2716-448b-91d8-642b169675a4",
+          "lobbies": [
+            "40718044-3d75-40fb-9df8-a4658377f2a8"
+          ],
+          "ttl_seconds": 300
+        },
+        "lobbies": [
+          {
+            "connected_sessions": [
+              "6222875546649202244"
+            ],
+            "id": "40718044-3d75-40fb-9df8-a4658377f2a8",
+            "name": "Firefox playtest 914ef232-2716-448b-91d8-642b169675a4"
+          }
+        ],
+        "pointer_lock": {
+          "backend": "wolf-input-api",
+          "observability": "unavailable",
+          "reason": "the native Wolf target exposes no browser pointer-lock readback",
+          "state": "unknown"
+        },
+        "sessions": [
+          {
+            "app_id": "134906179",
+            "client_id": "6222875546649202244",
+            "video_height": 720,
+            "video_refresh_rate": 30,
+            "video_width": 1280
+          }
+        ],
+        "target_time": "2026-09-10T01:28:55Z"
+      }
+    }
+  ]
+}

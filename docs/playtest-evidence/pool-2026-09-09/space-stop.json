@@ -1,0 +1,11 @@
+{
+  "artifact_directory": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/5b5e14cd-6c80-4c54-9c18-7cee6f0929f3",
+  "errors": [],
+  "event": "release",
+  "lease_id": "5b5e14cd-6c80-4c54-9c18-7cee6f0929f3",
+  "local_capture_stopped": true,
+  "reason": "requested",
+  "released": true,
+  "slot_id": "slot-1",
+  "time": "2026-09-10T01:28:38Z"
+}

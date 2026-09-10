@@ -1,0 +1,14 @@
+[
+  {
+    "id": "controller-interaction",
+    "description": "Engine C# controller interaction proving product; start its demo separately",
+    "backend": "wolf",
+    "environment": "wolf-target",
+    "url": "http://192.168.1.22:37303/",
+    "window_title": "Controller Interaction",
+    "interaction_queries": true,
+    "presentation_observations": true,
+    "controls": {"move": "left stick / WASD", "look": "right stick / mouse", "use": "X / E", "cycle": "RB / Q", "toggle_left_lock": "K"},
+    "reset": "Restart the product host to reset scene state"
+  }
+]

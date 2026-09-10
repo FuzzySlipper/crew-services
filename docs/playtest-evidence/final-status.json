@@ -1,0 +1,39 @@
+{
+  "session": null,
+  "target": {
+    "last_input": {
+      "action_id": "7f45caa7-d989-46d7-a9b6-d6f403400dd0",
+      "backend": "wolf-input-api",
+      "cancelled": false,
+      "completed_steps": 1,
+      "elapsed_ms": 502,
+      "ended_at": "2026-09-08T05:52:49Z",
+      "event": "input",
+      "lease_id": "cff0bcd4-a3b3-4f5c-95f4-9f570d559dd5",
+      "release_errors": [],
+      "started_at": "2026-09-08T05:52:49Z",
+      "steps": [
+        {
+          "keys": [
+            87
+          ],
+          "kind": "hold",
+          "ms": 500
+        }
+      ],
+      "time": "2026-09-08T05:52:49Z"
+    },
+    "last_release": {
+      "errors": [],
+      "event": "release",
+      "lease_id": "cff0bcd4-a3b3-4f5c-95f4-9f570d559dd5",
+      "reason": "requested",
+      "released": true,
+      "time": "2026-09-08T05:53:47Z"
+    },
+    "lease": null,
+    "lobbies": [],
+    "sessions": [],
+    "target_time": "2026-09-08T05:53:48Z"
+  }
+}

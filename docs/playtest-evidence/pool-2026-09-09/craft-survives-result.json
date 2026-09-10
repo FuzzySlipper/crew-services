@@ -1,0 +1,173 @@
+{
+  "id": "738c370b-35c3-4f1e-a347-25ae1240895b",
+  "session_id": "914ef232-2716-448b-91d8-642b169675a4",
+  "phase": "completed",
+  "started_at": "2026-09-10T01:28:33.198404088Z",
+  "ended_at": "2026-09-10T01:28:35.76921422Z",
+  "result": {
+    "completed": true,
+    "frame": {
+      "application_renderer": "unavailable",
+      "capture_id": "b7eddaf4-623b-4d07-ab50-5f8298699db1",
+      "engine_presentation": {
+        "available": false,
+        "reason": "not requested; set engine_presentation or profile presentation_observations"
+      },
+      "engine_presentation_state": "unavailable",
+      "engine_readiness": "unavailable",
+      "frame_correlation": "unavailable",
+      "gpu_completion": "unavailable",
+      "hardware_acceleration": "unavailable",
+      "label": "craft-after-peer-cancel",
+      "metadata_path": "/home/agent/.local/state/crew-playtest/slots/slot-2/capture-b7eddaf4-623b-4d07-ab50-5f8298699db1.json",
+      "observation": {
+        "artifact_id": "fc4c7932-ddf9-46d3-b9db-b2a30647144d",
+        "capture_ended_at_ns": 1789003715548617200,
+        "capture_started_at_ns": 1789003715420768500,
+        "event": "observation",
+        "frame_freshness": "not measured",
+        "game_frame_id": null,
+        "game_readiness": "unknown",
+        "height": 720,
+        "lease_id": "914ef232-2716-448b-91d8-642b169675a4",
+        "path": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/slots/slot-2/914ef232-2716-448b-91d8-642b169675a4/fc4c7932-ddf9-46d3-b9db-b2a30647144d.png",
+        "source": "remote Wolf stream decoded by Moonlight into private X11 window",
+        "target": {
+          "last_input": {
+            "action_id": "82955938-692d-4f65-8e0d-54f7195f6e04",
+            "backend": "wolf-input-api",
+            "cancelled": false,
+            "completed_steps": 1,
+            "elapsed_ms": 1806,
+            "ended_at": "2026-09-10T01:28:35Z",
+            "event": "input",
+            "lease_id": "914ef232-2716-448b-91d8-642b169675a4",
+            "release_errors": [],
+            "started_at": "2026-09-10T01:28:33Z",
+            "steps": [
+              {
+                "kind": "gamepad",
+                "ms": 1800,
+                "rx": 0.25
+              }
+            ],
+            "time": "2026-09-10T01:28:35Z"
+          },
+          "last_release": {
+            "errors": [],
+            "event": "release",
+            "lease_id": "5cc6e286-1570-49ff-888c-a8ed33c350de",
+            "reason": "requested",
+            "released": true,
+            "time": "2026-09-10T01:27:02Z"
+          },
+          "lease": {
+            "baseline_lobbies": [],
+            "client_id": "6222875546649202244",
+            "expires_at": 1789004015.393372,
+            "firefox_launch_name": "Firefox playtest 914ef232-2716-448b-91d8-642b169675a4",
+            "firefox_lobby_id": "40718044-3d75-40fb-9df8-a4658377f2a8",
+            "gamepad": true,
+            "id": "914ef232-2716-448b-91d8-642b169675a4",
+            "lobbies": [
+              "40718044-3d75-40fb-9df8-a4658377f2a8"
+            ],
+            "ttl_seconds": 300
+          },
+          "lobbies": [
+            {
+              "connected_sessions": [
+                "6222875546649202244"
+              ],
+              "id": "40718044-3d75-40fb-9df8-a4658377f2a8",
+              "name": "Firefox playtest 914ef232-2716-448b-91d8-642b169675a4"
+            },
+            {
+              "connected_sessions": [
+                "7411603768457197485"
+              ],
+              "id": "86f46253-cedb-4729-82a9-22f706b9bfb8",
+              "name": "Firefox playtest 5b5e14cd-6c80-4c54-9c18-7cee6f0929f3"
+            }
+          ],
+          "sessions": [
+            {
+              "app_id": "134906179",
+              "client_id": "6222875546649202244",
+              "video_height": 720,
+              "video_refresh_rate": 30,
+              "video_width": 1280
+            },
+            {
+              "app_id": "134906179",
+              "client_id": "7411603768457197485",
+              "video_height": 720,
+              "video_refresh_rate": 30,
+              "video_width": 1280
+            }
+          ],
+          "target_time": "2026-09-10T01:28:35Z"
+        },
+        "width": 1280
+      },
+      "overlay_policy": "preserve",
+      "path": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/slots/slot-2/914ef232-2716-448b-91d8-642b169675a4/fc4c7932-ddf9-46d3-b9db-b2a30647144d.png",
+      "pool_activity": {
+        "after": {
+          "active_count": 2,
+          "capacity": 2,
+          "observed_at": "2026-09-10T01:28:35.579515019Z",
+          "queued_starts": 0,
+          "slots": [
+            {
+              "game": "rusty-space",
+              "occupied": true,
+              "phase": "connected",
+              "session_id": "5b5e14cd-6c80-4c54-9c18-7cee6f0929f3",
+              "slot_id": "slot-1"
+            },
+            {
+              "game": "rusty-craftsurvive",
+              "occupied": true,
+              "phase": "connected",
+              "session_id": "914ef232-2716-448b-91d8-642b169675a4",
+              "slot_id": "slot-2"
+            }
+          ]
+        },
+        "before": {
+          "active_count": 2,
+          "capacity": 2,
+          "observed_at": "2026-09-10T01:28:35.232607018Z",
+          "queued_starts": 0,
+          "slots": [
+            {
+              "game": "rusty-space",
+              "occupied": true,
+              "phase": "connected",
+              "session_id": "5b5e14cd-6c80-4c54-9c18-7cee6f0929f3",
+              "slot_id": "slot-1"
+            },
+            {
+              "game": "rusty-craftsurvive",
+              "occupied": true,
+              "phase": "connected",
+              "session_id": "914ef232-2716-448b-91d8-642b169675a4",
+              "slot_id": "slot-2"
+            }
+          ]
+        },
+        "performance_isolated": false,
+        "slot_id": "slot-2"
+      },
+      "recorded_at": "2026-09-10T01:28:35.579306912Z",
+      "session_id": "914ef232-2716-448b-91d8-642b169675a4",
+      "supplied_assistance": null,
+      "supplied_metadata_source": "caller; not independently verified",
+      "supplied_viewpoint": null
+    }
+  },
+  "source_path": "/home/agent/.local/state/crew-playtest/slots/slot-2/scripts/738c370b-35c3-4f1e-a347-25ae1240895b/source.js",
+  "events_path": "/home/agent/.local/state/crew-playtest/slots/slot-2/scripts/738c370b-35c3-4f1e-a347-25ae1240895b/events.jsonl",
+  "calls": 2
+}

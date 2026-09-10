@@ -1,0 +1,158 @@
+{
+  "pool": {
+    "active_count": 0,
+    "capacity": 2,
+    "observed_at": "2026-09-10T01:29:13.274387583Z",
+    "queued_starts": 0,
+    "slots": [
+      {
+        "occupied": false,
+        "slot_id": "slot-1"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-2"
+      }
+    ]
+  },
+  "slots": [
+    {
+      "session": null,
+      "slot_id": "slot-1",
+      "target": {
+        "last_input": {
+          "action_id": "de62f25b-3b66-48fd-9152-21fd68960fc9",
+          "backend": "wolf-input-api",
+          "cancelled": false,
+          "completed_steps": 3,
+          "elapsed_ms": 302,
+          "ended_at": "2026-09-10T01:28:51Z",
+          "event": "input",
+          "input_delivery": {
+            "backend": "wolf-input-api",
+            "completed_steps": 3,
+            "game_consumption": "unknown",
+            "outcome": "target-reported",
+            "requested_steps": 3,
+            "state": "target-reported"
+          },
+          "lease_id": "bff8e5d8-85e1-4f16-a457-4a81317134e7",
+          "pointer_lock": {
+            "backend": "wolf-input-api",
+            "observability": "unavailable",
+            "reason": "the native Wolf target exposes no browser pointer-lock readback",
+            "state": "unknown"
+          },
+          "release_errors": [],
+          "started_at": "2026-09-10T01:28:51Z",
+          "steps": [
+            {
+              "height": 720,
+              "kind": "point",
+              "width": 1280,
+              "x": 640,
+              "y": 460
+            },
+            {
+              "kind": "wait",
+              "ms": 200
+            },
+            {
+              "button": 1,
+              "kind": "click",
+              "ms": 100
+            }
+          ],
+          "time": "2026-09-10T01:28:51Z"
+        },
+        "last_release": {
+          "errors": [],
+          "event": "release",
+          "lease_id": "bff8e5d8-85e1-4f16-a457-4a81317134e7",
+          "reason": "requested",
+          "released": true,
+          "time": "2026-09-10T01:28:54Z"
+        },
+        "lease": null,
+        "lobbies": [],
+        "pointer_lock": {
+          "backend": "wolf-input-api",
+          "observability": "unavailable",
+          "reason": "the native Wolf target exposes no browser pointer-lock readback",
+          "state": "unknown"
+        },
+        "sessions": [],
+        "target_time": "2026-09-10T01:29:13Z"
+      }
+    },
+    {
+      "session": null,
+      "slot_id": "slot-2",
+      "target": {
+        "last_input": {
+          "action_id": "cf97eeef-bff5-4346-a7b9-a40d7df952d5",
+          "backend": "wolf-input-api",
+          "cancelled": false,
+          "completed_steps": 3,
+          "elapsed_ms": 302,
+          "ended_at": "2026-09-10T01:29:09Z",
+          "event": "input",
+          "input_delivery": {
+            "backend": "wolf-input-api",
+            "completed_steps": 3,
+            "game_consumption": "unknown",
+            "outcome": "target-reported",
+            "requested_steps": 3,
+            "state": "target-reported"
+          },
+          "lease_id": "9e01a11a-6976-4dd9-8377-62c4865771c2",
+          "pointer_lock": {
+            "backend": "wolf-input-api",
+            "observability": "unavailable",
+            "reason": "the native Wolf target exposes no browser pointer-lock readback",
+            "state": "unknown"
+          },
+          "release_errors": [],
+          "started_at": "2026-09-10T01:29:09Z",
+          "steps": [
+            {
+              "height": 720,
+              "kind": "point",
+              "width": 1280,
+              "x": 640,
+              "y": 460
+            },
+            {
+              "kind": "wait",
+              "ms": 200
+            },
+            {
+              "button": 1,
+              "kind": "click",
+              "ms": 100
+            }
+          ],
+          "time": "2026-09-10T01:29:09Z"
+        },
+        "last_release": {
+          "errors": [],
+          "event": "release",
+          "lease_id": "9e01a11a-6976-4dd9-8377-62c4865771c2",
+          "reason": "requested",
+          "released": true,
+          "time": "2026-09-10T01:29:12Z"
+        },
+        "lease": null,
+        "lobbies": [],
+        "pointer_lock": {
+          "backend": "wolf-input-api",
+          "observability": "unavailable",
+          "reason": "the native Wolf target exposes no browser pointer-lock readback",
+          "state": "unknown"
+        },
+        "sessions": [],
+        "target_time": "2026-09-10T01:29:13Z"
+      }
+    }
+  ]
+}

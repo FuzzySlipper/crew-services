@@ -1,0 +1,10 @@
+- insert:
+    - id: mcp-playtest
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: playtest
+        transport: stdio
+        command: /home/agent/.local/bin/playtest
+        args: [mcp]
+        toolCallTimeoutMs: 120000
+        failOnStartupError: true

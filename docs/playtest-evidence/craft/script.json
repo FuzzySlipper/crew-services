@@ -1,0 +1,91 @@
+{
+  "id": "c9baaa31-405f-4bb6-a488-cd461c99fc22",
+  "session_id": "0a4ff75c-e365-43c1-8a56-12bba2c09d9e",
+  "phase": "completed",
+  "started_at": "2026-09-08T05:36:28.910349832Z",
+  "ended_at": "2026-09-08T05:36:33.861654743Z",
+  "source_path": "/home/agent/.local/state/crew-playtest/scripts/c9baaa31-405f-4bb6-a488-cd461c99fc22/source.js",
+  "events_path": "/home/agent/.local/state/crew-playtest/scripts/c9baaa31-405f-4bb6-a488-cd461c99fc22/events.jsonl",
+  "checkpoint": {
+    "data": {
+      "artifact_id": "5f2f8b8e-e592-41e7-be8b-97299f8976cb",
+      "capture_ended_at_ns": 1788845793627867100,
+      "capture_started_at_ns": 1788845793297233200,
+      "event": "observation",
+      "frame_freshness": "not measured",
+      "game_frame_id": null,
+      "game_readiness": "unknown",
+      "height": 720,
+      "lease_id": "0a4ff75c-e365-43c1-8a56-12bba2c09d9e",
+      "path": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/0a4ff75c-e365-43c1-8a56-12bba2c09d9e/5f2f8b8e-e592-41e7-be8b-97299f8976cb.png",
+      "source": "remote Wolf stream decoded by Moonlight into private X11 window",
+      "target": {
+        "last_input": {
+          "action_id": "0cf948fb-61cc-4d7a-9a04-bc02f7f95c4a",
+          "backend": "wolf-input-api",
+          "cancelled": false,
+          "completed_steps": 1,
+          "elapsed_ms": 704,
+          "ended_at": "2026-09-08T05:36:33Z",
+          "event": "input",
+          "lease_id": "0a4ff75c-e365-43c1-8a56-12bba2c09d9e",
+          "release_errors": [],
+          "started_at": "2026-09-08T05:36:32Z",
+          "steps": [
+            {
+              "keys": [
+                87
+              ],
+              "kind": "hold",
+              "ms": 700
+            }
+          ],
+          "time": "2026-09-08T05:36:33Z"
+        },
+        "last_release": {
+          "errors": [],
+          "event": "release",
+          "lease_id": "6d5f1972-8a02-4db1-9f31-3451301a635b",
+          "reason": "requested",
+          "released": true,
+          "time": "2026-09-08T05:30:33Z"
+        },
+        "lease": {
+          "baseline_lobbies": [],
+          "client_id": "7411603768457197485",
+          "expires_at": 1788846093.271182,
+          "firefox_launch_name": "Firefox playtest 0a4ff75c-e365-43c1-8a56-12bba2c09d9e",
+          "firefox_lobby_id": "fa449f5d-4e1c-44fa-9bad-556fea70e275",
+          "gamepad": true,
+          "id": "0a4ff75c-e365-43c1-8a56-12bba2c09d9e",
+          "lobbies": [
+            "fa449f5d-4e1c-44fa-9bad-556fea70e275"
+          ],
+          "ttl_seconds": 300
+        },
+        "lobbies": [
+          {
+            "connected_sessions": [
+              "7411603768457197485"
+            ],
+            "id": "fa449f5d-4e1c-44fa-9bad-556fea70e275",
+            "name": "Firefox playtest 0a4ff75c-e365-43c1-8a56-12bba2c09d9e"
+          }
+        ],
+        "sessions": [
+          {
+            "app_id": "134906179",
+            "client_id": "7411603768457197485",
+            "video_height": 720,
+            "video_refresh_rate": 30,
+            "video_width": 1280
+          }
+        ],
+        "target_time": "2026-09-08T05:36:33Z"
+      },
+      "width": 1280
+    },
+    "label": "keyboard-forward"
+  },
+  "calls": 11
+}
