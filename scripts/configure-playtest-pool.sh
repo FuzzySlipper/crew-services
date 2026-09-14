@@ -302,7 +302,23 @@ PY
   remote_hash=$(ssh -- "$remote_host" "if sudo -n test -f $unit_path; then sudo -n sha256sum $unit_path | awk '{print \$1}'; fi")
   unit_changed=0
   if [[ $remote_hash != "$unit_hash" ]]; then
-    slot_busy=$(ssh -- "$remote_host" "curl -fsS --max-time 3 -H 'Content-Type: application/json' --data-binary '{\"op\":\"status\"}' http://127.0.0.1:$target_port/command | python3 -c 'import json, sys; print(1 if json.load(sys.stdin).get(\"lease\") else 0)'")
+    slot_busy=$(ssh -- "$remote_host" "python3 - $target_port" <<'PYREMOTE'
+import errno, json, sys, urllib.error, urllib.request
+request = urllib.request.Request(
+    f"http://127.0.0.1:{sys.argv[1]}/command",
+    data=b'{"op":"status"}', headers={"Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(request, timeout=3) as response:
+        status = json.load(response)
+    print(1 if status.get("result", status).get("lease") else 0)
+except urllib.error.URLError as error:
+    # A newly provisioned target has no listener until its unit is installed.
+    # Other failures must not be mistaken for an idle existing target.
+    if getattr(error.reason, "errno", None) != errno.ECONNREFUSED:
+        raise
+    print(0)
+PYREMOTE
+)
     if [[ $slot_busy != 0 ]]; then
       printf 'target unit differs while slot %s has an active lease; release that slot before applying its configuration\n' "$number" >&2
       exit 1

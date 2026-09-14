@@ -1,0 +1,72 @@
+{
+  "pool": {
+    "active_count": 0,
+    "capacity": 4,
+    "observed_at": "2026-09-14T06:16:03.629602016Z",
+    "queued_starts": 0,
+    "slots": [
+      {
+        "occupied": false,
+        "slot_id": "slot-1"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-2"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-3"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-4"
+      }
+    ]
+  },
+  "releases": [
+    {
+      "artifact_directory": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/fdcbee5e-0d6d-4631-9c69-a91825b3b58f",
+      "errors": [],
+      "event": "release",
+      "lease_id": "fdcbee5e-0d6d-4631-9c69-a91825b3b58f",
+      "local_capture_stopped": true,
+      "reason": "requested",
+      "released": true,
+      "slot_id": "slot-1",
+      "time": "2026-09-14T06:15:58Z"
+    },
+    {
+      "artifact_directory": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/slots/slot-2/97c6bcfb-4553-4f42-9eb1-930814872147",
+      "errors": [],
+      "event": "release",
+      "lease_id": "97c6bcfb-4553-4f42-9eb1-930814872147",
+      "local_capture_stopped": true,
+      "reason": "requested",
+      "released": true,
+      "slot_id": "slot-2",
+      "time": "2026-09-14T06:16:00Z"
+    },
+    {
+      "artifact_directory": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/slots/slot-3/3a113363-efe6-4ebc-829a-15a87dfa5e8e",
+      "errors": [],
+      "event": "release",
+      "lease_id": "3a113363-efe6-4ebc-829a-15a87dfa5e8e",
+      "local_capture_stopped": true,
+      "reason": "requested",
+      "released": true,
+      "slot_id": "slot-3",
+      "time": "2026-09-14T06:16:01Z"
+    },
+    {
+      "artifact_directory": "/home/dev/dsh-crew/experiments/wolf-den-srv/controller/state/slots/slot-4/4d8e7aa6-c408-4fd2-9165-9c7dbab84e43",
+      "errors": [],
+      "event": "release",
+      "lease_id": "4d8e7aa6-c408-4fd2-9165-9c7dbab84e43",
+      "local_capture_stopped": true,
+      "reason": "requested",
+      "released": true,
+      "slot_id": "slot-4",
+      "time": "2026-09-14T06:16:03Z"
+    }
+  ]
+}

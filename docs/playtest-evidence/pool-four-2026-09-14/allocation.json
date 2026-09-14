@@ -1,0 +1,57 @@
+{
+  "capacity": 4,
+  "sessions": [
+    {
+      "id": "fdcbee5e-0d6d-4631-9c69-a91825b3b58f",
+      "slot_id": "slot-1"
+    },
+    {
+      "id": "97c6bcfb-4553-4f42-9eb1-930814872147",
+      "slot_id": "slot-2"
+    },
+    {
+      "id": "3a113363-efe6-4ebc-829a-15a87dfa5e8e",
+      "slot_id": "slot-3"
+    },
+    {
+      "id": "4d8e7aa6-c408-4fd2-9165-9c7dbab84e43",
+      "slot_id": "slot-4"
+    }
+  ],
+  "active_pool": {
+    "active_count": 4,
+    "capacity": 4,
+    "observed_at": "2026-09-14T06:15:28.53702648Z",
+    "queued_starts": 0,
+    "slots": [
+      {
+        "game": "rusty-rifles-gpu",
+        "occupied": true,
+        "phase": "connected",
+        "session_id": "fdcbee5e-0d6d-4631-9c69-a91825b3b58f",
+        "slot_id": "slot-1"
+      },
+      {
+        "game": "rusty-rifles-gpu",
+        "occupied": true,
+        "phase": "connected",
+        "session_id": "97c6bcfb-4553-4f42-9eb1-930814872147",
+        "slot_id": "slot-2"
+      },
+      {
+        "game": "rusty-rifles-gpu",
+        "occupied": true,
+        "phase": "connected",
+        "session_id": "3a113363-efe6-4ebc-829a-15a87dfa5e8e",
+        "slot_id": "slot-3"
+      },
+      {
+        "game": "rusty-rifles-gpu",
+        "occupied": true,
+        "phase": "connected",
+        "session_id": "4d8e7aa6-c408-4fd2-9165-9c7dbab84e43",
+        "slot_id": "slot-4"
+      }
+    ]
+  }
+}
