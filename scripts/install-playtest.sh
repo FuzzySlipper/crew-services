@@ -5,7 +5,7 @@ install_dir=${PLAYTEST_INSTALL_DIR:-/home/system/crew-services/playtest}
 state_dir=${PLAYTEST_STATE_DIR:-$HOME/.local/state/crew-playtest}
 config_source=${PLAYTEST_MACHINE_CONFIG:-}
 mkdir -p "$install_dir/bin" "$state_dir" "$HOME/.local/bin" "$HOME/.config/systemd/user"
-for program in playtest playtest-service playtest-forward playtest-target; do
+for program in playtest playtest-assist playtest-service playtest-forward playtest-target; do
   (cd "$repo_dir" && CGO_ENABLED=0 go build -o "$install_dir/bin/$program.new" "./cmd/$program")
   mv "$install_dir/bin/$program.new" "$install_dir/bin/$program"
 done
@@ -34,6 +34,7 @@ if [[ -f "$install_dir/pool.json" ]]; then
   pool_flags="--pool $install_dir/pool.json"
 fi
 ln -sfn "$install_dir/bin/playtest" "$HOME/.local/bin/playtest"
+ln -sfn "$install_dir/bin/playtest-assist" "$HOME/.local/bin/playtest-assist"
 cat > "$HOME/.config/systemd/user/crew-playtest.service" <<UNIT
 [Unit]
 Description=Portable agent playtest sessions and JS workers

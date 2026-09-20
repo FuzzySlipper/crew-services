@@ -1,0 +1,83 @@
+{
+  "session_id": "YOUR_OWNED_SESSION",
+  "product_url": "http://127.0.0.1:48375/",
+  "commands": [
+    "spatial.map json 6 1",
+    "loading-bay.readout"
+  ],
+  "policy": {
+    "goal": "Move forward from spawn toward the nearby bullets at world x=-7,z=-2. Stop once player z is -1.5 or below. This is a short movement/pickup debugging probe, not combat.",
+    "instructions": "Use ordinary movement only. World forward starts toward negative Z. Select lateral correction only if needed. Read current position and facing from spatial.map observation. Readout is product-authored text. Do not continue into combat after reaching the target.",
+    "budget_ms": 30000,
+    "max_actions": 12,
+    "decision_timeout_ms": 5000,
+    "minimum_confidence": 0.5,
+    "stall_actions": 3,
+    "progress_pointers": [
+      "/facts/spatial.map json 6 1/observation/playerPosition/0",
+      "/facts/spatial.map json 6 1/observation/playerPosition/2"
+    ],
+    "stop_when": [
+      {
+        "pointer": "/facts/spatial.map json 6 1/observation/playerPosition/2",
+        "operator": "lte",
+        "value": -1.5,
+        "reason": "target_position_observed"
+      }
+    ],
+    "tactics": [
+      {
+        "id": "forward",
+        "description": "Hold W for 350ms to advance along current facing (initially negative Z).",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              87
+            ],
+            "ms": 350
+          }
+        ]
+      },
+      {
+        "id": "left",
+        "description": "Hold A for 200ms to strafe left relative to current facing.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              65
+            ],
+            "ms": 200
+          }
+        ]
+      },
+      {
+        "id": "right",
+        "description": "Hold D for 200ms to strafe right relative to current facing.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              68
+            ],
+            "ms": 200
+          }
+        ]
+      },
+      {
+        "id": "back",
+        "description": "Hold S for 200ms to move backward.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              83
+            ],
+            "ms": 200
+          }
+        ]
+      }
+    ]
+  }
+}

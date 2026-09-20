@@ -32,6 +32,12 @@ Both clients can inspect the same session; disconnecting a client does not stop
 it. The configured pool allocates one isolated slot per tester. Do not use the old Python MCP controller while
 the Go service owns its capture lock. Always stop your session when finished.
 
+## Bounded semantic controller
+
+Use [playtest-assist](playtest-assistant.md) for short Jev-controlled intervals
+with a planner-defined goal, finite tactics, observed-fact thresholds and an
+interval transcript. It reuses an owned session and the same input service.
+
 ## JavaScript API
 
 `run` submits source and returns immediately with a script ID. Poll `script` for
