@@ -69,7 +69,7 @@ func TestObserverRejectsCommandsOutsideReadOnlyAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"loading-bay.set-track health 1", "spatial.map xml 12 1", "spatial.map json 16 1", "spatial.map json 2 0", "spatial.map json NaN 1"} {
+	for _, command := range []string{"interaction.use 11 1", "loading-bay.set-track health 1", "spatial.map xml 12 1", "spatial.map json 16 1", "spatial.map json 2 0", "spatial.map json NaN 1"} {
 		_, err := (&Observer{Client: service, SessionID: "session-1", Commands: []string{command}}).Observe(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "command") && !strings.Contains(err.Error(), "spatial.map") {
 			t.Fatalf("command %q error = %v", command, err)

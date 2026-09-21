@@ -114,11 +114,11 @@ func (o *Observer) Observe(ctx context.Context) (Observation, error) {
 
 func validateCommand(command string) (string, error) {
 	fields := strings.Fields(command)
-	if len(fields) == 1 && (fields[0] == "loading-bay.readout" || fields[0] == "combat.observe") {
+	if len(fields) == 1 && (fields[0] == "loading-bay.readout" || fields[0] == "combat.observe" || fields[0] == "interaction.inspect" || fields[0] == "interaction.help") {
 		return fields[0], nil
 	}
 	if len(fields) != 4 || fields[0] != "spatial.map" || (fields[1] != "json" && fields[1] != "ascii") {
-		return "", errors.New("product observation command must be combat.observe, loading-bay.readout or spatial.map <json|ascii> <radius> <cellSize>")
+		return "", errors.New("product observation command must be combat.observe, interaction.inspect, interaction.help, loading-bay.readout or spatial.map <json|ascii> <radius> <cellSize>")
 	}
 	radius, err := strconv.Atoi(fields[2])
 	if err != nil || radius < 0 || radius > 15 {

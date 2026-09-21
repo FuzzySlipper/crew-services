@@ -155,3 +155,12 @@ A complete starting configuration is
 [`doom-parent-feedback.json`](../configs/playtest/doom-parent-feedback.json).
 See [the task 8384 experiment](playtest-parent-feedback-experiment.md) for the
 fixed-policy/Luna/Sol/GLM results, measured cadence, and current limitations.
+
+For world-object interaction, observations may include `interaction.inspect`
+and `interaction.help` from the Engine's shared `InteractionDebugModule`.
+They list target identities, labels and current use/rejection facts. Explicit
+`interaction.use <id> <revision>` is a mutating assisted action for the supervising
+agent through `rusty-live-debug`, not an observation command or a hidden Jev
+control. It invokes the ordinary product handler after fresh reach/visibility
+checks. See the Engine's `docs/controller-interaction.md` green path before
+resorting to repeated pixel hunting for containers or doors.
