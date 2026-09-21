@@ -124,7 +124,7 @@ setInterval(() => {
 		t.Fatalf("status = %#v, %v", status, err)
 	}
 	result, err := adapter.Input(context.Background(), leaseID, []map[string]any{{
-		"kind": "gamepad", "ms": 100, "lx": 0.5, "ly": -0.25, "rx": 1.0, "ry": -1.0,
+		"kind": "gamepad", "ms": 100, "lx": 0.5, "ly": 0.25, "rx": 1.0, "ry": 1.0,
 		"lt": 0.25, "rt": 0.75, "buttons": []string{"a", "start"},
 	}})
 	if err != nil || result["completed_steps"] != float64(1) {

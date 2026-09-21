@@ -378,7 +378,9 @@ function gamepadStep(step) {
   const buttons = step.buttons === undefined ? [] : step.buttons
   if (!Array.isArray(buttons)) throw new Error('buttons must be an array of Xbox button names')
   for (const name of buttons) if (typeof name !== 'string' || GAMEPAD_BUTTONS[name] === undefined) throw new Error('Unknown Xbox button')
-  return { kind: 'gamepad', ms, axes: [axis('lx'), axis('ly'), axis('rx'), axis('ry')], buttons: [...new Set(buttons)], triggers: [trigger('lt'), trigger('rt')] }
+  // Harness sticks use positive Y for up, matching the native target input;
+  // browser standard-gamepad axes use negative Y for up.
+  return { kind: 'gamepad', ms, axes: [axis('lx'), -axis('ly'), axis('rx'), -axis('ry')], buttons: [...new Set(buttons)], triggers: [trigger('lt'), trigger('rt')] }
 }
 
 async function setGamepad(active, step) {
