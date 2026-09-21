@@ -283,12 +283,25 @@ const before = await capture({label: 'submitted'});
 checkpoint('Inspect this original capture', before);
 ```
 
-`browser` operations are backend-specific and unavailable on Wolf; controller
-input is unavailable on headless browser sessions. No silent substitution is
-made. Session profiles and browser inspection describe the actual available
-capabilities. Long or cancelled browser operations may terminate the browser
-process to ensure abandoned input cannot continue; inspect status and recover
-explicitly. Idle script completion does not destroy the browser.
+`browser` operations are backend-specific and unavailable on Wolf. Headless
+browser sessions accept finite `gamepad` input as one private virtual
+`mapping: "standard"` device through `navigator.getGamepads()`, while native
+controllers remain hardware owned by their browser and are left visible. The
+virtual device is a browser API injection, not a native hardware emulator:
+axes are normalized to `[-1,1]`, triggers are button values in `[0,1]`, and it
+neutralizes after every bounded step. No silent substitution is made. Session
+profiles and browser inspection describe the actual available capabilities.
+Long or cancelled browser operations may terminate the browser process to
+ensure abandoned input cannot continue; inspect status and recover explicitly.
+Idle script completion does not destroy the browser.
+
+For Engine interaction work, inspect the live debug catalog first, then use
+`interaction.inspect` to read candidates, eligibility/rejection reasons, and
+the exact `useCommand`. Keep ordinary controller/keyboard input as the normal
+path. When an explicit target-ID action is required, invoke the Engine CLI's
+published use command; it reaches the same product handler and keeps the same
+freshness, reach, and line-of-sight checks. Existing reticle/cursor
+`playtest interaction` queries remain read-only and do not activate a target.
 
 Capture sidecars preserve original image paths. `compare_to` references a prior
 `capture_id`; results compare known dimensions and supplied viewpoint metadata,

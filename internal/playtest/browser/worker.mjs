@@ -10,6 +10,9 @@ const MAX_TARGETS = 100
 const TOKEN_LIFETIME_MS = 30_000
 const DEFAULT_TIMEOUT = 5_000
 const MAX_TIMEOUT = 15_000
+const GAMEPAD_STATE_KEY = '__crewPlaytestGamepad'
+const GAMEPAD_BUTTONS = Object.freeze({ a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, lt: 6, rt: 7, back: 8, start: 9, ls: 10, rs: 11, up: 12, down: 13, left: 14, right: 15, guide: 16 })
+const GAMEPAD_BUTTON_COUNT = 17
 
 let context
 let page
@@ -21,6 +24,78 @@ const tokens = new Map()
 const consoleEvents = []
 const pageErrors = []
 const assistanceEvents = []
+
+// This runs in the page before its application scripts. It augments (rather
+// than replaces) the browser's Gamepad API, so any ordinary hardware gamepads
+// remain visible and the virtual device occupies only a vacant slot.
+const GAMEPAD_INIT_SCRIPT = `(() => {
+  const key = ${JSON.stringify(GAMEPAD_STATE_KEY)};
+  if (window[key]) return;
+  const buttonNames = ${JSON.stringify(GAMEPAD_BUTTONS)};
+  const original = typeof navigator.getGamepads === 'function' ? navigator.getGamepads.bind(navigator) : null;
+  const state = { connected: false, index: 0, timestamp: 0, axes: [0, 0, 0, 0], buttons: Array(${GAMEPAD_BUTTON_COUNT}).fill(0) };
+  const gamepad = {
+    get id() { return 'Crew Playtest Virtual Gamepad'; },
+    get index() { return state.index; },
+    get connected() { return state.connected; },
+    get mapping() { return 'standard'; },
+    get timestamp() { return state.timestamp; },
+    get axes() { return state.axes.slice(); },
+    get buttons() { return state.buttons.map(value => ({ pressed: value > 0, touched: value > 0, value })); },
+    get vibrationActuator() { return null; },
+  };
+  const tick = () => { state.timestamp = performance.now(); };
+  const assignIndex = native => {
+    const vacancy = native.findIndex(value => value === null || value === undefined);
+    state.index = vacancy === -1 ? native.length : vacancy;
+    return state.index;
+  };
+  const dispatch = type => {
+    let event;
+    try { event = new GamepadEvent(type, { gamepad }); }
+    catch {
+      event = new Event(type);
+      Object.defineProperty(event, 'gamepad', { configurable: true, enumerable: true, value: gamepad });
+    }
+    window.dispatchEvent(event);
+  };
+  const neutralize = () => { state.axes = [0, 0, 0, 0]; state.buttons = Array(${GAMEPAD_BUTTON_COUNT}).fill(0); tick(); };
+  try {
+    Object.defineProperty(navigator, 'getGamepads', {
+      configurable: true,
+      value: () => {
+        const native = original ? Array.from(original() || []) : [];
+        if (!state.connected) return native;
+        // Never overwrite a physical entry. Chromium's empty GamepadList may
+        // contain null slots, so use its first vacancy before appending.
+        native[assignIndex(native)] = gamepad;
+        return native;
+      },
+    });
+    window[key] = {
+      set(input) {
+        state.axes = input.axes.slice();
+        state.buttons = Array(${GAMEPAD_BUTTON_COUNT}).fill(0);
+        for (const name of input.buttons) state.buttons[buttonNames[name]] = 1;
+        for (const [name, value] of Object.entries(input.buttonValues)) state.buttons[buttonNames[name]] = value;
+        const wasConnected = state.connected;
+        state.index = assignIndex(original ? Array.from(original() || []) : []);
+        state.connected = true;
+        tick();
+        if (!wasConnected) dispatch('gamepadconnected');
+      },
+      neutralize,
+      dispose() {
+        if (!state.connected) return;
+        neutralize();
+        state.connected = false;
+        dispatch('gamepaddisconnected');
+      },
+    };
+  } catch (error) {
+    window[key] = { error: error instanceof Error ? error.message : String(error) };
+  }
+})();`
 
 function result(id, value) { process.stdout.write(`${JSON.stringify({ id, result: value })}\n`) }
 function failure(id, error) { process.stdout.write(`${JSON.stringify({ id, error: error instanceof Error ? error.message : String(error) })}\n`) }
@@ -67,6 +142,7 @@ async function launch(params) {
   if (typeof params.executable_path === 'string' && params.executable_path.length > 0) launchOptions.executablePath = params.executable_path
   context = await chromium.launchPersistentContext(params.user_data_dir, launchOptions)
   context.setDefaultTimeout(DEFAULT_TIMEOUT)
+  await context.addInitScript({ content: GAMEPAD_INIT_SCRIPT })
   page = context.pages()[0] || await context.newPage()
   page.on('console', message => addBounded(consoleEvents, { type: message.type(), text: message.text().slice(0, 4096), truncated: message.text().length > 4096, location: message.location() }))
   page.on('pageerror', error => addBounded(pageErrors, serializeError(error).slice(0, 4096)))
@@ -257,7 +333,11 @@ async function input(params) {
         await active.mouse.down({ button: step.button })
         try { if (step.ms > 0) await new Promise(resolve => setTimeout(resolve, step.ms)) } finally { await active.mouse.up({ button: step.button }) }
         break
-      default: throw new Error('input kind must be hold, move, point, click, or wait; gamepad is unsupported')
+      case 'gamepad':
+        await setGamepad(active, step)
+        try { if (step.ms > 0) await new Promise(resolve => setTimeout(resolve, step.ms)) } finally { await neutralizeGamepad(active) }
+        break
+      default: throw new Error('input kind must be hold, move, point, click, wait, or gamepad')
     }
   }
   return { completed_steps: params.steps.length, cursor: { ...cursor }, ...events() }
@@ -265,15 +345,57 @@ async function input(params) {
 
 function validateInputStep(step) {
   if (!step || typeof step !== 'object' || Array.isArray(step)) throw new Error('input step must be an object')
-  if (step.kind === 'gamepad') throw new Error('capability_unavailable: browser backend does not support gamepad input')
   switch (step.kind) {
     case 'wait': if (!Number.isInteger(step.ms) || step.ms < 0 || step.ms > 10_000) throw new Error('wait ms must be 0..10000'); return step
     case 'hold': if (!Array.isArray(step.keys) || step.keys.length < 1 || step.keys.length > 8 || !Number.isInteger(step.ms) || step.ms < 0 || step.ms > 10_000) throw new Error('hold requires 1..8 keys and ms 0..10000'); return { ...step, keys: step.keys.map(playwrightKey) }
     case 'move': if (!Number.isFinite(step.dx) || !Number.isFinite(step.dy)) throw new Error('move requires finite dx and dy'); throw new Error('capability_unavailable: relative mouse move is not supported by a browser page; use point for absolute coordinates')
     case 'point': return { ...step, ...pointParams(step) }
     case 'click': if (!Number.isInteger(step.ms) || step.ms < 0 || step.ms > 10_000) throw new Error('click ms must be 0..10000'); return { ...step, button: button(step.button) }
-    default: throw new Error('input kind must be hold, move, point, click, or wait; gamepad is unsupported')
+    case 'gamepad': return gamepadStep(step)
+    default: throw new Error('input kind must be hold, move, point, click, wait, or gamepad')
   }
+}
+
+function gamepadStep(step) {
+  const allowed = new Set(['kind', 'ms', 'buttons', 'lx', 'ly', 'rx', 'ry', 'lt', 'rt'])
+  for (const name of Object.keys(step)) {
+    if (allowed.has(name)) continue
+    if (name === 'back') throw new Error("unknown gamepad field back; use buttons:['back']")
+    throw new Error(`unknown gamepad input field ${JSON.stringify(name)}`)
+  }
+  const ms = step.ms === undefined ? 0 : step.ms
+  if (!Number.isInteger(ms) || ms < 0 || ms > 10_000) throw new Error('gamepad ms must be 0..10000')
+  const axis = name => {
+    const value = step[name] === undefined ? 0 : step[name]
+    if (!Number.isFinite(value) || value < -1 || value > 1) throw new Error(`${name} must be finite in [-1, 1]`)
+    return value
+  }
+  const trigger = name => {
+    const value = step[name] === undefined ? 0 : step[name]
+    if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error(`${name} must be finite in [0, 1]`)
+    return value
+  }
+  const buttons = step.buttons === undefined ? [] : step.buttons
+  if (!Array.isArray(buttons)) throw new Error('buttons must be an array of Xbox button names')
+  for (const name of buttons) if (typeof name !== 'string' || GAMEPAD_BUTTONS[name] === undefined) throw new Error('Unknown Xbox button')
+  return { kind: 'gamepad', ms, axes: [axis('lx'), axis('ly'), axis('rx'), axis('ry')], buttons: [...new Set(buttons)], triggers: [trigger('lt'), trigger('rt')] }
+}
+
+async function setGamepad(active, step) {
+  await active.evaluate(({ key, state }) => {
+    const controller = window[key]
+    if (!controller || controller.error) throw new Error(`capability_unavailable: browser Gamepad API injection failed${controller?.error ? `: ${controller.error}` : ''}`)
+    controller.set({ axes: state.axes, buttons: state.buttons, buttonValues: { lt: state.triggers[0], rt: state.triggers[1] } })
+  }, { key: GAMEPAD_STATE_KEY, state: step })
+}
+
+async function neutralizeGamepad(active, dispose = false) {
+  await active.evaluate(({ key, dispose }) => {
+    const controller = window[key]
+    if (!controller || controller.error) return
+    if (dispose) controller.dispose()
+    else controller.neutralize()
+  }, { key: GAMEPAD_STATE_KEY, dispose })
 }
 
 function playwrightKey(value) {
@@ -288,8 +410,12 @@ function playwrightKey(value) {
 async function close() {
   if (!context) return { released: true, browser_closed: false }
   const current = context
+  const active = page
   context = undefined
   page = undefined
+  if (active && !active.isClosed()) {
+    try { await neutralizeGamepad(active, true) } catch { /* context shutdown still removes the lease */ }
+  }
   await current.close()
   return { released: true, browser_closed: true }
 }

@@ -39,7 +39,7 @@ func capabilities() map[string]any {
 		"dom_actions":           true,
 		"absolute_pointer":      true,
 		"keyboard":              true,
-		"gamepad":               false,
+		"gamepad":               true,
 		"relative_mouse":        false,
 		"pointer_lock_readback": true,
 		"engine_queries":        false,
@@ -379,8 +379,9 @@ func writeFile(path string, data []byte) error {
 	return evidence.SyncDirectory(filepath.Dir(path))
 }
 
-// Input delivers browser-native key/mouse steps. Gamepad requests are rejected
-// by the child explicitly; the browser adapter never substitutes an input mode.
+// Input delivers browser-native key/mouse steps and finite standard-Gamepad
+// snapshots. The child injects only its virtual device through the page's
+// Gamepad API; it never reads or changes product state.
 func (a *Adapter) Input(ctx context.Context, leaseID string, steps []map[string]any) (map[string]any, error) {
 	child := a.currentChild(leaseID)
 	if child == nil {

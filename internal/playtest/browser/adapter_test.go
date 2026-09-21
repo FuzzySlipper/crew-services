@@ -103,6 +103,47 @@ func TestHeadlessFixtureDOMInputEvidenceAndNearAssist(t *testing.T) {
 	}
 }
 
+func TestGamepadInputUsesStandardBrowserAPIAndNeutralizes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte(`<!doctype html><title>gamepad fixture</title><div id="sample"></div><script>
+let event = 'none'; let active = 'none';
+addEventListener('gamepadconnected', value => { event = value.gamepad.index + '/' + value.gamepad.mapping + '/' + value.gamepad.connected; });
+setInterval(() => {
+  const pad = navigator.getGamepads()[0]; if (!pad) return;
+  const snapshot = pad.index + '/' + pad.mapping + '/' + pad.connected + '/' + (pad.timestamp > 0) + '/' + pad.axes.join(',') + '/' + pad.buttons[0].value + '/' + pad.buttons[0].pressed + '/' + pad.buttons[6].value + '/' + pad.buttons[7].value + '/' + pad.buttons[9].pressed;
+  if (pad.axes.some(value => value !== 0) || pad.buttons.some(value => value.value !== 0)) active = snapshot;
+  document.querySelector('#sample').textContent = 'event=' + event + ';active=' + active + ';idle=' + snapshot;
+}, 1);
+</script>`))
+	}))
+	defer server.Close()
+	adapter, leaseID := testAdapter(t, server.URL)
+
+	status, err := adapter.Status(context.Background(), leaseID)
+	if err != nil || status["capabilities"].(map[string]any)["gamepad"] != true {
+		t.Fatalf("status = %#v, %v", status, err)
+	}
+	result, err := adapter.Input(context.Background(), leaseID, []map[string]any{{
+		"kind": "gamepad", "ms": 100, "lx": 0.5, "ly": -0.25, "rx": 1.0, "ry": -1.0,
+		"lt": 0.25, "rt": 0.75, "buttons": []string{"a", "start"},
+	}})
+	if err != nil || result["completed_steps"] != float64(1) {
+		t.Fatalf("gamepad input = %#v, %v", result, err)
+	}
+	inspected := browserRequest(t, adapter, leaseID, map[string]any{"op": "inspect", "selector": "#sample"})
+	targets := inspected["targets"].([]any)
+	text := targets[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "event=0/standard/true") || !strings.Contains(text, "active=0/standard/true/true/0.5,-0.25,1,-1/1/true/0.25/0.75/true") {
+		t.Fatalf("gamepad active sample = %q; inspect = %#v", text, inspected)
+	}
+	if !strings.Contains(text, "idle=0/standard/true/true/0,0,0,0/0/false/0/0/false") {
+		t.Fatalf("gamepad was not neutral after its finite step: %q", text)
+	}
+	if _, err := adapter.Input(context.Background(), leaseID, []map[string]any{{"kind": "gamepad", "ms": 1, "back": true}}); err == nil || !strings.Contains(err.Error(), "buttons:['back']") {
+		t.Fatalf("legacy gamepad field error = %v", err)
+	}
+}
+
 func TestCancellationKillsActiveBrowserCallAndLeavesLeaseUnavailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = writer.Write([]byte("<!doctype html><title>slow</title>"))
@@ -111,7 +152,7 @@ func TestCancellationKillsActiveBrowserCallAndLeavesLeaseUnavailable(t *testing.
 	adapter, leaseID := testAdapter(t, server.URL)
 	finished := make(chan error, 1)
 	go func() {
-		_, err := adapter.Input(context.Background(), leaseID, []map[string]any{{"kind": "wait", "ms": 10_000}})
+		_, err := adapter.Input(context.Background(), leaseID, []map[string]any{{"kind": "gamepad", "lx": 0.5, "ms": 10_000}})
 		finished <- err
 	}()
 	deadline := time.Now().Add(2 * time.Second)
