@@ -1,0 +1,268 @@
+{
+  "session_id": "REPLACE_WITH_CONNECTED_SESSION",
+  "product_url": "http://127.0.0.1:48384/",
+  "commands": [
+    "combat.observe",
+    "spatial.map ascii 15 2"
+  ],
+  "capture_every": 5,
+  "policy": {
+    "goal": "From spawn, navigate the first room and eliminate the first two troopers you encounter. Approach useful supplies if needed, avoid dying. Return after two kills or if a hard stop is reached. This is a bounded navigation/combat experiment.",
+    "instructions": "Use fresh combat.observe facts. Positive bearing means turn right; positive aimPitchError means aim up. First navigate toward enemies through openings shown by spatial map. Approach to 8-15m for engagement. lineOfSight is to enemy center; player.aimHit reports the ACTUAL current weapon ray. Fire only when weaponReady and aimHit.kind is Entity and aimHit.entity is a live enemy ID. StaticMesh hit means wall blocks the shot: MOVE to an opening instead of firing or waiting. Use coarse turns when abs bearing>8degrees, fine aim otherwise. Re-evaluate moving enemies each update. Do not stop simply because enemies are occluded. Find a route, advance, use nearby doors and strafe for survival. Parent guidance revises target and setpoints. Only goal_complete when two kills observed.",
+    "budget_ms": 90000,
+    "max_actions": 100,
+    "decision_timeout_ms": 5000,
+    "minimum_confidence": 0.1,
+    "stall_actions": 20,
+    "progress_pointers": [
+      "/facts/combat.observe/player/position",
+      "/facts/combat.observe/player/yawDegrees",
+      "/facts/combat.observe/player/pitchDegrees",
+      "/facts/combat.observe/player/kills"
+    ],
+    "stop_when": [
+      {
+        "pointer": "/facts/combat.observe/player/health",
+        "operator": "lte",
+        "value": 25,
+        "reason": "health_threshold"
+      },
+      {
+        "pointer": "/facts/combat.observe/player/kills",
+        "operator": "gte",
+        "value": 2,
+        "reason": "two_kills_observed"
+      },
+      {
+        "pointer": "/facts/combat.observe/player/ammo/bullets",
+        "operator": "lte",
+        "value": 0,
+        "reason": "out_of_bullets"
+      }
+    ],
+    "tactics": [
+      {
+        "id": "forward",
+        "description": "Advance forward for300ms at current facing.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              87
+            ],
+            "ms": 300
+          }
+        ]
+      },
+      {
+        "id": "back",
+        "description": "Move backward for250ms to restore engagement distance.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              83
+            ],
+            "ms": 250
+          }
+        ]
+      },
+      {
+        "id": "strafe_left",
+        "description": "Strafe left for250ms.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              65
+            ],
+            "ms": 250
+          }
+        ]
+      },
+      {
+        "id": "strafe_right",
+        "description": "Strafe right for250ms.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              68
+            ],
+            "ms": 250
+          }
+        ]
+      },
+      {
+        "id": "turn_left",
+        "description": "Turn yaw left by approximately12 degrees (J100ms).",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              74
+            ],
+            "ms": 100
+          }
+        ]
+      },
+      {
+        "id": "turn_right",
+        "description": "Turn yaw right by approximately12 degrees (L100ms).",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              76
+            ],
+            "ms": 100
+          }
+        ]
+      },
+      {
+        "id": "aim_left",
+        "description": "Fine yaw correction left about1degree (J40ms with Shift precision).",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              16,
+              74
+            ],
+            "ms": 40
+          }
+        ]
+      },
+      {
+        "id": "aim_right",
+        "description": "Fine yaw correction right about1degree (L40ms with Shift precision).",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              16,
+              76
+            ],
+            "ms": 40
+          }
+        ]
+      },
+      {
+        "id": "aim_up",
+        "description": "Fine pitch up about1degree (I40ms with Shift precision).",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              16,
+              73
+            ],
+            "ms": 40
+          }
+        ]
+      },
+      {
+        "id": "aim_down",
+        "description": "Fine pitch down about1degree (K40ms with Shift precision).",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              16,
+              75
+            ],
+            "ms": 40
+          }
+        ]
+      },
+      {
+        "id": "fire",
+        "description": "Press Ctrl to fire once if weapon ready; facing determines shot, no automatic aim.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              17
+            ],
+            "ms": 100
+          }
+        ]
+      },
+      {
+        "id": "advance_fire",
+        "description": "Move forward while pressing fire once; use only when lined up.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              87,
+              17
+            ],
+            "ms": 250
+          }
+        ]
+      },
+      {
+        "id": "left_fire",
+        "description": "Strafe left while firing once; use only when lined up.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              65,
+              17
+            ],
+            "ms": 250
+          }
+        ]
+      },
+      {
+        "id": "right_fire",
+        "description": "Strafe right while firing once; use only when lined up.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              68,
+              17
+            ],
+            "ms": 250
+          }
+        ]
+      },
+      {
+        "id": "use",
+        "description": "Press E to use a nearby door through ordinary gameplay.",
+        "steps": [
+          {
+            "kind": "hold",
+            "keys": [
+              69
+            ],
+            "ms": 100
+          }
+        ]
+      },
+      {
+        "id": "wait",
+        "description": "Release controls and wait100ms for weapon readiness or observation.",
+        "steps": [
+          {
+            "kind": "wait",
+            "ms": 100
+          }
+        ]
+      }
+    ],
+    "parent": {
+      "every_actions": 10,
+      "timeout_ms": 15000,
+      "max_age_ms": 15000,
+      "event_pointers": [
+        "/facts/combat.observe/player/kills"
+      ]
+    }
+  },
+  "parent_model": "codex-gpt-5.6-luna",
+  "parent_protocol": "responses"
+}

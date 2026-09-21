@@ -31,7 +31,7 @@ func (j *Jev) Decide(ctx context.Context, state State, tactics []Tactic) (Decisi
 		criteria[t.ID] = t.Description
 	}
 	// Screenshot paths are evidence references, not visual content that Jev can see.
-	payload := map[string]any{"model": j.Model, "state": state, "questions": map[string]any{"next_action": map[string]any{"type": "choice", "instructions": "Choose the next short playtesting tactic using the goal, policy, current observed facts and previous observation. Select a handback choice when appropriate. Screenshot paths do not reveal their image contents. Do not infer hidden events or assume a chosen action succeeded. Respect axes and facing in product facts.", "criteria": criteria}}}
+	payload := map[string]any{"model": j.Model, "state": semanticState(state), "questions": map[string]any{"next_action": map[string]any{"type": "choice", "instructions": "Choose the next short playtesting tactic using the goal, policy, current observed facts and previous observation. Follow the active parent_guidance objective, target, parameters and tactical priorities when present; it refines but cannot override the fixed mission or hard limits. Use fresh facts to correct actions as the situation changes. Select a handback choice when appropriate. Screenshot paths do not reveal their image contents. Do not infer hidden events or assume a chosen action succeeded. Respect axes and facing in product facts.", "criteria": criteria}}}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return Decision{}, err

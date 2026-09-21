@@ -27,16 +27,17 @@ type Condition struct {
 	Reason   string `json:"reason"`
 }
 type Policy struct {
-	Goal              string      `json:"goal"`
-	Instructions      string      `json:"instructions"`
-	BudgetMS          int         `json:"budget_ms"`
-	MaxActions        int         `json:"max_actions"`
-	DecisionTimeoutMS int         `json:"decision_timeout_ms"`
-	MinimumConfidence float64     `json:"minimum_confidence"`
-	StallActions      int         `json:"stall_actions"`
-	ProgressPointers  []string    `json:"progress_pointers"`
-	StopWhen          []Condition `json:"stop_when"`
-	Tactics           []Tactic    `json:"tactics"`
+	Goal              string        `json:"goal"`
+	Instructions      string        `json:"instructions"`
+	BudgetMS          int           `json:"budget_ms"`
+	MaxActions        int           `json:"max_actions"`
+	DecisionTimeoutMS int           `json:"decision_timeout_ms"`
+	MinimumConfidence float64       `json:"minimum_confidence"`
+	StallActions      int           `json:"stall_actions"`
+	ProgressPointers  []string      `json:"progress_pointers"`
+	StopWhen          []Condition   `json:"stop_when"`
+	Tactics           []Tactic      `json:"tactics"`
+	Parent            *ParentPolicy `json:"parent,omitempty"`
 }
 type Decision struct {
 	Choice     string          `json:"choice"`
@@ -44,13 +45,15 @@ type Decision struct {
 	Raw        json.RawMessage `json:"raw,omitempty"`
 }
 type State struct {
-	Goal         string       `json:"goal"`
-	Instructions string       `json:"instructions"`
-	Observation  Observation  `json:"observation"`
-	Previous     *Observation `json:"previous,omitempty"`
-	LastAction   string       `json:"last_action,omitempty"`
-	ActionsTaken int          `json:"actions_taken"`
-	RemainingMS  int64        `json:"remaining_ms"`
+	Goal          string           `json:"goal"`
+	Instructions  string           `json:"instructions"`
+	Observation   Observation      `json:"observation"`
+	Previous      *Observation     `json:"previous,omitempty"`
+	LastAction    string           `json:"last_action,omitempty"`
+	ActionsTaken  int              `json:"actions_taken"`
+	RemainingMS   int64            `json:"remaining_ms"`
+	Guidance      *AppliedGuidance `json:"parent_guidance,omitempty"`
+	RecentActions []string         `json:"recent_actions,omitempty"`
 }
 type Controller interface {
 	Decide(context.Context, State, []Tactic) (Decision, error)
@@ -61,16 +64,20 @@ type Environment interface {
 	Cancel(context.Context) (json.RawMessage, error)
 }
 type Result struct {
-	Reason       string          `json:"reason"`
-	Error        string          `json:"error,omitempty"`
-	Actions      int             `json:"actions"`
-	ElapsedMS    int64           `json:"elapsed_ms"`
-	Current      *Observation    `json:"current,omitempty"`
-	Cleanup      json.RawMessage `json:"cleanup,omitempty"`
-	CleanupError string          `json:"cleanup_error,omitempty"`
+	Reason        string          `json:"reason"`
+	Error         string          `json:"error,omitempty"`
+	Actions       int             `json:"actions"`
+	ElapsedMS     int64           `json:"elapsed_ms"`
+	Current       *Observation    `json:"current,omitempty"`
+	Cleanup       json.RawMessage `json:"cleanup,omitempty"`
+	CleanupError  string          `json:"cleanup_error,omitempty"`
+	ParentPending bool            `json:"parent_pending_on_handback,omitempty"`
 }
 
 func (p Policy) Validate() error {
+	if err := p.Parent.validate(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(p.Goal) == "" || p.BudgetMS < 100 || p.BudgetMS > 120000 || p.MaxActions < 1 || p.MaxActions > 100 || p.DecisionTimeoutMS < 100 || p.DecisionTimeoutMS > 30000 {
 		return errors.New("goal and bounded budget_ms(100..120000), max_actions(1..100), decision_timeout_ms(100..30000) required")
 	}
@@ -120,18 +127,28 @@ func (p Policy) Validate() error {
 
 // Run returns control on a bounded event. Model conclusions remain labeled inference.
 // Each input is a prevalidated finite batch; cleanup uses an independent context.
-func Run(ctx context.Context, p Policy, env Environment, controller Controller, journal io.Writer) (result Result, err error) {
+func Run(ctx context.Context, p Policy, env Environment, controller Controller, journal io.Writer) (Result, error) {
+	return RunWithParent(ctx, p, env, controller, nil, journal)
+}
+
+func RunWithParent(ctx context.Context, p Policy, env Environment, controller Controller, parent Parent, journal io.Writer) (result Result, err error) {
 	if err = p.Validate(); err != nil {
 		return result, err
+	}
+	if (p.Parent == nil) != (parent == nil) {
+		return result, errors.New("parent policy and parent client must be supplied together")
 	}
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.BudgetMS)*time.Millisecond)
 	defer cancel()
+	parentBusy := false
 	enc := json.NewEncoder(journal)
 	emit := func(kind string, value any) error {
 		return enc.Encode(map[string]any{"kind": kind, "elapsed_ms": time.Since(start).Milliseconds(), "data": value})
 	}
 	defer func() {
+		result.ParentPending = parentBusy
+		cancel()
 		cleanCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
 		cleanup, errCleanup := env.Cancel(cleanCtx)
@@ -151,17 +168,25 @@ func Run(ctx context.Context, p Policy, env Environment, controller Controller, 
 	last := ""
 	stall := 0
 	var priorProgress string
+	replies := make(chan parentReply, 1)
+	lastParentAction := -1
+	var lastParentEvents string
+	var guidance *AppliedGuidance
+	var lastInputEnd time.Time
+	var recentActions []string
 	for {
 		if ctx.Err() != nil {
 			result.Reason = "deadline_or_cancelled"
 			return result, nil
 		}
+		observationStart := time.Now()
 		obs, e := env.Observe(ctx)
 		if e != nil {
 			result.Reason = "observation_failed"
 			result.Error = e.Error()
 			return result, nil
 		}
+		observationDuration := time.Since(observationStart).Milliseconds()
 		result.Current = &obs
 		if err = emit("observation", obs); err != nil {
 			return result, err
@@ -208,7 +233,79 @@ func Run(ctx context.Context, p Policy, env Environment, controller Controller, 
 			return result, nil
 		}
 		deadline, _ := ctx.Deadline()
-		state := State{p.Goal, p.Instructions, obs, previous, last, result.Actions, time.Until(deadline).Milliseconds()}
+		state := State{Goal: p.Goal, Instructions: p.Instructions, Observation: obs, Previous: previous, LastAction: last, ActionsTaken: result.Actions, RemainingMS: time.Until(deadline).Milliseconds(), Guidance: guidance, RecentActions: append([]string(nil), recentActions...)}
+		// Parent inference runs concurrently. Only this loop writes the journal and
+		// installs a completed update, at an action boundary.
+		if parent != nil {
+			select {
+			case reply := <-replies:
+				parentBusy = false
+				disposition := "applied"
+				if reply.Error != "" {
+					disposition = "failed"
+				} else if time.Since(reply.SourceObservedAt) > time.Duration(p.Parent.MaxAgeMS)*time.Millisecond {
+					disposition = "stale"
+				} else if e := reply.Decision.Guidance.validate(p.Tactics); e != nil {
+					reply.Error = e.Error()
+					disposition = "invalid"
+				}
+				if disposition == "applied" {
+					revision := 1
+					if guidance != nil {
+						revision = guidance.Revision + 1
+					}
+					guidance = &AppliedGuidance{Guidance: reply.Decision.Guidance, Revision: revision, BasedOnAction: reply.BasedOnAction, AppliedAtAction: result.Actions, SourceObservedAt: reply.SourceObservedAt}
+					state.Guidance = guidance
+				}
+				if err = emit("parent_result", map[string]any{"reply": reply, "disposition": disposition, "applied_at_action": result.Actions, "actions_while_pending": result.Actions - reply.BasedOnAction, "latency_ms": reply.Finished.Sub(reply.Started).Milliseconds()}); err != nil {
+					return result, err
+				}
+				if disposition == "applied" && guidance.Stop {
+					result.Reason = "parent_requested_handback"
+					return result, nil
+				}
+			default:
+			}
+			events := make([]any, 0, len(p.Parent.EventPointers))
+			for _, ptr := range p.Parent.EventPointers {
+				v, ok := pointer(document, ptr)
+				if !ok {
+					result.Reason = "missing_parent_event_fact"
+					result.Error = ptr
+					return result, nil
+				}
+				events = append(events, v)
+			}
+			rawEvents, _ := json.Marshal(events)
+			eventKey := string(rawEvents)
+			due := lastParentAction < 0 || result.Actions-lastParentAction >= p.Parent.EveryActions || eventKey != lastParentEvents
+			if !parentBusy && due {
+				parentBusy = true
+				lastParentAction = result.Actions
+				lastParentEvents = eventKey
+				revision := 0
+				if guidance != nil {
+					revision = guidance.Revision
+				}
+				if err = emit("parent_requested", map[string]any{"based_on_action": result.Actions, "guidance_revision": revision, "source_observed_at": obs.CapturedAt}); err != nil {
+					return result, err
+				}
+				go func(snapshot State) {
+					began := time.Now()
+					requestCtx, done := context.WithTimeout(ctx, time.Duration(p.Parent.TimeoutMS)*time.Millisecond)
+					defer done()
+					decision, e := parent.Advise(requestCtx, snapshot, p.Tactics)
+					reply := parentReply{Decision: decision, Started: began, Finished: time.Now(), BasedOnAction: snapshot.ActionsTaken, SourceObservedAt: snapshot.Observation.CapturedAt}
+					if e != nil {
+						reply.Error = e.Error()
+					}
+					select {
+					case replies <- reply:
+					case <-ctx.Done():
+					}
+				}(state)
+			}
+		}
 		decisionCtx, done := context.WithTimeout(ctx, time.Duration(p.DecisionTimeoutMS)*time.Millisecond)
 		decisionStart := time.Now()
 		decision, e := controller.Decide(decisionCtx, state, p.Tactics)
@@ -248,7 +345,20 @@ func Run(ctx context.Context, p Policy, env Environment, controller Controller, 
 		if err = emit("action_requested", chosen); err != nil {
 			return result, err
 		}
+		inputStart := time.Now()
+		gapMS := int64(0)
+		if !lastInputEnd.IsZero() {
+			gapMS = inputStart.Sub(lastInputEnd).Milliseconds()
+		}
 		receipt, e := env.Input(ctx, chosen.Steps)
+		lastInputEnd = time.Now()
+		revision := 0
+		if guidance != nil {
+			revision = guidance.Revision
+		}
+		if timingErr := emit("cycle_timing", map[string]any{"action": chosen.ID, "action_index": result.Actions, "observation_ms": observationDuration, "observation_age_at_input_ms": inputStart.Sub(obs.CapturedAt).Milliseconds(), "input_call_ms": lastInputEnd.Sub(inputStart).Milliseconds(), "input_gap_ms": gapMS, "guidance_revision": revision, "parent_pending": parentBusy}); timingErr != nil {
+			return result, timingErr
+		}
 		if err = emit("action_receipt", receipt); err != nil {
 			return result, err
 		}
@@ -259,6 +369,10 @@ func Run(ctx context.Context, p Policy, env Environment, controller Controller, 
 		}
 		result.Actions++
 		last = chosen.ID
+		recentActions = append(recentActions, chosen.ID)
+		if len(recentActions) > 15 {
+			recentActions = recentActions[len(recentActions)-15:]
+		}
 		copyObs := obs
 		previous = &copyObs
 	}

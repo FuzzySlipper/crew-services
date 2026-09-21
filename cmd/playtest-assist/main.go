@@ -15,10 +15,13 @@ import (
 )
 
 type config struct {
-	SessionID  string           `json:"session_id"`
-	ProductURL string           `json:"product_url"`
-	Commands   []string         `json:"commands"`
-	Policy     assistant.Policy `json:"policy"`
+	SessionID      string           `json:"session_id"`
+	ProductURL     string           `json:"product_url"`
+	Commands       []string         `json:"commands"`
+	CaptureEvery   int              `json:"capture_every,omitempty"`
+	ParentModel    string           `json:"parent_model,omitempty"`
+	ParentProtocol string           `json:"parent_protocol,omitempty"`
+	Policy         assistant.Policy `json:"policy"`
 }
 
 func main() {
@@ -96,12 +99,16 @@ func run() error {
 		return err
 	}
 	defer file.Close()
-	env := &assistant.SessionEnvironment{Observer: assistant.Observer{Client: service, SessionID: cfg.SessionID, ProductURL: cfg.ProductURL, Commands: cfg.Commands}}
+	env := &assistant.SessionEnvironment{Observer: assistant.Observer{Client: service, SessionID: cfg.SessionID, ProductURL: cfg.ProductURL, Commands: cfg.Commands, CaptureEvery: cfg.CaptureEvery}}
 	var controller assistant.Controller = &assistant.Jev{BaseURL: *router, Model: *model, Token: os.Getenv("PLAYTEST_ROUTER_TOKEN")}
 	if *baseline {
 		controller = &assistant.Baseline{}
 	}
-	result, runErr := assistant.Run(ctx, cfg.Policy, env, controller, file)
+	var parent assistant.Parent
+	if cfg.ParentModel != "" {
+		parent = &assistant.HTTPParent{BaseURL: *router, Model: cfg.ParentModel, Protocol: cfg.ParentProtocol, Token: os.Getenv("PLAYTEST_ROUTER_TOKEN")}
+	}
+	result, runErr := assistant.RunWithParent(ctx, cfg.Policy, env, controller, parent, file)
 	if err = file.Sync(); err != nil {
 		return err
 	}

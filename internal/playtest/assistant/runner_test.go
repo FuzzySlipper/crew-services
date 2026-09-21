@@ -24,7 +24,7 @@ func (f *fakeEnv) Observe(context.Context) (Observation, error) {
 		n = 0
 	}
 	raw, _ := json.Marshal(map[string]int{"progress": n})
-	return Observation{Facts: map[string]json.RawMessage{"game": raw}}, nil
+	return Observation{CapturedAt: time.Now(), Facts: map[string]json.RawMessage{"game": raw}}, nil
 }
 func (f *fakeEnv) Input(context.Context, []map[string]any) (json.RawMessage, error) {
 	f.inputs++

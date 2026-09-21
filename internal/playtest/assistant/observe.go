@@ -26,10 +26,12 @@ const (
 // product-published read-only facts. ProductURL is supplied by the planner and
 // checked against the active session profile by the command entrypoint.
 type Observer struct {
-	Client     *client.Client
-	SessionID  string
-	ProductURL string
-	Commands   []string
+	Client       *client.Client
+	SessionID    string
+	ProductURL   string
+	CaptureEvery int
+	observations int
+	Commands     []string
 }
 
 // Observation keeps capture metadata and product facts separate. Capture is
@@ -44,7 +46,7 @@ type Observation struct {
 // Observe captures the current native screenshot metadata, then executes only
 // allowlisted read-only product queries. A requested but unavailable fact is an
 // error; callers must not replace it with a guessed value.
-func (o Observer) Observe(ctx context.Context) (Observation, error) {
+func (o *Observer) Observe(ctx context.Context) (Observation, error) {
 	commands := make([]string, len(o.Commands))
 	for i, command := range o.Commands {
 		validated, err := validateCommand(command)
@@ -60,22 +62,26 @@ func (o Observer) Observe(ctx context.Context) (Observation, error) {
 		return Observation{}, errors.New("playtest observer session ID is required")
 	}
 
-	capture, err := o.Client.Result(ctx, client.Request{Op: "observe", SessionID: o.SessionID})
-	if err != nil {
-		return Observation{}, fmt.Errorf("capture session observation: %w", err)
+	started := time.Now().UTC()
+	var capture json.RawMessage
+	every := o.CaptureEvery
+	if every <= 0 {
+		every = 1
 	}
-	if !json.Valid(capture) {
-		return Observation{}, errors.New("capture session observation returned invalid JSON")
+	if o.observations%every == 0 {
+		var err error
+		capture, err = o.Client.Result(ctx, client.Request{Op: "observe", SessionID: o.SessionID})
+		if err != nil {
+			return Observation{}, fmt.Errorf("capture session observation: %w", err)
+		}
+		if !json.Valid(capture) {
+			return Observation{}, errors.New("capture session observation returned invalid JSON")
+		}
+	} else {
+		capture = json.RawMessage(`{"status":"not_captured_this_update"}`)
 	}
-	var captureMetadata map[string]json.RawMessage
-	if err := json.Unmarshal(capture, &captureMetadata); err != nil || captureMetadata == nil {
-		return Observation{}, errors.New("capture session observation has no metadata object")
-	}
-	result := Observation{
-		CapturedAt: time.Now().UTC(),
-		Capture:    append(json.RawMessage(nil), capture...),
-		Facts:      make(map[string]json.RawMessage, len(commands)),
-	}
+	o.observations++
+	result := Observation{CapturedAt: started, Capture: capture, Facts: make(map[string]json.RawMessage, len(commands))}
 	if len(commands) == 0 {
 		return result, nil
 	}
@@ -108,11 +114,11 @@ func (o Observer) Observe(ctx context.Context) (Observation, error) {
 
 func validateCommand(command string) (string, error) {
 	fields := strings.Fields(command)
-	if len(fields) == 1 && fields[0] == "loading-bay.readout" {
+	if len(fields) == 1 && (fields[0] == "loading-bay.readout" || fields[0] == "combat.observe") {
 		return fields[0], nil
 	}
-	if len(fields) != 4 || fields[0] != "spatial.map" || fields[1] != "json" {
-		return "", errors.New("product observation command must be loading-bay.readout or spatial.map json <radius> <cellSize>")
+	if len(fields) != 4 || fields[0] != "spatial.map" || (fields[1] != "json" && fields[1] != "ascii") {
+		return "", errors.New("product observation command must be combat.observe, loading-bay.readout or spatial.map <json|ascii> <radius> <cellSize>")
 	}
 	radius, err := strconv.Atoi(fields[2])
 	if err != nil || radius < 0 || radius > 15 {

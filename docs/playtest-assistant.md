@@ -94,3 +94,64 @@ The report retained two WebGL ReadPixels performance warnings and one aborted
 Both interactive intervals had no page errors. This attachment diagnostic is
 not explained by the assistant changes and is not presented as a clean warning
 delta; no rendering or audio correctness claim is made by this experiment.
+
+## Concurrent parent feedback
+
+A configuration may add `parent_model`, `parent_protocol` (`responses` or
+`chat`), and `policy.parent`:
+
+```json
+{
+  "parent_model": "codex-gpt-5.6-luna",
+  "parent_protocol": "responses",
+  "capture_every": 5,
+  "policy": {
+    "parent": {
+      "every_actions": 10,
+      "timeout_ms": 15000,
+      "max_age_ms": 15000,
+      "event_pointers": ["/facts/combat.observe/player/kills"]
+    }
+  }
+}
+```
+
+This is a fragment to merge into a complete interval configuration. Without a
+parent configuration, the fixed-policy Jev mode is unchanged. The parent starts
+from the first observation and is asked again after the configured number of
+actions, or when a selected event fact changes. There is at most one parent
+request in flight. Jev continues on its current guidance while that request
+runs. Completed guidance is installed at an action boundary; stale, invalid or
+failed results are recorded without replacing current guidance.
+
+Parent output describes the situation, objective, target, parameters and
+preferred tactic IDs. These are semantic guidance for Jev, not generated input
+scripts. The parent cannot change the caller's tactic menu, deadlines or stop
+thresholds. Its `stop` request causes a labeled handback. The transcript records
+guidance revisions, source observation time, parent latency, and how many
+ordinary actions completed while the parent was thinking. The last 15 action
+IDs are supplied as recent context.
+
+`combat.observe` is Doom's compact read-only gameplay observation. It can be
+combined with `spatial.map ascii` for a smaller local map than the JSON cell
+array. Both are product/Engine observations, not browser-inferred game state.
+`capture_every` reduces screenshot frequency; skipped captures are explicit,
+not copies falsely labeled fresh. Screenshots remain original local evidence;
+these model clients receive textual facts only. Keep the browser rendering.
+
+`cycle_timing` separates observation work, Jev request latency, input-call
+duration and gaps between input calls. `observation_age_at_input_ms` measures
+wall time since that observation began; it does not establish the age of a
+rendered frame or exact input-consumption tick. Controls remain finite batches:
+concurrent parent updates do not imply continuous held input during Jev calls.
+
+Parent routes are deployment-specific. On this machine `codex-gpt-5.6-luna` and
+`codex-gpt-5.6-sol` use the Responses streaming endpoint; `glm-5.3` is a chat
+route. Check availability before drawing model-quality conclusions. Parent
+completion/failure and latency belong in the experiment report alongside kills,
+damage, ammunition and route progress.
+
+A complete starting configuration is
+[`doom-parent-feedback.json`](../configs/playtest/doom-parent-feedback.json).
+See [the task 8384 experiment](playtest-parent-feedback-experiment.md) for the
+fixed-policy/Luna/Sol/GLM results, measured cadence, and current limitations.

@@ -44,7 +44,7 @@ func TestObserverCapturesAndReturnsRawProductFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observation, err := (Observer{Client: service, SessionID: "session-1", ProductURL: product.URL + "/game", Commands: []string{" spatial.map   json 12 0.5 ", "loading-bay.readout"}}).Observe(context.Background())
+	observation, err := (&Observer{Client: service, SessionID: "session-1", ProductURL: product.URL + "/game", Commands: []string{" spatial.map   json 12 0.5 ", "loading-bay.readout"}}).Observe(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,8 +69,8 @@ func TestObserverRejectsCommandsOutsideReadOnlyAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"loading-bay.set-track health 1", "spatial.map ascii 12 1", "spatial.map json 16 1", "spatial.map json 2 0", "spatial.map json NaN 1"} {
-		_, err := (Observer{Client: service, SessionID: "session-1", Commands: []string{command}}).Observe(context.Background())
+	for _, command := range []string{"loading-bay.set-track health 1", "spatial.map xml 12 1", "spatial.map json 16 1", "spatial.map json 2 0", "spatial.map json NaN 1"} {
+		_, err := (&Observer{Client: service, SessionID: "session-1", Commands: []string{command}}).Observe(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "command") && !strings.Contains(err.Error(), "spatial.map") {
 			t.Fatalf("command %q error = %v", command, err)
 		}
@@ -92,7 +92,7 @@ func TestObserverRequiresCatalogCommandAndDoesNotExecuteIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = (Observer{Client: service, SessionID: "session-1", ProductURL: product.URL, Commands: []string{"spatial.map json 2 1"}}).Observe(context.Background())
+	_, err = (&Observer{Client: service, SessionID: "session-1", ProductURL: product.URL, Commands: []string{"spatial.map json 2 1"}}).Observe(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "capability_unavailable") {
 		t.Fatalf("error = %v", err)
 	}
