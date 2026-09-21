@@ -1,0 +1,224 @@
+{
+  "session_id": "REPLACE_WITH_OWNED_SESSION_ID",
+  "product_url": "http://127.0.0.1:48387/",
+  "commands": [
+    "combat.observe",
+    "spatial.map ascii 15 2"
+  ],
+  "capture_every": 5,
+  "policy": {
+    "goal": "From spawn, navigate the first room and eliminate the first two troopers you encounter. Approach useful supplies if needed, avoid dying. Return after two kills or if a hard stop is reached. This is a bounded navigation/combat experiment.",
+    "instructions": "Use fresh combat.observe. All tactics use standard gamepad with shared bounded aim assist. Positive enemy bearing means turn right; positive aimPitchError means aim up. Approach through openings to roughly 8-15m. While gamepad aiming is active, player.aimAssist.shot.assistedHit previews the CURRENT corrected weapon ray; fire when this is Entity matching a live enemy. rawHit may miss while assistedHit succeeds. Selection/shot correction do not bypass walls. StaticMesh means MOVE to an opening. Coarse turn >10deg, fine look below10deg, then fire. Re-evaluate moving enemies. Parent provides strategy and target framing. Goal complete only after two observed kills.",
+    "budget_ms": 60000,
+    "max_actions": 100,
+    "decision_timeout_ms": 5000,
+    "minimum_confidence": 0.1,
+    "stall_actions": 20,
+    "progress_pointers": [
+      "/facts/combat.observe/player/position",
+      "/facts/combat.observe/player/yawDegrees",
+      "/facts/combat.observe/player/pitchDegrees",
+      "/facts/combat.observe/player/kills"
+    ],
+    "stop_when": [
+      {
+        "pointer": "/facts/combat.observe/player/health",
+        "operator": "lte",
+        "value": 25,
+        "reason": "health_threshold"
+      },
+      {
+        "pointer": "/facts/combat.observe/player/kills",
+        "operator": "gte",
+        "value": 2,
+        "reason": "two_kills_observed"
+      },
+      {
+        "pointer": "/facts/combat.observe/player/ammo/bullets",
+        "operator": "lte",
+        "value": 0,
+        "reason": "out_of_bullets"
+      }
+    ],
+    "tactics": [
+      {
+        "id": "forward",
+        "description": "Advance forward",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 300,
+            "ly": 1
+          }
+        ]
+      },
+      {
+        "id": "back",
+        "description": "Move backward",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 250,
+            "ly": -1
+          }
+        ]
+      },
+      {
+        "id": "strafe_left",
+        "description": "Strafe left",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 250,
+            "lx": -1
+          }
+        ]
+      },
+      {
+        "id": "strafe_right",
+        "description": "Strafe right",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 250,
+            "lx": 1
+          }
+        ]
+      },
+      {
+        "id": "turn_left",
+        "description": "Turn left coarse about 12 degrees",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 100,
+            "rx": -0.8
+          }
+        ]
+      },
+      {
+        "id": "turn_right",
+        "description": "Turn right coarse about 12 degrees",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 100,
+            "rx": 0.8
+          }
+        ]
+      },
+      {
+        "id": "aim_left",
+        "description": "Small left correction with sticky assist",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 100,
+            "rx": -0.4
+          }
+        ]
+      },
+      {
+        "id": "aim_right",
+        "description": "Small right correction with sticky assist",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 100,
+            "rx": 0.4
+          }
+        ]
+      },
+      {
+        "id": "aim_up",
+        "description": "Small upward correction with sticky assist",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 100,
+            "ry": 0.4
+          }
+        ]
+      },
+      {
+        "id": "aim_down",
+        "description": "Small downward correction with sticky assist",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 100,
+            "ry": -0.4
+          }
+        ]
+      },
+      {
+        "id": "fire",
+        "description": "Fire pistol via RT with bounded shot magnetism",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "rt": 1
+          }
+        ]
+      },
+      {
+        "id": "left_fire",
+        "description": "Strafe left and fire",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 250,
+            "lx": -1,
+            "rt": 1
+          }
+        ]
+      },
+      {
+        "id": "right_fire",
+        "description": "Strafe right and fire",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 250,
+            "lx": 1,
+            "rt": 1
+          }
+        ]
+      },
+      {
+        "id": "use",
+        "description": "Use nearby door via X",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 100,
+            "buttons": [
+              "x"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "wait",
+        "description": "Neutral wait for weapon ready",
+        "steps": [
+          {
+            "kind": "wait",
+            "ms": 100
+          }
+        ]
+      }
+    ],
+    "parent": {
+      "every_actions": 10,
+      "timeout_ms": 15000,
+      "max_age_ms": 15000,
+      "event_pointers": [
+        "/facts/combat.observe/player/kills"
+      ]
+    }
+  },
+  "parent_model": "codex-gpt-5.6-luna",
+  "parent_protocol": "responses"
+}

@@ -1,9 +1,40 @@
 # Concurrent parent / Jev Doom experiment (task 8384)
 
-The harness now runs parent inference concurrently with Jev. The live experiment
-showed navigation and an ordinary-control kill, but no run completed the two-kill
-mission. The useful next problem is reliable target tracking and steering under
-changing observations, rather than further parent scheduling machinery.
+## Current follow-up: gamepad assistance (task 8386)
+
+The later Luna + Jev gamepad run **completed two kills** in 15.479 seconds and
+35 actions. It stopped with `two_kills_observed`, the configured goal threshold,
+not because of death or the time limit. Budget was 60 seconds / 100 actions;
+final player state was alive, 70 health, 62 bullets, 2/12 kills. More enemies
+remained, but continued success was not tested. To continue the owned session,
+inspect it and raise the cumulative kill threshold and corresponding goal before
+starting another bounded interval; otherwise the old threshold stops immediately.
+
+Use [doom-gamepad-parent.json](../configs/playtest/doom-gamepad-parent.json),
+replacing its placeholder session and product URL. It combines `combat.observe`
+with `spatial.map ascii 15 2`, finite standard gamepad tactics and concurrent
+Luna guidance. Gamepad aiming used Engine sticky acquisition and bounded shot
+correction; ordinary collision still blocked obstructed shots. This was one
+successful bounded trial, not a comparison against the earlier keyboard runs.
+
+Jev request latency was 169ms median (123–392ms range). Luna updates applied
+after 17 and 31 actions, taking 7.202s and5.987s while Jev continued acting.
+Navigation projection was unavailable in that run; collision/annotation maps
+were available. Do not infer current projection support from this old snapshot.
+Original config, transcript, result and image are in
+`/home/dev/evidence/task8386/` (`luna-gamepad.*`, `combat-summary.json`, `report.md`).
+
+Subsequent Engine tasks 8385/8387 fixed shared Perception mesh occlusion and
+browser request-abort behavior; Doom was updated to pair
+`0.1.0-dev.dafdca8732a8`. Packaged checks resolved recorded aborts without
+suppressing warnings; existing ReadPixels warnings remained. Those checks did
+not rerun the combat comparison. See `/home/dev/evidence/task8387/report.md`.
+
+## Historical keyboard experiment (task 8384)
+
+The initial concurrent-parent experiment showed navigation and an ordinary-control
+kill, but no run completed its two-kill mission. The results below describe that
+earlier keyboard-only setup, before the gamepad assistance follow-up above.
 
 ## Reproduce
 

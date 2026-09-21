@@ -37,6 +37,8 @@ the Go service owns its capture lock. Always stop your session when finished.
 Use [playtest-assist](playtest-assistant.md) for short Jev-controlled intervals
 with a planner-defined goal, finite tactics, observed-fact thresholds and an
 interval transcript. It reuses an owned session and the same input service.
+The guide includes concurrent parent feedback, compact ASCII spatial maps,
+collision versus navigation interpretation, and a complete Doom gamepad example.
 
 ## JavaScript API
 
