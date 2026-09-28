@@ -1,0 +1,815 @@
+{
+  "movement": {
+    "body": {
+      "height": 1.8,
+      "maximumStepHeight": 0.3,
+      "radius": 0.25
+    },
+    "grounded": true,
+    "lastStep": {
+      "blockFlags": "None",
+      "contact": {
+        "entity": "0",
+        "kind": "None",
+        "normal": [
+          0,
+          0,
+          0
+        ],
+        "present": false,
+        "source": "None"
+      },
+      "displacement": [
+        0,
+        0,
+        0
+      ],
+      "floorProbePresent": true,
+      "groundPresent": true,
+      "sequence": 3300,
+      "stepAccepted": false,
+      "stepAttempted": false,
+      "stepRise": 0
+    },
+    "velocity": [
+      0,
+      0,
+      0
+    ]
+  },
+  "rays": {
+    "meaning": "sampled rays only, not body clearance or guaranteed route; headings 0=-Z,90=+X",
+    "samples": [
+      {
+        "direction": [
+          0,
+          0,
+          -1
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-0-ankle",
+        "normal": null,
+        "origin": [
+          -7,
+          0.1,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          0,
+          0,
+          -1
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-0-above-step",
+        "normal": null,
+        "origin": [
+          -7,
+          0.35000002,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          0,
+          0,
+          -1
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-0-head",
+        "normal": null,
+        "origin": [
+          -7,
+          1.6999999,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          0,
+          -1,
+          0
+        ],
+        "distance": 0.4000012716682906,
+        "entity": "0",
+        "hit": true,
+        "instance": "10000",
+        "kind": "StaticMesh",
+        "label": "heading-0-floor",
+        "normal": [
+          0,
+          1,
+          3.6444224e-8
+        ],
+        "origin": [
+          -7,
+          0.4,
+          1
+        ],
+        "point": [
+          -7,
+          -0.0000012657079,
+          1
+        ],
+        "range": 2.0999999046325684
+      },
+      {
+        "direction": [
+          0.70710677,
+          0,
+          -0.70710677
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-45-ankle",
+        "normal": null,
+        "origin": [
+          -7,
+          0.1,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          0.70710677,
+          0,
+          -0.70710677
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-45-above-step",
+        "normal": null,
+        "origin": [
+          -7,
+          0.35000002,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          0.70710677,
+          0,
+          -0.70710677
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-45-head",
+        "normal": null,
+        "origin": [
+          -7,
+          1.6999999,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          0,
+          -1,
+          0
+        ],
+        "distance": 0.40000126612467296,
+        "entity": "0",
+        "hit": true,
+        "instance": "10000",
+        "kind": "StaticMesh",
+        "label": "heading-45-floor",
+        "normal": [
+          -5.747613e-8,
+          1,
+          5.5479898e-8
+        ],
+        "origin": [
+          -5.5857863,
+          0.4,
+          1.5857865
+        ],
+        "point": [
+          -5.5857863,
+          -0.0000012601643,
+          1.5857865
+        ],
+        "range": 2.0999999046325684
+      },
+      {
+        "direction": [
+          1,
+          0,
+          4.371139e-8
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-90-ankle",
+        "normal": null,
+        "origin": [
+          -7,
+          0.1,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          1,
+          0,
+          4.371139e-8
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-90-above-step",
+        "normal": null,
+        "origin": [
+          -7,
+          0.35000002,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          1,
+          0,
+          4.371139e-8
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-90-head",
+        "normal": null,
+        "origin": [
+          -7,
+          1.6999999,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          0,
+          -1,
+          0
+        ],
+        "distance": 0.4000013058002878,
+        "entity": "0",
+        "hit": true,
+        "instance": "10000",
+        "kind": "StaticMesh",
+        "label": "heading-90-floor",
+        "normal": [
+          -7.3359566e-8,
+          1,
+          0
+        ],
+        "origin": [
+          -5,
+          0.4,
+          3
+        ],
+        "point": [
+          -5,
+          -0.0000012998398,
+          3
+        ],
+        "range": 2.0999999046325684
+      },
+      {
+        "direction": [
+          0.70710677,
+          0,
+          0.70710677
+        ],
+        "distance": 1.4142162597908143,
+        "entity": "0",
+        "hit": true,
+        "instance": "10003",
+        "kind": "StaticMesh",
+        "label": "heading-135-ankle",
+        "normal": [
+          0.0000057579973,
+          0,
+          -1
+        ],
+        "origin": [
+          -7,
+          0.1,
+          3
+        ],
+        "point": [
+          -5.999998,
+          0.1,
+          4.000002
+        ],
+        "range": 2
+      },
+      {
+        "direction": [
+          0.70710677,
+          0,
+          0.70710677
+        ],
+        "distance": 1.4142162597908143,
+        "entity": "0",
+        "hit": true,
+        "instance": "10003",
+        "kind": "StaticMesh",
+        "label": "heading-135-above-step",
+        "normal": [
+          0.0000057579973,
+          0,
+          -1
+        ],
+        "origin": [
+          -7,
+          0.35000002,
+          3
+        ],
+        "point": [
+          -5.999998,
+          0.35000002,
+          4.000002
+        ],
+        "range": 2
+      },
+      {
+        "direction": [
+          0.70710677,
+          0,
+          0.70710677
+        ],
+        "distance": 1.4142162597908148,
+        "entity": "0",
+        "hit": true,
+        "instance": "10003",
+        "kind": "StaticMesh",
+        "label": "heading-135-head",
+        "normal": [
+          0.0000057579973,
+          0,
+          -1
+        ],
+        "origin": [
+          -7,
+          1.6999999,
+          3
+        ],
+        "point": [
+          -5.999998,
+          1.6999999,
+          4.000002
+        ],
+        "range": 2
+      },
+      {
+        "direction": [
+          0,
+          -1,
+          0
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-135-floor",
+        "normal": null,
+        "origin": [
+          -5.5857863,
+          0.4,
+          4.4142137
+        ],
+        "point": null,
+        "range": 2.0999999046325684
+      },
+      {
+        "direction": [
+          -8.742278e-8,
+          0,
+          1
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-180-ankle",
+        "normal": null,
+        "origin": [
+          -7,
+          0.1,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          -8.742278e-8,
+          0,
+          1
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-180-above-step",
+        "normal": null,
+        "origin": [
+          -7,
+          0.35000002,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          -8.742278e-8,
+          0,
+          1
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-180-head",
+        "normal": null,
+        "origin": [
+          -7,
+          1.6999999,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          0,
+          -1,
+          0
+        ],
+        "distance": 0.400001220650281,
+        "entity": "0",
+        "hit": true,
+        "instance": "10000",
+        "kind": "StaticMesh",
+        "label": "heading-180-floor",
+        "normal": [
+          0,
+          1,
+          -5.6492222e-8
+        ],
+        "origin": [
+          -7,
+          0.4,
+          5
+        ],
+        "point": [
+          -7,
+          -0.0000012146899,
+          5
+        ],
+        "range": 2.0999999046325684
+      },
+      {
+        "direction": [
+          -0.7071069,
+          0,
+          0.70710665
+        ],
+        "distance": 1.414216498190498,
+        "entity": "0",
+        "hit": true,
+        "instance": "10003",
+        "kind": "StaticMesh",
+        "label": "heading-225-ankle",
+        "normal": [
+          0,
+          0,
+          -1
+        ],
+        "origin": [
+          -7,
+          0.1,
+          3
+        ],
+        "point": [
+          -8.000002,
+          0.1,
+          4.000002
+        ],
+        "range": 2
+      },
+      {
+        "direction": [
+          -0.7071069,
+          0,
+          0.70710665
+        ],
+        "distance": 1.4142161392048602,
+        "entity": "0",
+        "hit": true,
+        "instance": "10003",
+        "kind": "StaticMesh",
+        "label": "heading-225-above-step",
+        "normal": [
+          -0.0000030826045,
+          -0.0000032492098,
+          -1
+        ],
+        "origin": [
+          -7,
+          0.35000002,
+          3
+        ],
+        "point": [
+          -8.000002,
+          0.35000002,
+          4.0000014
+        ],
+        "range": 2
+      },
+      {
+        "direction": [
+          -0.7071069,
+          0,
+          0.70710665
+        ],
+        "distance": 1.4142151494928823,
+        "entity": "0",
+        "hit": true,
+        "instance": "10003",
+        "kind": "StaticMesh",
+        "label": "heading-225-head",
+        "normal": [
+          -0.0000036991141,
+          0,
+          -1
+        ],
+        "origin": [
+          -7,
+          1.6999999,
+          3
+        ],
+        "point": [
+          -8.000001,
+          1.6999999,
+          4.000001
+        ],
+        "range": 2
+      },
+      {
+        "direction": [
+          0,
+          -1,
+          0
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-225-floor",
+        "normal": null,
+        "origin": [
+          -8.414214,
+          0.4,
+          4.414213
+        ],
+        "point": null,
+        "range": 2.0999999046325684
+      },
+      {
+        "direction": [
+          -1,
+          0,
+          -1.1924881e-8
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-270-ankle",
+        "normal": null,
+        "origin": [
+          -7,
+          0.1,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          -1,
+          0,
+          -1.1924881e-8
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-270-above-step",
+        "normal": null,
+        "origin": [
+          -7,
+          0.35000002,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          -1,
+          0,
+          -1.1924881e-8
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-270-head",
+        "normal": null,
+        "origin": [
+          -7,
+          1.6999999,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          0,
+          -1,
+          0
+        ],
+        "distance": 0.4000013331067445,
+        "entity": "0",
+        "hit": true,
+        "instance": "10000",
+        "kind": "StaticMesh",
+        "label": "heading-270-floor",
+        "normal": [
+          6.951736e-8,
+          1,
+          1.3420584e-8
+        ],
+        "origin": [
+          -9,
+          0.4,
+          3
+        ],
+        "point": [
+          -9,
+          -0.0000013271463,
+          3
+        ],
+        "range": 2.0999999046325684
+      },
+      {
+        "direction": [
+          -0.70710653,
+          0,
+          -0.707107
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-315-ankle",
+        "normal": null,
+        "origin": [
+          -7,
+          0.1,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          -0.70710653,
+          0,
+          -0.707107
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-315-above-step",
+        "normal": null,
+        "origin": [
+          -7,
+          0.35000002,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          -0.70710653,
+          0,
+          -0.707107
+        ],
+        "distance": null,
+        "entity": "0",
+        "hit": false,
+        "instance": "0",
+        "kind": "None",
+        "label": "heading-315-head",
+        "normal": null,
+        "origin": [
+          -7,
+          1.6999999,
+          3
+        ],
+        "point": null,
+        "range": 2
+      },
+      {
+        "direction": [
+          0,
+          -1,
+          0
+        ],
+        "distance": 0.40000129301680704,
+        "entity": "0",
+        "hit": true,
+        "instance": "10000",
+        "kind": "StaticMesh",
+        "label": "heading-315-floor",
+        "normal": [
+          0,
+          1,
+          3.6444224e-8
+        ],
+        "origin": [
+          -8.414213,
+          0.4,
+          1.585786
+        ],
+        "point": [
+          -8.414213,
+          -0.0000012870563,
+          1.585786
+        ],
+        "range": 2.0999999046325684
+      }
+    ]
+  },
+  "slot_id": "slot-1",
+  "stamp": 3299
+}

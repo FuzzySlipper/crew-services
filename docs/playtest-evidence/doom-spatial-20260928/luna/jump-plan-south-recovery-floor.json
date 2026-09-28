@@ -1,0 +1,10 @@
+{
+  "action": null,
+  "available": false,
+  "meaning": "bounded ordinary jump toward target feet; estimate excludes collision and acceleration; inspect actual landing, never teleport or assume arrival",
+  "moveMs": 0,
+  "reason": "target-beyond-bounded-jump-window",
+  "settleMs": 0,
+  "slot_id": "slot-1",
+  "yawDeltaDegrees": 0
+}

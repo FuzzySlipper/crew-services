@@ -1,0 +1,6 @@
+{
+  "artifact_directory": "/home/agent/.local/state/crew-playtest-local/browser/583aede9-f688-41af-85f2-1819cdd0eb91",
+  "browser_closed": true,
+  "released": true,
+  "slot_id": "slot-1"
+}

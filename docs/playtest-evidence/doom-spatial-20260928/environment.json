@@ -1,0 +1,13 @@
+{
+  "sdk": "0.1.0-dev.playtest-20260928b",
+  "runtime": "playtest-runtime-20260928h",
+  "harnessCommit": "dd9b0ec83a3ed92eef000ad1e2397315c9acad64",
+  "engineBase": "066a3788a9013edd89b00859bf4222aeca936510",
+  "doomBase": "8676d718f5a64acbc94e5cb4636c5b99b6d808c0",
+  "model": "gpt-5.6-luna",
+  "reasoning": "max",
+  "profile": "doom-followup",
+  "url": "http://127.0.0.1:4494/",
+  "engineCommit": "1ae718f10bb0e53335512f2f2ffffa1182318dbb",
+  "doomCommit": "0de7220a8a339f42b813654b1b276cda32f09864"
+}

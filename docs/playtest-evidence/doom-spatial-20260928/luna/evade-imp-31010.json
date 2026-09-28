@@ -1,0 +1,547 @@
+{
+  "accepted": true,
+  "advancedMs": 700,
+  "capture": "/home/agent/.local/state/crew-playtest-local/browser/583aede9-f688-41af-85f2-1819cdd0eb91/action-3ea34fe1-0fce-4912-8f20-b13d3d6493c1.png",
+  "delivery": "submitted",
+  "delta": {
+    "ammo": {
+      "bullets": 0,
+      "shells": 0
+    },
+    "distanceMoved": 4.246746095571155,
+    "health": -5,
+    "kills": 0
+  },
+  "focus": {
+    "focused": true,
+    "pointerLocked": false
+  },
+  "handback": null,
+  "inputPath": "physical-keyboard",
+  "inputReleased": true,
+  "key": "KeyD",
+  "observation": {
+    "axes": {
+      "floorY": -1.4799995,
+      "forward": {
+        "x": 0.98180276,
+        "y": 0.15471038,
+        "z": 0.110127166
+      },
+      "right": {
+        "x": -0.11146927,
+        "y": 0,
+        "z": 0.99376786
+      },
+      "up": "Y",
+      "yaw": "positive right"
+    },
+    "controls": {
+      "aimPitchErrorDegrees": "positive means aim up",
+      "bearingDegrees": "positive right",
+      "fire": "ControlLeft",
+      "gamepad": {
+        "aimAssist": "right-stick, RT, or X selects mode; neutral stick retains focus without tracking",
+        "fire": "RT",
+        "look": "right-stick",
+        "use": "X"
+      },
+      "move": "WASD",
+      "pitch": {
+        "degreesPerSecond": 120,
+        "down": "K",
+        "positive": "up",
+        "up": "I"
+      },
+      "precisionLook": {
+        "degreesPerSecond": 24,
+        "key": "ShiftLeft",
+        "multiplier": 0.2
+      },
+      "useKey": "E",
+      "yaw": {
+        "degreesPerSecond": 120,
+        "left": "J",
+        "positive": "right",
+        "right": "L"
+      }
+    },
+    "doors": [
+      {
+        "id": 20000,
+        "label": "north wing door",
+        "position": {
+          "x": 8.25,
+          "y": 1.125,
+          "z": -32
+        },
+        "raised": 2.5,
+        "state": "open"
+      },
+      {
+        "id": 20001,
+        "label": "southern study door",
+        "position": {
+          "x": 54,
+          "y": 0.375,
+          "z": 15.75
+        },
+        "raised": 0,
+        "state": "closed"
+      },
+      {
+        "id": 20002,
+        "label": "terminal study door",
+        "position": {
+          "x": 54,
+          "y": 0.375,
+          "z": 35
+        },
+        "raised": 0,
+        "state": "closed"
+      },
+      {
+        "id": 20003,
+        "label": "lower passage east door",
+        "position": {
+          "x": 51.25,
+          "y": 0.375,
+          "z": 10
+        },
+        "raised": 0,
+        "state": "closed"
+      }
+    ],
+    "enemies": [
+      {
+        "aimPitchErrorDegrees": -8.840665,
+        "alive": false,
+        "awake": true,
+        "bearingDegrees": -27.564062,
+        "distance": 4.8285704,
+        "health": 0,
+        "hostile": false,
+        "id": 31005,
+        "kind": "imp",
+        "lineOfSight": true,
+        "position": {
+          "x": 54.61657,
+          "y": -0.7299991,
+          "z": -17.017876
+        }
+      },
+      {
+        "aimPitchErrorDegrees": -8.868325,
+        "alive": false,
+        "awake": true,
+        "bearingDegrees": 34.30063,
+        "distance": 9.045565,
+        "health": 0,
+        "hostile": false,
+        "id": 31006,
+        "kind": "imp",
+        "lineOfSight": true,
+        "position": {
+          "x": 56.97137,
+          "y": -0.7299991,
+          "z": -9.375897
+        }
+      },
+      {
+        "aimPitchErrorDegrees": 2.2461,
+        "alive": true,
+        "awake": true,
+        "bearingDegrees": -11.553183,
+        "distance": 20.717861,
+        "health": 60,
+        "hostile": true,
+        "id": 31010,
+        "kind": "imp",
+        "lineOfSight": true,
+        "position": {
+          "x": 70.3586,
+          "y": 3.27,
+          "z": -17.100319
+        }
+      },
+      {
+        "aimPitchErrorDegrees": -5.620758,
+        "alive": false,
+        "awake": true,
+        "bearingDegrees": -149.30869,
+        "distance": 26.310097,
+        "health": 0,
+        "hostile": false,
+        "id": 31004,
+        "kind": "trooper",
+        "lineOfSight": false,
+        "position": {
+          "x": 29.16114,
+          "y": 0.769999,
+          "z": -31.11588
+        }
+      },
+      {
+        "aimPitchErrorDegrees": -8.931196,
+        "alive": true,
+        "awake": false,
+        "bearingDegrees": 75.49057,
+        "distance": 27.550062,
+        "health": 30,
+        "hostile": true,
+        "id": 31007,
+        "kind": "trooper",
+        "lineOfSight": true,
+        "position": {
+          "x": 54,
+          "y": -0.75,
+          "z": 12
+        }
+      },
+      {
+        "aimPitchErrorDegrees": -11.005353,
+        "alive": true,
+        "awake": false,
+        "bearingDegrees": 107.33593,
+        "distance": 27.628757,
+        "health": 60,
+        "hostile": true,
+        "id": 31012,
+        "kind": "imp",
+        "lineOfSight": false,
+        "position": {
+          "x": 39,
+          "y": -1.75,
+          "z": 10
+        }
+      },
+      {
+        "aimPitchErrorDegrees": -7.628829,
+        "alive": false,
+        "awake": true,
+        "bearingDegrees": -156.01886,
+        "distance": 33.131535,
+        "health": 0,
+        "hostile": false,
+        "id": 31003,
+        "kind": "trooper",
+        "lineOfSight": false,
+        "position": {
+          "x": 21.538807,
+          "y": 0,
+          "z": -32.026722
+        }
+      },
+      {
+        "aimPitchErrorDegrees": -10.530264,
+        "alive": true,
+        "awake": false,
+        "bearingDegrees": 126.14436,
+        "distance": 35.67707,
+        "health": 30,
+        "hostile": true,
+        "id": 31011,
+        "kind": "trooper",
+        "lineOfSight": false,
+        "position": {
+          "x": 26,
+          "y": -1.75,
+          "z": 11
+        }
+      },
+      {
+        "aimPitchErrorDegrees": -8.920244,
+        "alive": true,
+        "awake": false,
+        "bearingDegrees": 78.34752,
+        "distance": 42.452835,
+        "health": 60,
+        "hostile": true,
+        "id": 31008,
+        "kind": "imp",
+        "lineOfSight": false,
+        "position": {
+          "x": 54,
+          "y": -0.75,
+          "z": 27
+        }
+      },
+      {
+        "aimPitchErrorDegrees": -8.076449,
+        "alive": false,
+        "awake": true,
+        "bearingDegrees": -176.62859,
+        "distance": 51.206505,
+        "health": 0,
+        "hostile": false,
+        "id": 31001,
+        "kind": "trooper",
+        "lineOfSight": false,
+        "position": {
+          "x": -0.3447357,
+          "y": 0.0010003448,
+          "z": -23.964342
+        }
+      },
+      {
+        "aimPitchErrorDegrees": -8.915793,
+        "alive": true,
+        "awake": false,
+        "bearingDegrees": 79.50432,
+        "distance": 54.41354,
+        "health": 30,
+        "hostile": true,
+        "id": 31009,
+        "kind": "trooper",
+        "lineOfSight": false,
+        "position": {
+          "x": 54,
+          "y": -0.75,
+          "z": 39
+        }
+      }
+    ],
+    "interaction": {
+      "reason": "OutsideQuery",
+      "selected": null,
+      "stamp": "generation:1;step:5229;gameplay:58",
+      "targetedUseEnabled": true
+    },
+    "pickups": [
+      {
+        "collected": true,
+        "distance": 58.638927,
+        "id": 30001,
+        "kind": "Bullets",
+        "position": {
+          "x": -7,
+          "y": 0,
+          "z": -2
+        }
+      },
+      {
+        "collected": false,
+        "distance": 57.457375,
+        "id": 30002,
+        "kind": "Armor",
+        "position": {
+          "x": -7,
+          "y": -0.5,
+          "z": -9
+        }
+      },
+      {
+        "collected": true,
+        "distance": 51.051952,
+        "id": 30006,
+        "kind": "Bullets",
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": -25
+        }
+      },
+      {
+        "collected": true,
+        "distance": 37.99763,
+        "id": 30007,
+        "kind": "Shotgun",
+        "position": {
+          "x": 16,
+          "y": 0,
+          "z": -32
+        }
+      },
+      {
+        "collected": true,
+        "distance": 33.97734,
+        "id": 30008,
+        "kind": "Medikit",
+        "position": {
+          "x": 20,
+          "y": 0,
+          "z": -31
+        }
+      },
+      {
+        "collected": true,
+        "distance": 25.433084,
+        "id": 30009,
+        "kind": "Shells",
+        "position": {
+          "x": 31,
+          "y": 0.75,
+          "z": -32
+        }
+      },
+      {
+        "collected": true,
+        "distance": 4.729851,
+        "id": 30010,
+        "kind": "Bullets",
+        "position": {
+          "x": 50,
+          "y": -0.75,
+          "z": -20
+        }
+      },
+      {
+        "collected": false,
+        "distance": 21.627293,
+        "id": 30011,
+        "kind": "Stimpack",
+        "position": {
+          "x": 54,
+          "y": -0.75,
+          "z": 6
+        }
+      },
+      {
+        "collected": false,
+        "distance": 29.531897,
+        "id": 30012,
+        "kind": "Shells",
+        "position": {
+          "x": 54,
+          "y": -0.75,
+          "z": 14
+        }
+      },
+      {
+        "collected": false,
+        "distance": 39.46675,
+        "id": 30013,
+        "kind": "Medikit",
+        "position": {
+          "x": 54,
+          "y": -0.75,
+          "z": 24
+        }
+      },
+      {
+        "collected": false,
+        "distance": 16.916183,
+        "id": 30014,
+        "kind": "Armor",
+        "position": {
+          "x": 66.5,
+          "y": 3.25,
+          "z": -17
+        }
+      },
+      {
+        "collected": false,
+        "distance": 33.53423,
+        "id": 30015,
+        "kind": "Shells",
+        "position": {
+          "x": 26,
+          "y": -1.75,
+          "z": 8
+        }
+      },
+      {
+        "collected": false,
+        "distance": 28.051992,
+        "id": 30016,
+        "kind": "Bullets",
+        "position": {
+          "x": 38,
+          "y": -1.75,
+          "z": 10
+        }
+      }
+    ],
+    "player": {
+      "aimAssist": null,
+      "aimHit": {
+        "distance": 16.18076695957323,
+        "entity": 0,
+        "kind": "StaticMesh",
+        "present": true,
+        "range": 70
+      },
+      "ammo": {
+        "bullets": 108,
+        "shells": 26
+      },
+      "attackUnavailableReason": "weapon-not-ready",
+      "dead": false,
+      "health": 87,
+      "kills": 6,
+      "lastDamage": {
+        "armorLost": 0,
+        "healthLost": 5,
+        "message": "Toxic waste! Find the raised walkway.",
+        "simulationSeconds": 86.98333786986768,
+        "source": "hazard"
+      },
+      "movement": {
+        "body": {
+          "height": 1.8,
+          "maximumStepHeight": 0.3,
+          "radius": 0.25
+        },
+        "grounded": true,
+        "lastStep": {
+          "blockFlags": "None",
+          "contact": {
+            "entity": "0",
+            "kind": "None",
+            "normal": [
+              0,
+              0,
+              0
+            ],
+            "present": false,
+            "source": "None"
+          },
+          "displacement": [
+            -0.011146545,
+            0,
+            0.09937668
+          ],
+          "floorProbePresent": true,
+          "groundPresent": true,
+          "sequence": 5230,
+          "stepAccepted": false,
+          "stepAttempted": false,
+          "stepRise": 0
+        },
+        "velocity": [
+          -0.66881573,
+          0,
+          5.9626074
+        ]
+      },
+      "pitchDegrees": 8.899999,
+      "position": {
+        "x": 50.113686,
+        "y": -0.5799995,
+        "z": -15.274572
+      },
+      "weapon": "Shotgun",
+      "weaponCooldownMs": 257.1428049887885,
+      "weaponReady": false,
+      "yawDegrees": 96.40002
+    },
+    "readiness": "playing",
+    "stamp": {
+      "generation": 1,
+      "step": 5229
+    }
+  },
+  "plan": {
+    "available": true,
+    "durationMs": 200,
+    "equipment": null,
+    "heldKeys": null,
+    "hold": true,
+    "id": "right",
+    "key": "KeyD",
+    "reason": null
+  },
+  "productAcceptance": "unavailable; inspect observed effect",
+  "requestedMs": 700,
+  "slot_id": "slot-1"
+}

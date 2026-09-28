@@ -1,0 +1,40 @@
+TAP version 13
+# Subtest: tap advances once pressed, releases before recovery, resolves duration every invocation
+ok 1 - tap advances once pressed, releases before recovery, resolves duration every invocation
+  ---
+  duration_ms: 1.781278
+  type: 'test'
+  ...
+# Subtest: held movement releases after all advancement
+ok 2 - held movement releases after all advancement
+  ---
+  duration_ms: 0.297324
+  type: 'test'
+  ...
+# Subtest: uncertain advance releases input and is never replayed
+ok 3 - uncertain advance releases input and is never replayed
+  ---
+  duration_ms: 0.394396
+  type: 'test'
+  ...
+# Subtest: jump pulses jump key, holds movement, releases before settling and reports observed endpoint
+ok 4 - jump pulses jump key, holds movement, releases before settling and reports observed endpoint
+  ---
+  duration_ms: 0.613266
+  type: 'test'
+  ...
+# Subtest: composed action attempts every release even when one key release fails
+ok 5 - composed action attempts every release even when one key release fails
+  ---
+  duration_ms: 1.306537
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 114.974868

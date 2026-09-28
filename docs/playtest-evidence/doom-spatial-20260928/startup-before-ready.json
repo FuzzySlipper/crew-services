@@ -1,0 +1,61 @@
+{
+  "start": {
+    "profile": {
+      "interaction_queries": true,
+      "backend": "browser",
+      "environment": "service",
+      "id": "rusty-doom",
+      "description": "Doom E1M1 with Engine forward-only inspection and ordinary assist actions. Start the product with LOADING_BAY_LIVE_DEBUG=1.",
+      "url": "http://127.0.0.1:4394/",
+      "controls": {
+        "assist": "Discover actions, telemetry, time and observer tools with playtest assist SESSION.",
+        "keyboard": "WASD movement, ControlLeft attack, E use, 1/2/3 weapon selection; click canvas for raw mouse look."
+      },
+      "reset": "All browser sessions share this native host world and time mode. Browser recovery does not reset gameplay; restart the owned product host for a fresh run. Observer camera/drawing are per browser."
+    },
+    "slot_id": "slot-1",
+    "id": "d59b77a2-d9c7-4cd7-8974-aeddf3c48cd3",
+    "game": "rusty-doom",
+    "phase": "connected",
+    "created_at": "2026-09-28T05:49:16.221160142Z",
+    "launch": {
+      "browser_url": "http://127.0.0.1:4394/",
+      "canvases": [],
+      "capabilities": {
+        "absolute_pointer": true,
+        "browser_inspect": true,
+        "dom_actions": true,
+        "engine_queries": false,
+        "gamepad": true,
+        "keyboard": true,
+        "pointer_lock_readback": true,
+        "relative_mouse": true
+      },
+      "console": [],
+      "cursor": {
+        "x": 0,
+        "y": 0
+      },
+      "dom_assistance": [],
+      "events_path": "/home/agent/.local/state/crew-playtest-local/browser/d59b77a2-d9c7-4cd7-8974-aeddf3c48cd3/events.jsonl",
+      "game_readiness": "unknown; inspect the original screenshot",
+      "page_errors": [],
+      "pointer_lock": false,
+      "renderer": "unknown",
+      "server_http_ready": true,
+      "title": "Loading Bay \u2014 Doom E1M1",
+      "url": "http://127.0.0.1:4394/",
+      "viewport": {
+        "device_pixel_ratio": 1,
+        "height": 720,
+        "width": 1280
+      }
+    }
+  },
+  "stop": {
+    "artifact_directory": "/home/agent/.local/state/crew-playtest-local/browser/d59b77a2-d9c7-4cd7-8974-aeddf3c48cd3",
+    "browser_closed": true,
+    "released": true,
+    "slot_id": "slot-1"
+  }
+}
