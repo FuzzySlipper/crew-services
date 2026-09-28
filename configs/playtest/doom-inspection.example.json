@@ -7,8 +7,9 @@
     "description": "Doom E1M1 with Engine forward-only inspection and ordinary assist actions. Start the product with LOADING_BAY_LIVE_DEBUG=1.",
     "controls": {
       "assist": "Discover actions, telemetry, time and observer tools with playtest assist SESSION.",
-      "keyboard": "WASD movement, ControlLeft attack, E use, 1/2/3 weapon selection; click canvas for raw mouse look."
+      "keyboard": "WASD movement, Space jump, ControlLeft attack, E use, 1/2/3 weapon selection; click canvas for raw mouse look."
     },
-    "reset": "All browser sessions share this native host world and time mode. Browser recovery does not reset gameplay; restart the owned product host for a fresh run. Observer camera/drawing are per browser."
+    "reset": "All browser sessions share this native host world and time mode. Browser recovery does not reset gameplay; restart the owned product host for a fresh run. Observer camera/drawing are per browser.",
+    "interaction_queries": true
   }
 ]

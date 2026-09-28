@@ -89,3 +89,36 @@ func TestInteractionMissingCatalogAndCancelled(t *testing.T) {
 		t.Fatal("ignored cancellation")
 	}
 }
+
+func TestInteractionPrefersCurrentInspectCommand(t *testing.T) {
+	var executed string
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/catalog") {
+			io.WriteString(w, `{"available":true,"commands":[{"name":"interaction.inspect"},{"name":"interaction.query"},{"name":"interaction.use"}]}`)
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		executed = string(raw)
+		io.WriteString(w, `{"focusReason":"OutsideQuery","candidates":[{"yawDeltaDegrees":90,"pitchDeltaDegrees":-30}]}`)
+	}))
+	defer fixture.Close()
+	s, err := New(&fakeBackend{}, nil, []Profile{{ID: "fixture", URL: fixture.URL, InteractionQueries: true}}, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.current = "lease"
+	s.sessions["lease"] = &Session{ID: "lease", Game: "fixture", Phase: "connected"}
+	result, err := s.Interaction(context.Background(), "lease", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executed != "interaction.inspect" {
+		t.Fatalf("executed %q", executed)
+	}
+	if result.(map[string]any)["command"] != executed {
+		t.Fatal("receipt lost selected command")
+	}
+	if _, err = s.Interaction(context.Background(), "lease", json.RawMessage(`{"mode":"cursor","x":0.5,"y":0.5,"aspect":1}`)); err == nil {
+		t.Fatal("unsupported cursor silently substituted")
+	}
+}

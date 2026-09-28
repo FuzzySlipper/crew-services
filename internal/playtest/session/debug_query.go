@@ -73,6 +73,16 @@ func (s *Service) debugQuery(ctx context.Context, id, gameURL, command, kind, so
 	if err = json.Unmarshal(raw, &catalog); err != nil {
 		return nil, fmt.Errorf("invalid debug catalog: %w", err)
 	}
+	// Current Engine exposes reticle observations as inspect. Keep the older
+	// query name as a catalog-selected fallback; never substitute a mutation.
+	if command == "interaction.query" {
+		for _, c := range catalog.Commands {
+			if c.Name == "interaction.inspect" {
+				command = "interaction.inspect"
+				break
+			}
+		}
+	}
 	found := false
 	for _, c := range catalog.Commands {
 		if c.Name == strings.Fields(command)[0] {
@@ -80,7 +90,7 @@ func (s *Service) debugQuery(ctx context.Context, id, gameURL, command, kind, so
 		}
 	}
 	if !catalog.Available || !found {
-		return nil, errors.New("capability_unavailable: requested product debug query")
+		return nil, fmt.Errorf("capability_unavailable: product does not advertise %s; reticle uses interaction.inspect (or legacy interaction.query), cursor requires interaction.cursor", strings.Fields(command)[0])
 	}
 	queryID := newID()
 	receipt := map[string]any{"query_id": queryID, "session_id": id, "command": command, "origin": origin.String(), "requested_at": time.Now().UTC(), "source": source, "frame_correlation": "unavailable"}

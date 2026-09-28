@@ -15,8 +15,8 @@ export async function engineCall(page, request) {
 
 export async function playtest(page, directory, request) {
   const { op = 'discover' } = request
-  if (op === 'act') {
-    const result = await act(page, request)
+  if (op === 'act' || op === 'jump') {
+    const result = op === 'jump' ? await jump(page, request) : await act(page, request)
     if (request.capture) {
       const path = join(directory, `action-${randomUUID()}.png`)
       try { await engineCall(page, { op: 'frame' }); await page.screenshot({ path, type: 'png' }); result.capture = path } catch (error) { result.captureError = String(error) }
@@ -32,8 +32,8 @@ export async function playtest(page, directory, request) {
   return engineCall(page, request)
 }
 
-async function act(page, request, afterAdvance, chunkMs = 2000) {
-  const plan = await engineCall(page, { op: 'action', id: request.id })
+async function act(page, request, afterAdvance, chunkMs = 2000, resolvedPlan) {
+  const plan = resolvedPlan ?? await engineCall(page, { op: 'action', id: request.id })
   if (!plan.available) return { accepted: false, plan, reason: plan.reason }
   const ms = request.ms ?? plan.durationMs
   if (!Number.isFinite(ms) || ms <= 0 || ms > 2000) throw new Error('action duration must be in (0, 2000] ms')
@@ -42,11 +42,15 @@ async function act(page, request, afterAdvance, chunkMs = 2000) {
   // Focus the Engine canvas without synthesizing a gameplay click/shot.
   if (page.locator) await page.locator('canvas').first().focus()
   const key = /^Key[A-Z]$/.test(plan.key) ? plan.key.slice(3).toLowerCase() : /^Digit[0-9]$/.test(plan.key) ? plan.key.slice(5) : plan.key === 'ControlLeft' ? 'Control' : plan.key
+  const heldKeys = plan.heldKeys ?? []
+  if (!Array.isArray(heldKeys) || heldKeys.length > 4 || heldKeys.some(k => typeof k !== 'string')) throw new Error('invalid product held controls')
+  const additional = heldKeys.filter(k => k !== plan.key).map(k => /^Key[A-Z]$/.test(k) ? k.slice(3).toLowerCase() : k)
   const before = await engineCall(page, { op: 'observe' })
   let released = false
   let advancedMs = 0
   let failure, releaseError
   try {
+    for (const held of additional) await page.keyboard.down(held)
     await page.keyboard.down(key)
     await engineCall(page, { op: 'flush' })
     if (time.mode === 'realtime') {
@@ -67,11 +71,13 @@ async function act(page, request, afterAdvance, chunkMs = 2000) {
     }
   } catch (error) { failure = String(error) }
   finally {
-    try {
-      if (!released) await page.keyboard.up(key)
-      await engineCall(page, { op: 'flush' })
-      released = true
-    } catch (error) { released = false; releaseError = String(error) }
+    const releaseErrors = []
+    for (const control of [...additional, ...(!released ? [key] : [])]) {
+      try { await page.keyboard.up(control) } catch (error) { releaseErrors.push(String(error)) }
+    }
+    try { await engineCall(page, { op: 'flush' }) } catch (error) { releaseErrors.push(String(error)) }
+    released = releaseErrors.length === 0
+    if (!released) releaseError = releaseErrors.join('; ')
   }
   let observation = {}, observationError
   try { observation = await engineCall(page, { op: 'observe' }) } catch (error) { observationError = String(error) }
@@ -81,6 +87,29 @@ async function act(page, request, afterAdvance, chunkMs = 2000) {
   try { focus = await engineCall(page, { op: 'focus' }) } catch { focus = { available: false } }
   return { accepted: !failure && !releaseError, error: failure, releaseError, observationError, delivery: failure ? 'uncertain; reobserve without replay' : 'submitted', productAcceptance: 'unavailable; inspect observed effect', delta, focus, inputPath: 'physical-keyboard', key: plan.key, plan, requestedMs: ms, advancedMs,
     inputReleased: released, observation, handback: observation.player?.dead ? 'player-dead' : plan.hold && delta.distanceMoved === 0 ? 'no-observed-movement; inspect collision or input focus' : null }
+}
+
+async function jump(page, request) {
+  const time = await engineCall(page, { op: 'time' })
+  if (time.mode === 'realtime') throw new Error('jump helper requires manual or action-driven time')
+  const before = await engineCall(page, { op: 'observe' })
+  const query = { op: 'jump-plan', x: request.x, y: request.y, z: request.z }
+  let plan = await engineCall(page, query)
+  if (!plan.available) return { accepted: false, plan, reason: plan.reason }
+  await engineCall(page, { op: 'look', yaw: plan.yawDeltaDegrees })
+  plan = await engineCall(page, query) // resolve against the current product state
+  if (!plan.available) return { accepted: false, plan, reason: plan.reason }
+  const result = await act(page, { id: plan.action.id }, undefined, 100, plan.action)
+  if (result.accepted && plan.settleMs > 0) {
+    try { const settled = await engineCall(page, { op: 'advance', ms: plan.settleMs }); result.advancedMs += settled.advancedMs }
+    catch (error) { result.accepted = false; result.error = String(error); result.delivery = 'uncertain; reobserve without replay' }
+  }
+  try { result.observation = await engineCall(page, { op: 'observe' }) } catch (error) { result.observationError = String(error) }
+  result.delta = differences(before, result.observation)
+  const player = result.observation?.player, feetY = result.observation?.axes?.floorY
+  return { ...result, jumpPlan: plan, targetFeet: [request.x, request.y, request.z],
+    distanceToTargetFeet: player?.position && Number.isFinite(feetY) ? Math.hypot(player.position.x-request.x, feetY-request.y, player.position.z-request.z) : null,
+    grounded: player?.movement?.grounded ?? null, outcome: 'inspect actual pose; estimated input window does not guarantee landing' }
 }
 
 async function survey(page, root, request) {

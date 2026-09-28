@@ -48,6 +48,41 @@ and `inputReleased`. On uncertain delivery, reobserve; do not replay automatical
 Failures preserve confirmed advancement and release status. Session cancellation
 closes its browser; it never repeats uncertain actions.
 
+### Triggered spatial inspection and jump guidance
+
+Products can expose Engine `spatial.grid`, `spatial.probe` and
+`playtest.jump-plan` through the ordinary assist surface. `discover.operations`
+lists callable assist names; `nativeCommands` lists the separate debug catalog.
+
+```sh
+playtest interaction SESSION
+playtest assist SESSION --json '{"op":"interaction"}'
+playtest assist SESSION --json '{"op":"grid","radius":4,"verticalRadius":4,"cellSize":0.25}'
+playtest assist SESSION --json '{"op":"probe","distance":2}'
+playtest assist SESSION --json '{"op":"jump-plan","x":2,"y":0,"z":-3}'
+playtest assist SESSION --json '{"op":"jump","x":2,"y":0,"z":-3}'
+```
+
+Inspection does not advance time. The grid is explicitly requested, with one row
+string per Z row in each Y slice, characters increasing along X. It includes its
+world origin and cell size. `#` means static collision, `D` supplied dynamic
+collision, `B` both and `.` no collision in those sources. Outside the queried
+volume is unknown; empty cells do not establish walkability. Dimensions are
+bounded to 31 cells per axis and 8192 total. Products select the supplied dynamic
+colliders; consult their documentation for coverage.
+
+Probes sample horizontal rays at ankle, step and head heights plus nearby floor
+rays. They help explain bumps, without proving capsule clearance. Detailed
+interaction facts include signed yaw/pitch adjustments to each candidate point,
+as well as reach, occlusion and focus refusal. Looking toward a point does not
+bypass those constraints.
+
+`jump-plan` queries current product controller tuning and grounded state.
+`jump` requires held time, turns toward target feet, pulses jump, holds forward
+for the estimated window, releases controls and advances a short settling window.
+It returns actual pose, grounded state and distance from the requested target.
+It can collide or miss; inspect the result before choosing another action.
+
 ### Drawing and observer camera
 
 `drawing` selects `continuous` (full-rate drawing) or `on-demand`. This is independent
