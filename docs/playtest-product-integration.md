@@ -103,7 +103,10 @@ the product. Doom's current capsule/jump helpers are not a universal controller.
 3. Discover available operations and capture the ready game. Switch to
    action-driven time, look around, then execute one short ordinary movement.
 4. Confirm actual displacement; query a live equipment action and perform it.
-   Open/interact with one object and inspect the real outcome.
+   Open/interact with one object and inspect the real outcome. An advancing Engine
+   counter alone does not establish that the product consumed the update.
+   Raw DOM/settings input needs an explicit short advance while time is held;
+   `act` pairs advancement with its ordinary input automatically.
 5. If spatial helpers are enabled, inspect a real bump, compare time before/after
    reads, and try one ordinary recovery. A successful query alone is not a
    successful traversal. Document missing collider coverage or query ambiguity.
@@ -128,6 +131,11 @@ These paths are relative to sibling repository roots:
 - `rusty-doom/csharp/LoadingBay.Game/LoadingBayNavigationGuidance.cs`: product goals
   and route hints using existing Engine mechanisms.
 - `rusty-doom/docs/playtest-inspection.md`: coverage and development setup.
+- `rusty-dagger/src/WorldRpg.Host/WorldRpgProduct.cs`: registration that follows
+  session replacement on new game/load.
+- `rusty-dagger/src/WorldRpg.Rulesets.Daggerfall/DaggerfallSession.Playtest.cs`:
+  3D target/aim facts, current bindings and equipment timing, and explicit limits.
+- `rusty-dagger/docs/playtesting.md`: held-time UI input and Dagger coverage.
 
 Read the current files when implementing; use their ownership pattern and public
 API, rather than copying Doom's game rules or dependency snapshot.
