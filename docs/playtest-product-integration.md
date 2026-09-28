@@ -22,16 +22,18 @@ or alternate collision/pathfinding implementation.
 
 ## Start with observation, actions and look
 
-Register `Rusty.Engine.Debugging.PlaytestDebugModule` through the product's existing
-`RegisterDebugCommands(IDebugCommandModuleRegistrar registrar)` hook. This schematic
-uses callbacks implemented by the game's current session:
+Have the product implement `IDebugCommandModuleSource`, then register
+`Rusty.Engine.Debugging.PlaytestDebugModule` through its
+`RegisterDebugCommands(IDebugCommandModuleRegistrar registrar)` hook. The method
+alone does not opt the product into registration. This schematic resolves the
+current session on each command so new game/load cannot leave stale delegates:
 
 ```csharp
 registrar.Register(new PlaytestDebugModule(
-    session.ReadPlaytestObservation,
-    session.InspectAction,
+    () => CurrentSession.ReadPlaytestObservation(),
+    id => CurrentSession.InspectAction(id),
     new[] { "forward", "back", "left", "right", "use", "attack" },
-    session.InspectLook));
+    (yaw, pitch) => CurrentSession.InspectLook(yaw, pitch)));
 ```
 
 Callback contracts:
@@ -41,7 +43,7 @@ Callback contracts:
 - Look: `Func<double, double, DebugCommandResult>`, relative yaw/pitch degrees
   through the game's existing look rules, without ticking gameplay.
 
-`PlaytestAction` carries an ID, ordinary physical key code, duration in ms,
+`PlaytestAction` carries an ID, ordinary physical key code or `Primary`/`Secondary`/`Auxiliary` pointer button, duration in ms,
 held-versus-tap behavior, availability/reason, and optional equipment/held keys.
 Query current equipment and animation/recovery timing each time. Report cooldown,
 ammo, grounded/dead state or other relevant refusal through existing game rules.
