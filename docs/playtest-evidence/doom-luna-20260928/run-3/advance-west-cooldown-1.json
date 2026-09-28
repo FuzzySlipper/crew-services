@@ -1,0 +1,8 @@
+{
+  "advancedMs": 450,
+  "fixedStepHz": 60,
+  "mode": "action-driven",
+  "simulationStep": "689",
+  "slot_id": "slot-3",
+  "worldHeld": true
+}

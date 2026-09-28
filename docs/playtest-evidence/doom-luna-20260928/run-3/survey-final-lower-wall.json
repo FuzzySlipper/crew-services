@@ -1,0 +1,119 @@
+{
+  "contact": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-3d8a7970-2538-4f5f-89f4-a647de1ea93c/contact.png",
+  "directory": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-3d8a7970-2538-4f5f-89f4-a647de1ea93c",
+  "frames": [
+    {
+      "camera": {
+        "pitchDegrees": -0.06000100405327367,
+        "position": [
+          50.89583969116211,
+          0.140000581741333,
+          13.524657249450684
+        ],
+        "yawDegrees": 7.700013760813875
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-3d8a7970-2538-4f5f-89f4-a647de1ea93c/0.png",
+      "relativeYawDegrees": 0
+    },
+    {
+      "camera": {
+        "pitchDegrees": -0.06000100405327367,
+        "position": [
+          50.89583969116211,
+          0.140000581741333,
+          13.524657249450684
+        ],
+        "yawDegrees": 52.700013760813874
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-3d8a7970-2538-4f5f-89f4-a647de1ea93c/1.png",
+      "relativeYawDegrees": 45
+    },
+    {
+      "camera": {
+        "pitchDegrees": -0.06000100405327367,
+        "position": [
+          50.89583969116211,
+          0.140000581741333,
+          13.524657249450684
+        ],
+        "yawDegrees": 97.70001376081387
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-3d8a7970-2538-4f5f-89f4-a647de1ea93c/2.png",
+      "relativeYawDegrees": 90
+    },
+    {
+      "camera": {
+        "pitchDegrees": -0.06000100405327367,
+        "position": [
+          50.89583969116211,
+          0.140000581741333,
+          13.524657249450684
+        ],
+        "yawDegrees": 142.70001376081387
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-3d8a7970-2538-4f5f-89f4-a647de1ea93c/3.png",
+      "relativeYawDegrees": 135
+    },
+    {
+      "camera": {
+        "pitchDegrees": -0.06000100405327367,
+        "position": [
+          50.89583969116211,
+          0.140000581741333,
+          13.524657249450684
+        ],
+        "yawDegrees": 187.70001376081387
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-3d8a7970-2538-4f5f-89f4-a647de1ea93c/4.png",
+      "relativeYawDegrees": 180
+    },
+    {
+      "camera": {
+        "pitchDegrees": -0.06000100405327367,
+        "position": [
+          50.89583969116211,
+          0.140000581741333,
+          13.524657249450684
+        ],
+        "yawDegrees": 232.70001376081387
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-3d8a7970-2538-4f5f-89f4-a647de1ea93c/5.png",
+      "relativeYawDegrees": 225
+    },
+    {
+      "camera": {
+        "pitchDegrees": -0.06000100405327367,
+        "position": [
+          50.89583969116211,
+          0.140000581741333,
+          13.524657249450684
+        ],
+        "yawDegrees": 277.7000137608139
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-3d8a7970-2538-4f5f-89f4-a647de1ea93c/6.png",
+      "relativeYawDegrees": 270
+    },
+    {
+      "camera": {
+        "pitchDegrees": -0.06000100405327367,
+        "position": [
+          50.89583969116211,
+          0.140000581741333,
+          13.524657249450684
+        ],
+        "yawDegrees": 322.7000137608139
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-3d8a7970-2538-4f5f-89f4-a647de1ea93c/7.png",
+      "relativeYawDegrees": 315
+    }
+  ],
+  "restored": true,
+  "slot_id": "slot-3",
+  "time": {
+    "advancedMs": 0,
+    "fixedStepHz": 60,
+    "mode": "action-driven",
+    "simulationStep": "3977",
+    "worldHeld": true
+  }
+}

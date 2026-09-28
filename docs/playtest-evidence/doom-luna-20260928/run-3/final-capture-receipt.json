@@ -1,0 +1,255 @@
+{
+  "application_renderer": "unavailable",
+  "capture_id": "18517459-aa8f-4437-955a-0cf3536d5c6b",
+  "engine_presentation": {
+    "available": false,
+    "reason": "not requested; set engine_presentation or profile presentation_observations"
+  },
+  "engine_presentation_state": "unavailable",
+  "engine_readiness": "unavailable",
+  "frame_correlation": "unavailable",
+  "gpu_completion": "unavailable",
+  "hardware_acceleration": "unavailable",
+  "label": "",
+  "metadata_path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/capture-18517459-aa8f-4437-955a-0cf3536d5c6b.json",
+  "observation": {
+    "artifact_id": "becc8fd3-86bf-4bdc-90e8-30b98e04e936",
+    "canvases": [
+      {
+        "backing": {
+          "height": 720,
+          "width": 1280
+        },
+        "css": {
+          "height": 720,
+          "width": 1280,
+          "x": 0,
+          "y": 0
+        }
+      }
+    ],
+    "capture_ended_at": "2026-09-28T04:35:40.716988465Z",
+    "capture_ended_at_ns": 1790570140716988465,
+    "capture_started_at": "2026-09-28T04:35:40.649339828Z",
+    "capture_started_at_ns": 1790570140649339828,
+    "console": [
+      {
+        "location": {
+          "column": 0,
+          "columnNumber": 0,
+          "line": 0,
+          "lineNumber": 0,
+          "url": "http://127.0.0.1:4493/"
+        },
+        "text": "[.WebGL-0x33c001a1600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+        "truncated": false,
+        "type": "warning"
+      },
+      {
+        "location": {
+          "column": 0,
+          "columnNumber": 0,
+          "line": 0,
+          "lineNumber": 0,
+          "url": "http://127.0.0.1:4493/"
+        },
+        "text": "[.WebGL-0x33c001a1600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+        "truncated": false,
+        "type": "warning"
+      },
+      {
+        "location": {
+          "column": 0,
+          "columnNumber": 0,
+          "line": 0,
+          "lineNumber": 0,
+          "url": "http://127.0.0.1:4493/"
+        },
+        "text": "[.WebGL-0x33c01b26600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+        "truncated": false,
+        "type": "warning"
+      },
+      {
+        "location": {
+          "column": 0,
+          "columnNumber": 0,
+          "line": 0,
+          "lineNumber": 0,
+          "url": "http://127.0.0.1:4493/"
+        },
+        "text": "[.WebGL-0x33c01b26600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)",
+        "truncated": false,
+        "type": "warning"
+      },
+      {
+        "location": {
+          "column": 0,
+          "columnNumber": 0,
+          "line": 0,
+          "lineNumber": 0,
+          "url": "http://127.0.0.1:4493/__rusty/product/runtime/debug/execute"
+        },
+        "text": "Failed to load resource: the server responded with a status of 422 (Unprocessable Content)",
+        "truncated": false,
+        "type": "error"
+      },
+      {
+        "location": {
+          "column": 0,
+          "columnNumber": 0,
+          "line": 0,
+          "lineNumber": 0,
+          "url": "http://127.0.0.1:4493/__rusty/product/runtime/debug/execute"
+        },
+        "text": "Failed to load resource: the server responded with a status of 422 (Unprocessable Content)",
+        "truncated": false,
+        "type": "error"
+      }
+    ],
+    "cursor": {
+      "x": 0,
+      "y": 0
+    },
+    "dom_assistance": [],
+    "event": "observation",
+    "events_path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/events.jsonl",
+    "frame_freshness": "not measured",
+    "game_readiness": "unknown",
+    "height": 720,
+    "lease_id": "2c045a19-4ddd-43b0-80d7-2a2bf4137b61",
+    "metadata_path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/becc8fd3-86bf-4bdc-90e8-30b98e04e936.json",
+    "page_errors": [],
+    "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/becc8fd3-86bf-4bdc-90e8-30b98e04e936.png",
+    "pointer_lock": false,
+    "renderer": "unknown",
+    "source": "headless Chromium screenshot through the private Playwright context",
+    "title": "Loading Bay — Doom E1M1",
+    "url": "http://127.0.0.1:4493/",
+    "viewport": {
+      "device_pixel_ratio": 1,
+      "height": 720,
+      "width": 1280
+    },
+    "width": 1280
+  },
+  "overlay_policy": "preserve",
+  "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/becc8fd3-86bf-4bdc-90e8-30b98e04e936.png",
+  "pool_activity": {
+    "after": {
+      "active_count": 2,
+      "capacity": 10,
+      "observed_at": "2026-09-28T04:35:40.767408114Z",
+      "queued_starts": 0,
+      "slots": [
+        {
+          "game": "doom-luna-2",
+          "occupied": true,
+          "phase": "connected",
+          "session_id": "192cdf17-1fbe-4bf3-993b-a3e3ea884e49",
+          "slot_id": "slot-1"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-2"
+        },
+        {
+          "game": "doom-luna-3",
+          "occupied": true,
+          "phase": "connected",
+          "session_id": "2c045a19-4ddd-43b0-80d7-2a2bf4137b61",
+          "slot_id": "slot-3"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-4"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-5"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-6"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-7"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-8"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-9"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-10"
+        }
+      ]
+    },
+    "before": {
+      "active_count": 2,
+      "capacity": 10,
+      "observed_at": "2026-09-28T04:35:40.649336565Z",
+      "queued_starts": 0,
+      "slots": [
+        {
+          "game": "doom-luna-2",
+          "occupied": true,
+          "phase": "connected",
+          "session_id": "192cdf17-1fbe-4bf3-993b-a3e3ea884e49",
+          "slot_id": "slot-1"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-2"
+        },
+        {
+          "game": "doom-luna-3",
+          "occupied": true,
+          "phase": "connected",
+          "session_id": "2c045a19-4ddd-43b0-80d7-2a2bf4137b61",
+          "slot_id": "slot-3"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-4"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-5"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-6"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-7"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-8"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-9"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-10"
+        }
+      ]
+    },
+    "performance_isolated": false,
+    "slot_id": "slot-3"
+  },
+  "recorded_at": "2026-09-28T04:35:40.76730333Z",
+  "session_id": "2c045a19-4ddd-43b0-80d7-2a2bf4137b61",
+  "slot_id": "slot-3",
+  "supplied_assistance": null,
+  "supplied_metadata_source": "caller; not independently verified",
+  "supplied_viewpoint": null
+}

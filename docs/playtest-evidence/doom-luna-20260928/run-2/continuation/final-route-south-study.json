@@ -1,0 +1,68 @@
+{
+  "arrival": {
+    "arrived": false,
+    "currentRegion": "east-hall",
+    "visited": false
+  },
+  "bearingConvention": "positive right toward nextWaypoint",
+  "bearingDegrees": null,
+  "distance": 16.85077,
+  "distanceFromPlayerFeet": 16.85077,
+  "distanceMeaning": "player feet to final target feet",
+  "doorGuidance": {
+    "dynamicObstaclesIncluded": false,
+    "interaction": {
+      "reason": "OutsideQuery",
+      "selected": null,
+      "targetedUseEnabled": true
+    },
+    "nearbyDoors": [],
+    "warning": "static route; doors require ordinary use"
+  },
+  "engine": {
+    "initialNavigationRevision": 1,
+    "initialProjectionHash": 2559810967114870300,
+    "navigationRevision": 1,
+    "outcome": "NoPath",
+    "projectionHash": 2559810967114870300,
+    "routeReached": false,
+    "routeReachedMeaning": "path-query result only; player arrival is arrival.arrived",
+    "visited": 0
+  },
+  "nextWaypoint": null,
+  "pathLengthCells": null,
+  "remainingGridPathLengthEstimate": null,
+  "remainingPathLengthEstimate": null,
+  "requiredAction": {
+    "eligibleNow": false,
+    "key": "E",
+    "kind": "use",
+    "label": "southern study door",
+    "state": "closed",
+    "targetId": 20001
+  },
+  "routeTargetId": "door-south-study",
+  "slot_id": "slot-2",
+  "source": {
+    "feet": {
+      "x": 46.27,
+      "y": -1.4989996,
+      "z": 2.046598
+    },
+    "position": {
+      "x": 46.27,
+      "y": -0.59899956,
+      "z": 2.046598
+    },
+    "stamp": {
+      "generation": 1,
+      "step": 7070
+    }
+  },
+  "status": "route-unavailable",
+  "suggestion": null,
+  "targetBearingDegrees": -71.33615,
+  "targetId": "door-south-study",
+  "targetLabel": "southern study doorway",
+  "waypointDistance": null
+}

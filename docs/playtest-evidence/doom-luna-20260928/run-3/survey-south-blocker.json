@@ -1,0 +1,67 @@
+{
+  "contact": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-768b7a7d-9630-45f7-90f3-8571a77489a1/contact.png",
+  "directory": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-768b7a7d-9630-45f7-90f3-8571a77489a1",
+  "frames": [
+    {
+      "camera": {
+        "pitchDegrees": 0.009998996738501987,
+        "position": [
+          58.949344635009766,
+          0.13281852006912231,
+          4.697127342224121
+        ],
+        "yawDegrees": -124.59997182076773
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-768b7a7d-9630-45f7-90f3-8571a77489a1/0.png",
+      "relativeYawDegrees": 0
+    },
+    {
+      "camera": {
+        "pitchDegrees": 0.009998996738501987,
+        "position": [
+          58.949344635009766,
+          0.13281852006912231,
+          4.697127342224121
+        ],
+        "yawDegrees": -34.599971820767735
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-768b7a7d-9630-45f7-90f3-8571a77489a1/1.png",
+      "relativeYawDegrees": 90
+    },
+    {
+      "camera": {
+        "pitchDegrees": 0.009998996738501987,
+        "position": [
+          58.949344635009766,
+          0.13281852006912231,
+          4.697127342224121
+        ],
+        "yawDegrees": 55.400028179232265
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-768b7a7d-9630-45f7-90f3-8571a77489a1/2.png",
+      "relativeYawDegrees": 180
+    },
+    {
+      "camera": {
+        "pitchDegrees": 0.009998996738501987,
+        "position": [
+          58.949344635009766,
+          0.13281852006912231,
+          4.697127342224121
+        ],
+        "yawDegrees": 145.40002817923227
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/survey-768b7a7d-9630-45f7-90f3-8571a77489a1/3.png",
+      "relativeYawDegrees": 270
+    }
+  ],
+  "restored": true,
+  "slot_id": "slot-3",
+  "time": {
+    "advancedMs": 0,
+    "fixedStepHz": 60,
+    "mode": "action-driven",
+    "simulationStep": "3242",
+    "worldHeld": true
+  }
+}

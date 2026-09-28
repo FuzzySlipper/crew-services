@@ -1,0 +1,132 @@
+{
+  "artifact_id": "87d9a0e9-c10a-4454-8655-d22ca13b5128",
+  "canvases": [
+    {
+      "backing": {
+        "height": 720,
+        "width": 1280
+      },
+      "css": {
+        "height": 720,
+        "width": 1280,
+        "x": 0,
+        "y": 0
+      }
+    }
+  ],
+  "capture_ended_at": "2026-09-28T04:53:13.970731943Z",
+  "capture_ended_at_ns": 1790571193970731943,
+  "capture_started_at": "2026-09-28T04:53:13.926580243Z",
+  "capture_started_at_ns": 1790571193926580243,
+  "console": [
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4492/"
+      },
+      "text": "[.WebGL-0x97c001a2200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "truncated": false,
+      "type": "warning"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4492/"
+      },
+      "text": "[.WebGL-0x97c001a2200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "truncated": false,
+      "type": "warning"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4492/"
+      },
+      "text": "[.WebGL-0x97c00ec6600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "truncated": false,
+      "type": "warning"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4492/"
+      },
+      "text": "[.WebGL-0x97c00ec6600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)",
+      "truncated": false,
+      "type": "warning"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4492/__rusty/product/runtime/debug/execute"
+      },
+      "text": "Failed to load resource: the server responded with a status of 422 (Unprocessable Content)",
+      "truncated": false,
+      "type": "error"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4492/__rusty/product/runtime/debug/execute"
+      },
+      "text": "Failed to load resource: the server responded with a status of 422 (Unprocessable Content)",
+      "truncated": false,
+      "type": "error"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4492/__rusty/product/runtime/debug/execute"
+      },
+      "text": "Failed to load resource: the server responded with a status of 422 (Unprocessable Content)",
+      "truncated": false,
+      "type": "error"
+    }
+  ],
+  "cursor": {
+    "x": 0,
+    "y": 0
+  },
+  "dom_assistance": [],
+  "event": "observation",
+  "events_path": "/home/agent/.local/state/crew-playtest-local/slots/slot-2/browser/0dea4ce1-cd46-44ea-b1d0-f16dc97b35ee/events.jsonl",
+  "frame_freshness": "not measured",
+  "game_readiness": "unknown",
+  "height": 720,
+  "lease_id": "0dea4ce1-cd46-44ea-b1d0-f16dc97b35ee",
+  "metadata_path": "/home/agent/.local/state/crew-playtest-local/slots/slot-2/browser/0dea4ce1-cd46-44ea-b1d0-f16dc97b35ee/87d9a0e9-c10a-4454-8655-d22ca13b5128.json",
+  "page_errors": [],
+  "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-2/browser/0dea4ce1-cd46-44ea-b1d0-f16dc97b35ee/87d9a0e9-c10a-4454-8655-d22ca13b5128.png",
+  "pointer_lock": false,
+  "renderer": "unknown",
+  "source": "headless Chromium screenshot through the private Playwright context",
+  "title": "Loading Bay — Doom E1M1",
+  "url": "http://127.0.0.1:4492/",
+  "viewport": {
+    "device_pixel_ratio": 1,
+    "height": 720,
+    "width": 1280
+  },
+  "width": 1280
+}

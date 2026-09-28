@@ -1,0 +1,96 @@
+{
+  "artifact_id": "a54ed546-0124-415f-9c37-920e79756087",
+  "canvases": [
+    {
+      "backing": {
+        "height": 720,
+        "width": 1280
+      },
+      "css": {
+        "height": 720,
+        "width": 1280,
+        "x": 0,
+        "y": 0
+      }
+    }
+  ],
+  "capture_ended_at": "2026-09-28T04:06:54.829593761Z",
+  "capture_ended_at_ns": 1790568414829593761,
+  "capture_started_at": "2026-09-28T04:06:54.755675123Z",
+  "capture_started_at_ns": 1790568414755675123,
+  "console": [
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4492/"
+      },
+      "text": "[.WebGL-0x3994001a1600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "truncated": false,
+      "type": "warning"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4492/"
+      },
+      "text": "[.WebGL-0x3994001a1600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "truncated": false,
+      "type": "warning"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4492/"
+      },
+      "text": "[.WebGL-0x39940247a600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "truncated": false,
+      "type": "warning"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4492/"
+      },
+      "text": "[.WebGL-0x39940247a600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)",
+      "truncated": false,
+      "type": "warning"
+    }
+  ],
+  "cursor": {
+    "x": 0,
+    "y": 0
+  },
+  "dom_assistance": [],
+  "event": "observation",
+  "events_path": "/home/agent/.local/state/crew-playtest-local/slots/slot-2/browser/09f620c3-3f45-4e39-b742-37c1bcf240c9/events.jsonl",
+  "frame_freshness": "not measured",
+  "game_readiness": "unknown",
+  "height": 720,
+  "lease_id": "09f620c3-3f45-4e39-b742-37c1bcf240c9",
+  "metadata_path": "/home/agent/.local/state/crew-playtest-local/slots/slot-2/browser/09f620c3-3f45-4e39-b742-37c1bcf240c9/a54ed546-0124-415f-9c37-920e79756087.json",
+  "page_errors": [],
+  "path": "/home/agent/.local/state/crew-playtest-local/slots/slot-2/browser/09f620c3-3f45-4e39-b742-37c1bcf240c9/a54ed546-0124-415f-9c37-920e79756087.png",
+  "pointer_lock": false,
+  "renderer": "unknown",
+  "source": "headless Chromium screenshot through the private Playwright context",
+  "title": "Loading Bay — Doom E1M1",
+  "url": "http://127.0.0.1:4492/",
+  "viewport": {
+    "device_pixel_ratio": 1,
+    "height": 720,
+    "width": 1280
+  },
+  "width": 1280
+}

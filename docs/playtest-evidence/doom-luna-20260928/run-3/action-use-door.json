@@ -1,0 +1,10 @@
+{
+  "available": true,
+  "durationMs": 200,
+  "equipment": null,
+  "hold": false,
+  "id": "use",
+  "key": "KeyE",
+  "reason": null,
+  "slot_id": "slot-3"
+}

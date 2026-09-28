@@ -1,0 +1,56 @@
+{
+  "session": {
+    "profile": {
+      "backend": "browser",
+      "environment": "service",
+      "id": "doom-luna-1",
+      "description": "Independent fresh Doom exploration run. Use playtest assist discover for live tools.",
+      "url": "http://127.0.0.1:4491/",
+      "controls": {
+        "assist": "Action-driven time, live actions/observations, look, survey, record.",
+        "keyboard": "WASD movement, Space jump, Ctrl attack, E use, 1/2/3 weapons; J/L yaw, I/K pitch."
+      },
+      "reset": "Independent native host for this trial. Browser reconnect retains world; no reset during trial."
+    },
+    "slot_id": "slot-1",
+    "id": "a9f4b887-1bd3-46ce-993b-1755a6047688",
+    "game": "doom-luna-1",
+    "phase": "stopped",
+    "created_at": "2026-09-28T04:06:26.498140078Z",
+    "launch": {
+      "browser_url": "http://127.0.0.1:4491/",
+      "canvases": [],
+      "capabilities": {
+        "absolute_pointer": true,
+        "browser_inspect": true,
+        "dom_actions": true,
+        "engine_queries": false,
+        "gamepad": true,
+        "keyboard": true,
+        "pointer_lock_readback": true,
+        "relative_mouse": true
+      },
+      "console": [],
+      "cursor": {
+        "x": 0,
+        "y": 0
+      },
+      "dom_assistance": [],
+      "events_path": "/home/agent/.local/state/crew-playtest-local/browser/a9f4b887-1bd3-46ce-993b-1755a6047688/events.jsonl",
+      "game_readiness": "unknown; inspect the original screenshot",
+      "page_errors": [],
+      "pointer_lock": false,
+      "renderer": "unknown",
+      "server_http_ready": true,
+      "title": "Loading Bay — Doom E1M1",
+      "url": "http://127.0.0.1:4491/",
+      "viewport": {
+        "device_pixel_ratio": 1,
+        "height": 720,
+        "width": 1280
+      }
+    }
+  },
+  "slot_id": "slot-1",
+  "target": {}
+}

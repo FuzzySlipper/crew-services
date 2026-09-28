@@ -1,0 +1,134 @@
+{
+  "stamp": "generation:1;step:3916;gameplay:32",
+  "action": "use",
+  "assistance": "observation-only",
+  "targetedUseEnabled": true,
+  "help": "interaction.help",
+  "focusReason": "OutsideQuery",
+  "selected": null,
+  "query": {
+    "origin": {
+      "x": 1.7300001,
+      "y": 1.1200017,
+      "z": -5.2271357
+    },
+    "direction": {
+      "x": -0.008377367,
+      "y": 0,
+      "z": 0.9999649
+    },
+    "acquireAngleRadians": 0.32,
+    "releaseAngleRadians": 0.48,
+    "maximumDistance": 2.5,
+    "releaseDistance": 2.5,
+    "distanceOrigin": {
+      "x": 1.7300001,
+      "y": 0.40000167,
+      "z": -5.2271357
+    }
+  },
+  "totalCandidates": 5,
+  "truncated": false,
+  "candidates": [
+    {
+      "id": 33000,
+      "revision": 2,
+      "label": "hangar-exit",
+      "point": {
+        "x": 54,
+        "y": 0.25,
+        "z": 40
+      },
+      "distance": 69.12068,
+      "reachDistance": 2.5,
+      "angleRadians": 0.86595446,
+      "selected": false,
+      "visibility": "Occluded",
+      "availability": "Available",
+      "route": "Unknown",
+      "focusReason": "OutsideQuery",
+      "targetedUseReason": "OutsideQuery",
+      "useCommand": "interaction.use 33000 2"
+    },
+    {
+      "id": 20002,
+      "revision": 2,
+      "label": "terminal study door",
+      "point": {
+        "x": 53,
+        "y": 0.40000167,
+        "z": 34.75
+      },
+      "distance": 65.013725,
+      "reachDistance": 2.5,
+      "angleRadians": 0.91695774,
+      "selected": false,
+      "visibility": "Occluded",
+      "availability": "Available",
+      "route": "Unknown",
+      "focusReason": "OutsideQuery",
+      "targetedUseReason": "OutsideQuery",
+      "useCommand": "interaction.use 20002 2"
+    },
+    {
+      "id": 20001,
+      "revision": 2,
+      "label": "southern study door",
+      "point": {
+        "x": 52,
+        "y": 0.40000167,
+        "z": 15.6
+      },
+      "distance": 54.413624,
+      "reachDistance": 2.5,
+      "angleRadians": 1.1864316,
+      "selected": false,
+      "visibility": "Occluded",
+      "availability": "Available",
+      "route": "Unknown",
+      "focusReason": "OutsideQuery",
+      "targetedUseReason": "OutsideQuery",
+      "useCommand": "interaction.use 20001 2"
+    },
+    {
+      "id": 20003,
+      "revision": 2,
+      "label": "lower passage east door",
+      "point": {
+        "x": 51.1,
+        "y": 0.40000167,
+        "z": 8
+      },
+      "distance": 51.11119,
+      "reachDistance": 2.5,
+      "angleRadians": 1.3174287,
+      "selected": false,
+      "visibility": "Occluded",
+      "availability": "Available",
+      "route": "Unknown",
+      "focusReason": "OutsideQuery",
+      "targetedUseReason": "OutsideQuery",
+      "useCommand": "interaction.use 20003 2"
+    },
+    {
+      "id": 20000,
+      "revision": 2,
+      "label": "north wing door",
+      "point": {
+        "x": 8.1,
+        "y": 0.40000167,
+        "z": -30
+      },
+      "distance": 25.578737,
+      "reachDistance": 2.5,
+      "angleRadians": 2.8966968,
+      "selected": false,
+      "visibility": "Occluded",
+      "availability": "Available",
+      "route": "Unknown",
+      "focusReason": "OutsideQuery",
+      "targetedUseReason": "OutsideQuery",
+      "useCommand": "interaction.use 20000 2"
+    }
+  ]
+}

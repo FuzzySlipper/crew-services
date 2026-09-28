@@ -1,0 +1,15 @@
+{
+  "accepted": false,
+  "capture": "/home/agent/.local/state/crew-playtest-local/slots/slot-3/browser/2c045a19-4ddd-43b0-80d7-2a2bf4137b61/action-9a9a89b1-48ac-49f7-a49f-b2016248eb9e.png",
+  "plan": {
+    "available": false,
+    "durationMs": 16.666666666666668,
+    "equipment": null,
+    "hold": false,
+    "id": "shotgun",
+    "key": "Digit3",
+    "reason": "weapon-not-ready"
+  },
+  "reason": "weapon-not-ready",
+  "slot_id": "slot-3"
+}

@@ -1,0 +1,61 @@
+{
+  "arrival": {
+    "arrived": false,
+    "currentRegion": "spawn",
+    "visited": false
+  },
+  "bearingConvention": "positive right toward nextWaypoint",
+  "bearingDegrees": null,
+  "distance": 30.342867,
+  "distanceFromPlayerFeet": 30.342867,
+  "distanceMeaning": "player feet to final target feet",
+  "doorGuidance": {
+    "dynamicObstaclesIncluded": false,
+    "interaction": {
+      "reason": "OutsideQuery",
+      "selected": null,
+      "targetedUseEnabled": true
+    },
+    "nearbyDoors": [],
+    "warning": "static route; doors require ordinary use"
+  },
+  "engine": {
+    "initialNavigationRevision": 1,
+    "initialProjectionHash": 2559810967114870300,
+    "navigationRevision": 1,
+    "outcome": "NoPath",
+    "projectionHash": 2559810967114870300,
+    "routeReached": false,
+    "routeReachedMeaning": "path-query result only; player arrival is arrival.arrived",
+    "visited": 0
+  },
+  "nextWaypoint": null,
+  "pathLengthCells": null,
+  "remainingGridPathLengthEstimate": null,
+  "remainingPathLengthEstimate": null,
+  "requiredAction": null,
+  "routeTargetId": "pickup-shotgun-south",
+  "slot_id": "slot-1",
+  "source": {
+    "feet": {
+      "x": 1.7300001,
+      "y": -0.4999983,
+      "z": -5.2271357
+    },
+    "position": {
+      "x": 1.7300001,
+      "y": 0.40000167,
+      "z": -5.2271357
+    },
+    "stamp": {
+      "generation": 1,
+      "step": 3916
+    }
+  },
+  "status": "route-unavailable",
+  "suggestion": null,
+  "targetBearingDegrees": -152.42226,
+  "targetId": "pickup-shotgun-south",
+  "targetLabel": "southern shotgun",
+  "waypointDistance": null
+}

@@ -1,0 +1,22 @@
+{
+  "mission": "Explore until all enemies eliminated or player death; report friction",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "max",
+  "runs": 3,
+  "bounds": {
+    "wall_minutes_per_run": 25,
+    "actions_per_run": 300
+  },
+  "initial_time_mode": "action-driven",
+  "runtime_pack": "/home/agent/dev/rusty-doom/.runtime/playtest-development-20260928g/runtime-pack",
+  "notes": [
+    "Independent native hosts and browser sessions",
+    "Same staged product; no gameplay resets within a trial",
+    "Runtime g contains implemented behavior; later Engine commit only reformats Rust"
+  ],
+  "commits": {
+    "rusty-engine": "066a3788a9013edd89b00859bf4222aeca936510",
+    "rusty-doom": "8676d718f5a64acbc94e5cb4636c5b99b6d808c0",
+    "crew-services": "252ead57b9ba0f05b52a889f165e373c7d84959a"
+  }
+}

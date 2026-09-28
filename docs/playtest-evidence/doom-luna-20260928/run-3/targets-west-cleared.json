@@ -1,0 +1,141 @@
+{
+  "currentRegion": "western-chamber",
+  "slot_id": "slot-3",
+  "source": {
+    "feet": {
+      "x": -27.246912,
+      "y": -0.23000163,
+      "z": -8.825601
+    },
+    "position": {
+      "x": -27.246912,
+      "y": 0.66999835,
+      "z": -8.825601
+    },
+    "stamp": {
+      "generation": 1,
+      "step": 738
+    }
+  },
+  "targets": [
+    {
+      "arrived": true,
+      "available": false,
+      "distanceFromPlayerFeet": 0.30229238,
+      "id": "pickup-shotgun-west",
+      "interactionEntity": null,
+      "kind": "pickup",
+      "label": "western shotgun",
+      "position": {
+        "x": -27,
+        "y": -0.25,
+        "z": -9
+      },
+      "requiresUse": false,
+      "state": "collected",
+      "visited": true
+    },
+    {
+      "arrived": false,
+      "available": true,
+      "distanceFromPlayerFeet": 41.351738,
+      "id": "door-north-wing",
+      "interactionEntity": 20000,
+      "kind": "door",
+      "label": "north wing doorway",
+      "position": {
+        "x": 7,
+        "y": 0,
+        "z": -32
+      },
+      "requiresUse": true,
+      "state": "closed",
+      "visited": false
+    },
+    {
+      "arrived": false,
+      "available": true,
+      "distanceFromPlayerFeet": 49.065372,
+      "id": "pickup-shotgun-south",
+      "interactionEntity": null,
+      "kind": "pickup",
+      "label": "southern shotgun",
+      "position": {
+        "x": 16,
+        "y": 0,
+        "z": -32
+      },
+      "requiresUse": false,
+      "state": "available",
+      "visited": false
+    },
+    {
+      "arrived": false,
+      "available": true,
+      "distanceFromPlayerFeet": 85.25416,
+      "id": "door-south-study",
+      "interactionEntity": 20001,
+      "kind": "door",
+      "label": "southern study doorway",
+      "position": {
+        "x": 54,
+        "y": -0.75,
+        "z": 17
+      },
+      "requiresUse": true,
+      "state": "closed",
+      "visited": false
+    },
+    {
+      "arrived": false,
+      "available": true,
+      "distanceFromPlayerFeet": 83.556984,
+      "id": "enemy-east-imp",
+      "interactionEntity": null,
+      "kind": "hostile",
+      "label": "east hall imp",
+      "position": {
+        "x": 56,
+        "y": -0.75,
+        "z": -16
+      },
+      "requiresUse": false,
+      "state": "alive",
+      "visited": false
+    },
+    {
+      "arrived": false,
+      "available": true,
+      "distanceFromPlayerFeet": 93.28074,
+      "id": "room-south-terminal",
+      "interactionEntity": null,
+      "kind": "room",
+      "label": "southern terminal room",
+      "position": {
+        "x": 54,
+        "y": -0.75,
+        "z": 37
+      },
+      "requiresUse": false,
+      "state": "available",
+      "visited": false
+    },
+    {
+      "arrived": false,
+      "available": true,
+      "distanceFromPlayerFeet": 94.79056,
+      "id": "exit-hangar",
+      "interactionEntity": null,
+      "kind": "exit",
+      "label": "hangar exit",
+      "position": {
+        "x": 54,
+        "y": -0.75,
+        "z": 40
+      },
+      "requiresUse": false,
+      "state": "available",
+      "visited": false
+    }
+  ]
+}

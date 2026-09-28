@@ -1,0 +1,83 @@
+{
+  "canvases": [
+    {
+      "backing": {
+        "height": 720,
+        "width": 1280
+      },
+      "css": {
+        "height": 720,
+        "width": 1280,
+        "x": 0,
+        "y": 0
+      }
+    }
+  ],
+  "console": [
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4493/"
+      },
+      "text": "[.WebGL-0x33c001a1600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "truncated": false,
+      "type": "warning"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4493/"
+      },
+      "text": "[.WebGL-0x33c001a1600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "truncated": false,
+      "type": "warning"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4493/"
+      },
+      "text": "[.WebGL-0x33c01b26600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+      "truncated": false,
+      "type": "warning"
+    },
+    {
+      "location": {
+        "column": 0,
+        "columnNumber": 0,
+        "line": 0,
+        "lineNumber": 0,
+        "url": "http://127.0.0.1:4493/"
+      },
+      "text": "[.WebGL-0x33c01b26600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)",
+      "truncated": false,
+      "type": "warning"
+    }
+  ],
+  "cursor": {
+    "x": 0,
+    "y": 0
+  },
+  "dom_assistance": [],
+  "page_errors": [],
+  "pointer_lock": false,
+  "renderer": "unknown",
+  "slot_id": "slot-3",
+  "targets": [],
+  "title": "Loading Bay — Doom E1M1",
+  "url": "http://127.0.0.1:4493/",
+  "viewport": {
+    "device_pixel_ratio": 1,
+    "height": 720,
+    "width": 1280
+  }
+}

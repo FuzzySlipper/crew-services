@@ -1,0 +1,118 @@
+{
+  "directory": "/home/agent/.local/state/crew-playtest-local/browser/a9f4b887-1bd3-46ce-993b-1755a6047688/survey-bf1438b5-0ce4-42db-8157-cadc9a60641a",
+  "frames": [
+    {
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/a9f4b887-1bd3-46ce-993b-1755a6047688/survey-bf1438b5-0ce4-42db-8157-cadc9a60641a/0.png",
+      "relativeYawDegrees": 0,
+      "camera": {
+        "position": [
+          -1.7297946214675903,
+          1.1207404136657715,
+          -4.345860481262207
+        ],
+        "pitchDegrees": 0,
+        "yawDegrees": 90.48004868991417
+      }
+    },
+    {
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/a9f4b887-1bd3-46ce-993b-1755a6047688/survey-bf1438b5-0ce4-42db-8157-cadc9a60641a/1.png",
+      "relativeYawDegrees": 45,
+      "camera": {
+        "position": [
+          -1.7297946214675903,
+          1.1207404136657715,
+          -4.345860481262207
+        ],
+        "pitchDegrees": 0,
+        "yawDegrees": 135.48004868991416
+      }
+    },
+    {
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/a9f4b887-1bd3-46ce-993b-1755a6047688/survey-bf1438b5-0ce4-42db-8157-cadc9a60641a/2.png",
+      "relativeYawDegrees": 90,
+      "camera": {
+        "position": [
+          -1.7297946214675903,
+          1.1207404136657715,
+          -4.345860481262207
+        ],
+        "pitchDegrees": 0,
+        "yawDegrees": 180.48004868991416
+      }
+    },
+    {
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/a9f4b887-1bd3-46ce-993b-1755a6047688/survey-bf1438b5-0ce4-42db-8157-cadc9a60641a/3.png",
+      "relativeYawDegrees": 135,
+      "camera": {
+        "position": [
+          -1.7297946214675903,
+          1.1207404136657715,
+          -4.345860481262207
+        ],
+        "pitchDegrees": 0,
+        "yawDegrees": 225.48004868991416
+      }
+    },
+    {
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/a9f4b887-1bd3-46ce-993b-1755a6047688/survey-bf1438b5-0ce4-42db-8157-cadc9a60641a/4.png",
+      "relativeYawDegrees": 180,
+      "camera": {
+        "position": [
+          -1.7297946214675903,
+          1.1207404136657715,
+          -4.345860481262207
+        ],
+        "pitchDegrees": 0,
+        "yawDegrees": 270.48004868991416
+      }
+    },
+    {
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/a9f4b887-1bd3-46ce-993b-1755a6047688/survey-bf1438b5-0ce4-42db-8157-cadc9a60641a/5.png",
+      "relativeYawDegrees": 225,
+      "camera": {
+        "position": [
+          -1.7297946214675903,
+          1.1207404136657715,
+          -4.345860481262207
+        ],
+        "pitchDegrees": 0,
+        "yawDegrees": 315.48004868991416
+      }
+    },
+    {
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/a9f4b887-1bd3-46ce-993b-1755a6047688/survey-bf1438b5-0ce4-42db-8157-cadc9a60641a/6.png",
+      "relativeYawDegrees": 270,
+      "camera": {
+        "position": [
+          -1.7297946214675903,
+          1.1207404136657715,
+          -4.345860481262207
+        ],
+        "pitchDegrees": 0,
+        "yawDegrees": 360.48004868991416
+      }
+    },
+    {
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/a9f4b887-1bd3-46ce-993b-1755a6047688/survey-bf1438b5-0ce4-42db-8157-cadc9a60641a/7.png",
+      "relativeYawDegrees": 315,
+      "camera": {
+        "position": [
+          -1.7297946214675903,
+          1.1207404136657715,
+          -4.345860481262207
+        ],
+        "pitchDegrees": 0,
+        "yawDegrees": 405.48004868991416
+      }
+    }
+  ],
+  "contact": "/home/agent/.local/state/crew-playtest-local/browser/a9f4b887-1bd3-46ce-993b-1755a6047688/survey-bf1438b5-0ce4-42db-8157-cadc9a60641a/contact.png",
+  "restored": true,
+  "time": {
+    "advancedMs": 0,
+    "fixedStepHz": 60,
+    "mode": "action-driven",
+    "simulationStep": "3281",
+    "worldHeld": true
+  }
+}
