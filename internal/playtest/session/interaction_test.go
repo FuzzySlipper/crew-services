@@ -59,7 +59,7 @@ func TestInteractionProductContract(t *testing.T) {
 	if len(commands) != 2 {
 		t.Fatal("invalid options reached product")
 	}
-	s.profiles[0].InteractionQueries = false
+	s.sessions["lease"].Profile = &Profile{ID: "fixture", URL: fixture.URL, InteractionQueries: false}
 	if _, err := s.Interaction(context.Background(), "lease", nil); err == nil || !strings.Contains(err.Error(), "capability_unavailable") {
 		t.Fatal(err)
 	}

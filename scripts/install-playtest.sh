@@ -15,7 +15,7 @@ if [[ ! -f "$install_dir/games.json" ]]; then
 fi
 # Browser dependencies are owned by this adapter, not the global agent runtime.
 mkdir -p "$install_dir/browser"
-cp "$repo_dir/internal/playtest/browser/worker.mjs" "$repo_dir/internal/playtest/browser/package.json" "$install_dir/browser/"
+cp "$repo_dir/internal/playtest/browser/worker.mjs" "$repo_dir/internal/playtest/browser/playtest.mjs" "$repo_dir/internal/playtest/browser/package.json" "$install_dir/browser/"
 (cd "$install_dir/browser" && npm install --omit=dev --no-audit --no-fund && PLAYWRIGHT_BROWSERS_PATH="$install_dir/browser-binaries" npx playwright install chromium)
 if [[ ! -f "$install_dir/machine.json" ]]; then
   if [[ -n "$config_source" ]]; then

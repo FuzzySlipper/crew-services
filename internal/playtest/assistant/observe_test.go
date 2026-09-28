@@ -101,6 +101,97 @@ func TestObserverRequiresCatalogCommandAndDoesNotExecuteIt(t *testing.T) {
 	}
 }
 
+func TestObserverRefreshesNavigationRouteForAcceptedTarget(t *testing.T) {
+	var executed []string
+	product := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/__rusty/product/runtime/debug/catalog":
+			_, _ = io.WriteString(w, `{"available":true,"commands":[{"name":"navigation.targets"},{"name":"navigation.route"}]}`)
+		case "/__rusty/product/runtime/debug/execute":
+			body, _ := io.ReadAll(r.Body)
+			command := string(body)
+			executed = append(executed, command)
+			switch command {
+			case "navigation.targets":
+				_, _ = io.WriteString(w, `{"targets":[{"id":"alpha","label":"Alpha","position":{"x":1}},{"id":"beta","label":"Beta","position":{"x":2}}]}`)
+			case "navigation.route alpha":
+				_, _ = io.WriteString(w, `{"waypoint":{"x":1},"distance":4,"bearing":0,"status":"reachable"}`)
+			case "navigation.route beta":
+				_, _ = io.WriteString(w, `{"waypoint":{"x":2},"distance":8,"bearing":90,"status":"reachable"}`)
+			default:
+				t.Fatalf("unexpected command %q", command)
+			}
+		default:
+			t.Fatalf("unexpected product path %s", r.URL.Path)
+		}
+	}))
+	defer product.Close()
+	playtest := newObserveService(t, `{"path":"/tmp/original.png"}`)
+	defer playtest.Close()
+	service, err := client.New(playtest.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := &Observer{Client: service, SessionID: "session-1", ProductURL: product.URL, Navigation: &NavigationConfig{InitialTarget: "alpha"}}
+	first, err := observer.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.NavigationTarget != "alpha" || string(first.Facts["navigation.route"]) != `{"waypoint":{"x":1},"distance":4,"bearing":0,"status":"reachable"}` {
+		t.Fatalf("first observation = %+v", first)
+	}
+	if err := observer.SetNavigationTarget("beta"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := observer.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.NavigationTarget != "beta" || string(second.Facts["navigation.route"]) != `{"waypoint":{"x":2},"distance":8,"bearing":90,"status":"reachable"}` {
+		t.Fatalf("second observation = %+v", second)
+	}
+	if strings.Join(executed, ",") != "navigation.targets,navigation.route alpha,navigation.targets,navigation.route beta" {
+		t.Fatalf("commands = %v", executed)
+	}
+}
+
+func TestObserverWithoutNavigationConfigurationDoesNotQueryRoute(t *testing.T) {
+	var executed []string
+	product := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/__rusty/product/runtime/debug/catalog":
+			_, _ = io.WriteString(w, `{"available":true,"commands":[{"name":"navigation.targets"}]}`)
+		case "/__rusty/product/runtime/debug/execute":
+			body, _ := io.ReadAll(r.Body)
+			executed = append(executed, string(body))
+			_, _ = io.WriteString(w, `{"targets":[{"id":"alpha","label":"Alpha"}]}`)
+		default:
+			t.Fatalf("unexpected product path %s", r.URL.Path)
+		}
+	}))
+	defer product.Close()
+	playtest := newObserveService(t, `{"path":"/tmp/original.png"}`)
+	defer playtest.Close()
+	service, err := client.New(playtest.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation, err := (&Observer{Client: service, SessionID: "session-1", ProductURL: product.URL, Commands: []string{"navigation.targets"}}).Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observation.NavigationTarget != "" || string(observation.Facts["navigation.targets"]) == "" || strings.Join(executed, ",") != "navigation.targets" {
+		t.Fatalf("observation = %+v commands=%v", observation, executed)
+	}
+}
+
+func TestObserverRejectsUnsafeNavigationTargetBeforeRouteQuery(t *testing.T) {
+	observer := &Observer{Navigation: &NavigationConfig{InitialTarget: "alpha"}}
+	if err := observer.SetNavigationTarget("alpha; navigation.route beta"); err == nil {
+		t.Fatal("accepted unsafe navigation target")
+	}
+}
+
 func newObserveService(t *testing.T, result string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -14,16 +14,25 @@ import (
 	"crew-services/internal/playtest/session"
 )
 
+func testChromium(t *testing.T) string {
+	t.Helper()
+	chromium := os.Getenv("PLAYTEST_CHROMIUM")
+	if chromium == "" {
+		chromium = "/usr/bin/chromium"
+	}
+	if _, err := os.Stat(chromium); err != nil {
+		t.Skipf("system Chromium is unavailable: %v", err)
+	}
+	return chromium
+}
+
 func testAdapter(t *testing.T, endpoint string) (*Adapter, string) {
 	t.Helper()
 	worker, err := filepath.Abs("worker.mjs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	chromium := "/usr/bin/chromium"
-	if _, err := os.Stat(chromium); err != nil {
-		t.Skipf("system Chromium is unavailable: %v", err)
-	}
+	chromium := testChromium(t)
 	adapter, err := New(Config{State: t.TempDir(), Worker: worker, Chromium: chromium})
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +243,7 @@ func TestLaunchHTTPFailureAndAcquireFailureDoNotLeaveLeaseOwned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter, err := New(Config{State: t.TempDir(), Worker: worker, Chromium: "/usr/bin/chromium"})
+	adapter, err := New(Config{State: t.TempDir(), Worker: worker, Chromium: testChromium(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +267,7 @@ func TestLaunchHTTPFailureAndAcquireFailureDoNotLeaveLeaseOwned(t *testing.T) {
 	if err := os.WriteFile(badWorker, []byte("process.stdout.write('not-json\\n')\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	failing, err := New(Config{State: t.TempDir(), Worker: badWorker, Chromium: "/usr/bin/chromium"})
+	failing, err := New(Config{State: t.TempDir(), Worker: badWorker, Chromium: testChromium(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

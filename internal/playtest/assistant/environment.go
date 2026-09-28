@@ -8,6 +8,11 @@ import (
 
 type SessionEnvironment struct{ Observer }
 
+func (e *SessionEnvironment) SetNavigationTarget(target string) error {
+	return e.Observer.SetNavigationTarget(target)
+}
+func (e *SessionEnvironment) NavigationEnabled() bool { return e.Observer.NavigationEnabled() }
+
 func (e *SessionEnvironment) Input(ctx context.Context, steps []map[string]any) (json.RawMessage, error) {
 	raw, err := json.Marshal(steps)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,19 +25,20 @@ import (
 const defaultReviewProfile = "/home/system/crew-services/reviewer.md"
 
 type commandConfig struct {
-	listen       string
-	db           string
-	capacity     int
-	denURL       string
-	denToken     string
-	profile      string
-	backend      string
-	dshURL       string
-	codexModel   string
-	codexEffort  string
-	codexCommand string
-	codexArgs    []string
-	runInterval  time.Duration
+	listen         string
+	db             string
+	capacity       int
+	denURL         string
+	denToken       string
+	profile        string
+	backend        string
+	dshURL         string
+	codexModel     string
+	codexEffort    string
+	codexCommand   string
+	codexArgs      []string
+	runInterval    time.Duration
+	workspaceRoots []string
 }
 
 type repeatString []string
@@ -71,7 +73,7 @@ func run(args []string) error {
 	}
 	defer store.Close()
 
-	den, err := reviewden.New(cfg.denURL, cfg.denToken, nil)
+	den, err := reviewden.New(cfg.denURL, cfg.denToken, nil, reviewden.WithWorkspaceRoots(cfg.workspaceRoots))
 	if err != nil {
 		return err
 	}
@@ -145,6 +147,7 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 		cfg.capacity = capacity
 	}
 	var codexArgs repeatString
+	var workspaceRoots repeatString
 	flags := flag.NewFlagSet("crew-review", flag.ContinueOnError)
 	flags.StringVar(&cfg.listen, "listen", cfg.listen, "loopback listen address")
 	flags.StringVar(&cfg.db, "db", cfg.db, "separate review SQLite database")
@@ -157,10 +160,20 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	flags.StringVar(&cfg.codexModel, "codex-model", cfg.codexModel, "Codex reviewer model; empty inherits Codex config")
 	flags.StringVar(&cfg.codexEffort, "codex-effort", cfg.codexEffort, "Codex reviewer reasoning effort; empty inherits Codex config")
 	flags.StringVar(&cfg.codexCommand, "codex-command", cfg.codexCommand, "Codex App Server executable")
+	flags.Var(&workspaceRoots, "workspace-root", "absolute directory containing local Git checkouts; repeatable; overrides CREW_REVIEW_WORKSPACE_ROOTS")
 	flags.Var(&codexArgs, "codex-arg", "Codex App Server argument; repeatable")
 	flags.DurationVar(&cfg.runInterval, "run-interval", cfg.runInterval, "delay between bounded single-job runner passes")
 	if err := flags.Parse(args); err != nil {
 		return commandConfig{}, err
+	}
+	cfg.workspaceRoots = filepath.SplitList(strings.TrimSpace(getenv("CREW_REVIEW_WORKSPACE_ROOTS")))
+	if len(workspaceRoots) > 0 {
+		cfg.workspaceRoots = append([]string(nil), workspaceRoots...)
+	}
+	for _, root := range cfg.workspaceRoots {
+		if !filepath.IsAbs(root) {
+			return commandConfig{}, fmt.Errorf("workspace root must be absolute: %q", root)
+		}
 	}
 	if len(codexArgs) > 0 {
 		cfg.codexArgs = append([]string(nil), codexArgs...)

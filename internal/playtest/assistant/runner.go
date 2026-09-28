@@ -27,22 +27,27 @@ type Condition struct {
 	Reason   string `json:"reason"`
 }
 type Policy struct {
-	Goal              string        `json:"goal"`
-	Instructions      string        `json:"instructions"`
-	BudgetMS          int           `json:"budget_ms"`
-	MaxActions        int           `json:"max_actions"`
-	DecisionTimeoutMS int           `json:"decision_timeout_ms"`
-	MinimumConfidence float64       `json:"minimum_confidence"`
-	StallActions      int           `json:"stall_actions"`
-	ProgressPointers  []string      `json:"progress_pointers"`
-	StopWhen          []Condition   `json:"stop_when"`
-	Tactics           []Tactic      `json:"tactics"`
-	Parent            *ParentPolicy `json:"parent,omitempty"`
+	ControlGroups     []ControlGroup `json:"control_groups,omitempty"`
+	DecisionMaxAgeMS  int            `json:"decision_max_age_ms,omitempty"`
+	Goal              string         `json:"goal"`
+	Instructions      string         `json:"instructions"`
+	BudgetMS          int            `json:"budget_ms"`
+	MaxActions        int            `json:"max_actions"`
+	DecisionTimeoutMS int            `json:"decision_timeout_ms"`
+	MinimumConfidence float64        `json:"minimum_confidence"`
+	StallActions      int            `json:"stall_actions"`
+	ProgressPointers  []string       `json:"progress_pointers"`
+	StopWhen          []Condition    `json:"stop_when"`
+	Tactics           []Tactic       `json:"tactics"`
+	Parent            *ParentPolicy  `json:"parent,omitempty"`
 }
 type Decision struct {
-	Choice     string          `json:"choice"`
-	Confidence float64         `json:"confidence"`
-	Raw        json.RawMessage `json:"raw,omitempty"`
+	RequestBytes  int                           `json:"request_bytes,omitempty"`
+	Choices       map[string]string             `json:"choices,omitempty"`
+	Probabilities map[string]map[string]float64 `json:"probabilities,omitempty"`
+	Choice        string                        `json:"choice"`
+	Confidence    float64                       `json:"confidence"`
+	Raw           json.RawMessage               `json:"raw,omitempty"`
 }
 type State struct {
 	Goal          string           `json:"goal"`
@@ -63,6 +68,10 @@ type Environment interface {
 	Input(context.Context, []map[string]any) (json.RawMessage, error)
 	Cancel(context.Context) (json.RawMessage, error)
 }
+type navigationEnvironment interface {
+	SetNavigationTarget(string) error
+	NavigationEnabled() bool
+}
 type Result struct {
 	Reason        string          `json:"reason"`
 	Error         string          `json:"error,omitempty"`
@@ -75,17 +84,20 @@ type Result struct {
 }
 
 func (p Policy) Validate() error {
+	if p.DecisionMaxAgeMS < 0 || p.DecisionMaxAgeMS > 30000 {
+		return errors.New("decision_max_age_ms must be 0(disabled)..30000")
+	}
 	if err := p.Parent.validate(); err != nil {
 		return err
 	}
-	if strings.TrimSpace(p.Goal) == "" || p.BudgetMS < 100 || p.BudgetMS > 120000 || p.MaxActions < 1 || p.MaxActions > 100 || p.DecisionTimeoutMS < 100 || p.DecisionTimeoutMS > 30000 {
-		return errors.New("goal and bounded budget_ms(100..120000), max_actions(1..100), decision_timeout_ms(100..30000) required")
+	if strings.TrimSpace(p.Goal) == "" || p.BudgetMS < 100 || p.BudgetMS > 120000 || p.MaxActions < 0 || p.MaxActions > 100 || p.DecisionTimeoutMS < 100 || p.DecisionTimeoutMS > 30000 {
+		return errors.New("goal and bounded budget_ms(100..120000), max_actions(0=uncapped,1..100), decision_timeout_ms(100..30000) required")
 	}
 	if math.IsNaN(p.MinimumConfidence) || p.MinimumConfidence < 0 || p.MinimumConfidence > 1 {
 		return errors.New("minimum_confidence must be 0..1")
 	}
-	if p.StallActions < 1 || len(p.ProgressPointers) == 0 {
-		return errors.New("stall_actions and progress_pointers required")
+	if p.StallActions < 0 || len(p.ProgressPointers) == 0 {
+		return errors.New("nonnegative stall_actions (0=disabled) and progress_pointers required")
 	}
 	ids := map[string]bool{"goal_complete": true, "stalled": true, "unexpected_state": true, "uncertain": true}
 	if len(p.Tactics) == 0 || len(p.Tactics) > 24 {
@@ -111,6 +123,9 @@ func (p Policy) Validate() error {
 		if total > 2000 {
 			return errors.New("each tactic must last at most 2000ms")
 		}
+	}
+	if err := validateGroups(p.ControlGroups, p.Tactics); err != nil {
+		return err
 	}
 	for _, c := range p.StopWhen {
 		if c.Pointer == "" || c.Reason == "" {
@@ -172,8 +187,13 @@ func RunWithParent(ctx context.Context, p Policy, env Environment, controller Co
 	lastParentAction := -1
 	var lastParentEvents string
 	var guidance *AppliedGuidance
+	var pendingNavigationGuidance *AppliedGuidance
 	var lastInputEnd time.Time
 	var recentActions []string
+	navigation, navigationConfigured := env.(navigationEnvironment)
+	if navigationConfigured && !navigation.NavigationEnabled() {
+		navigationConfigured = false
+	}
 	for {
 		if ctx.Err() != nil {
 			result.Reason = "deadline_or_cancelled"
@@ -183,6 +203,9 @@ func RunWithParent(ctx context.Context, p Policy, env Environment, controller Co
 		obs, e := env.Observe(ctx)
 		if e != nil {
 			result.Reason = "observation_failed"
+			if ctx.Err() != nil {
+				result.Reason = "deadline_or_cancelled"
+			}
 			result.Error = e.Error()
 			return result, nil
 		}
@@ -190,6 +213,18 @@ func RunWithParent(ctx context.Context, p Policy, env Environment, controller Co
 		result.Current = &obs
 		if err = emit("observation", obs); err != nil {
 			return result, err
+		}
+		if pendingNavigationGuidance != nil {
+			if obs.NavigationTarget != pendingNavigationGuidance.NavigationTarget {
+				result.Reason = "navigation_observation_mismatch"
+				result.Error = "fresh route observation did not match the pending navigation target"
+				return result, nil
+			}
+			guidance = pendingNavigationGuidance
+			pendingNavigationGuidance = nil
+			if err = emit("navigation_guidance_adopted", map[string]any{"guidance_revision": guidance.Revision, "target": guidance.NavigationTarget, "route_fact": "navigation.route", "source_observed_at": obs.CapturedAt}); err != nil {
+				return result, err
+			}
 		}
 		document := observationDocument(obs)
 		progress := make([]any, 0, len(p.ProgressPointers))
@@ -224,11 +259,11 @@ func RunWithParent(ctx context.Context, p Policy, env Environment, controller Co
 				return result, nil
 			}
 		}
-		if stall >= p.StallActions {
+		if p.StallActions > 0 && stall >= p.StallActions {
 			result.Reason = "stalled_observed_facts"
 			return result, nil
 		}
-		if result.Actions >= p.MaxActions {
+		if p.MaxActions > 0 && result.Actions >= p.MaxActions {
 			result.Reason = "action_limit"
 			return result, nil
 		}
@@ -237,6 +272,7 @@ func RunWithParent(ctx context.Context, p Policy, env Environment, controller Co
 		// Parent inference runs concurrently. Only this loop writes the journal and
 		// installs a completed update, at an action boundary.
 		if parent != nil {
+			observeNewNavigationTarget := false
 			select {
 			case reply := <-replies:
 				parentBusy = false
@@ -254,10 +290,57 @@ func RunWithParent(ctx context.Context, p Policy, env Environment, controller Co
 					if guidance != nil {
 						revision = guidance.Revision + 1
 					}
-					guidance = &AppliedGuidance{Guidance: reply.Decision.Guidance, Revision: revision, BasedOnAction: reply.BasedOnAction, AppliedAtAction: result.Actions, SourceObservedAt: reply.SourceObservedAt}
-					state.Guidance = guidance
+					candidate := reply.Decision.Guidance
+					if candidate.Stop {
+						// A valid handback is immediate. It neither adopts a requested
+						// destination nor asks the product for another route.
+						if navigationConfigured {
+							candidate.NavigationTarget = obs.NavigationTarget
+						} else if candidate.NavigationTarget == "" && guidance != nil {
+							candidate.NavigationTarget = guidance.NavigationTarget
+						}
+						guidance = &AppliedGuidance{Guidance: candidate, Revision: revision, BasedOnAction: reply.BasedOnAction, AppliedAtAction: result.Actions, SourceObservedAt: reply.SourceObservedAt}
+						state.Guidance = guidance
+					} else if candidate.NavigationTarget != "" {
+						if !validNavigationTarget(candidate.NavigationTarget) {
+							reply.Error = "invalid navigation_target suggestion"
+							disposition = "invalid_navigation_target"
+						} else if ids, available, targetErr := observationNavigationTargets(obs); targetErr != nil {
+							reply.Error = targetErr.Error()
+							disposition = "invalid_navigation_target"
+						} else if !available {
+							reply.Error = "navigation.targets was not observed"
+							disposition = "invalid_navigation_target"
+						} else if _, exists := ids[candidate.NavigationTarget]; !exists {
+							reply.Error = "navigation_target is absent from latest navigation.targets"
+							disposition = "invalid_navigation_target"
+						}
+					} else if navigationConfigured {
+						// Empty parent target means retain the accepted product target.
+						candidate.NavigationTarget = obs.NavigationTarget
+					} else if guidance != nil {
+						// Without route assistance, an omitted parent target retains its
+						// prior strategic destination and causes no product query.
+						candidate.NavigationTarget = guidance.NavigationTarget
+					}
+					if disposition == "applied" {
+						applied := &AppliedGuidance{Guidance: candidate, Revision: revision, BasedOnAction: reply.BasedOnAction, AppliedAtAction: result.Actions, SourceObservedAt: reply.SourceObservedAt}
+						if navigationConfigured && applied.NavigationTarget != obs.NavigationTarget {
+							if targetErr := navigation.SetNavigationTarget(applied.NavigationTarget); targetErr != nil {
+								reply.Error = targetErr.Error()
+								disposition = "invalid_navigation_target"
+							} else {
+								pendingNavigationGuidance = applied
+								disposition = "deferred_for_navigation_observation"
+								observeNewNavigationTarget = true
+							}
+						} else {
+							guidance = applied
+							state.Guidance = guidance
+						}
+					}
 				}
-				if err = emit("parent_result", map[string]any{"reply": reply, "disposition": disposition, "applied_at_action": result.Actions, "actions_while_pending": result.Actions - reply.BasedOnAction, "latency_ms": reply.Finished.Sub(reply.Started).Milliseconds()}); err != nil {
+				if err = emit("parent_result", map[string]any{"reply": reply, "disposition": disposition, "applied_at_action": result.Actions, "actions_while_pending": result.Actions - reply.BasedOnAction, "latency_ms": reply.Finished.Sub(reply.Started).Milliseconds(), "active_navigation_target": obs.NavigationTarget, "guidance_navigation_target": reply.Decision.Guidance.NavigationTarget}); err != nil {
 					return result, err
 				}
 				if disposition == "applied" && guidance.Stop {
@@ -265,6 +348,10 @@ func RunWithParent(ctx context.Context, p Policy, env Environment, controller Co
 					return result, nil
 				}
 			default:
+			}
+			if observeNewNavigationTarget {
+				// Do not give the controller new destination guidance beside an old route.
+				continue
 			}
 			events := make([]any, 0, len(p.Parent.EventPointers))
 			for _, ptr := range p.Parent.EventPointers {
@@ -313,10 +400,20 @@ func RunWithParent(ctx context.Context, p Policy, env Environment, controller Co
 		if err = emit("controller_inference", map[string]any{"decision": decision, "latency_ms": time.Since(decisionStart).Milliseconds()}); err != nil {
 			return result, err
 		}
+		if ctx.Err() != nil {
+			result.Reason = "deadline_or_cancelled"
+			return result, nil
+		}
 		if e != nil {
 			result.Reason = "controller_failed"
 			result.Error = e.Error()
 			return result, nil
+		}
+		if p.DecisionMaxAgeMS > 0 && time.Since(obs.CapturedAt) > time.Duration(p.DecisionMaxAgeMS)*time.Millisecond {
+			if err = emit("decision_discarded", map[string]any{"reason": "stale_observation", "age_ms": time.Since(obs.CapturedAt).Milliseconds()}); err != nil {
+				return result, err
+			}
+			continue
 		}
 		if math.IsNaN(decision.Confidence) || decision.Confidence < p.MinimumConfidence || decision.Confidence > 1 {
 			result.Reason = "low_confidence"
@@ -328,10 +425,19 @@ func RunWithParent(ctx context.Context, p Policy, env Environment, controller Co
 			return result, nil
 		}
 		var chosen *Tactic
-		for i := range p.Tactics {
-			if p.Tactics[i].ID == decision.Choice {
-				chosen = &p.Tactics[i]
-				break
+		if len(p.ControlGroups) > 0 {
+			chosen, e = composeControls(p.ControlGroups, p.Tactics, decision.Choices)
+			if e != nil {
+				result.Reason = "invalid_decision"
+				result.Error = e.Error()
+				return result, nil
+			}
+		} else {
+			for i := range p.Tactics {
+				if p.Tactics[i].ID == decision.Choice {
+					chosen = &p.Tactics[i]
+					break
+				}
 			}
 		}
 		if chosen == nil {
@@ -339,6 +445,25 @@ func RunWithParent(ctx context.Context, p Policy, env Environment, controller Co
 			return result, nil
 		}
 		if ctx.Err() != nil {
+			result.Reason = "deadline_or_cancelled"
+			return result, nil
+		}
+		// Do not start a known finite hold that cannot finish before the budget.
+		// Reserve transport headroom; truly uncertain delivery still stays uncertain.
+		rawSteps, _ := json.Marshal(chosen.Steps)
+		var holds []struct {
+			MS int `json:"ms"`
+		}
+		json.Unmarshal(rawSteps, &holds)
+		holdMS := 0
+		for _, h := range holds {
+			holdMS += h.MS
+		}
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= time.Duration(holdMS+100)*time.Millisecond {
+			if err = emit("action_skipped_budget", map[string]any{"hold_ms": holdMS}); err != nil {
+				return result, err
+			}
+			<-ctx.Done()
 			result.Reason = "deadline_or_cancelled"
 			return result, nil
 		}

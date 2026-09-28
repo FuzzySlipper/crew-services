@@ -13,7 +13,7 @@ func (s *Service) presentationObservation(ctx context.Context, id string, enable
 	st, err := s.require(id)
 	var p Profile
 	if err == nil {
-		p, err = s.profile(st.Game)
+		p, err = s.sessionProfile(st)
 	}
 	s.mu.Unlock()
 	if err != nil {

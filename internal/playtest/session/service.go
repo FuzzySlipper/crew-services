@@ -30,7 +30,7 @@ type Service struct {
 	opMu             sync.Mutex
 	backend          Backend
 	launcher         Launcher
-	profiles         []Profile
+	registry         *Registry
 	stateDir, worker string
 	sessions         map[string]*Session
 	scripts          map[string]*activeScript
@@ -39,10 +39,14 @@ type Service struct {
 }
 
 func New(backend Backend, launcher Launcher, profiles []Profile, stateDir, worker string) (*Service, error) {
+	return NewWithRegistry(backend, launcher, NewRegistry(profiles), stateDir, worker)
+}
+
+func NewWithRegistry(backend Backend, launcher Launcher, registry *Registry, stateDir, worker string) (*Service, error) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, err
 	}
-	s := &Service{backend: backend, launcher: launcher, profiles: profiles, stateDir: stateDir, worker: worker, sessions: map[string]*Session{}, scripts: map[string]*activeScript{}}
+	s := &Service{backend: backend, launcher: launcher, registry: registry, stateDir: stateDir, worker: worker, sessions: map[string]*Session{}, scripts: map[string]*activeScript{}}
 	files, err := filepath.Glob(filepath.Join(stateDir, "session-*.json"))
 	if err != nil {
 		return nil, err
@@ -67,10 +71,11 @@ func New(backend Backend, launcher Launcher, profiles []Profile, stateDir, worke
 		s.sessions[saved.ID] = &saved
 		if s.current == saved.ID {
 			if selector, ok := backend.(ProfileBackend); ok {
-				p, err := s.profile(saved.Game)
+				p, err := s.sessionProfile(&saved)
 				if err != nil {
 					return nil, err
 				}
+				saved.Profile = &p
 				if err := selector.SelectProfile(p); err != nil {
 					return nil, err
 				}
@@ -98,15 +103,6 @@ func clone[T any](value T) T {
 	return result
 }
 
-func (s *Service) profile(id string) (Profile, error) {
-	for _, p := range s.profiles {
-		if p.ID == id {
-			return p, nil
-		}
-	}
-	return Profile{}, fmt.Errorf("unknown game %q; use games", id)
-}
-
 func (s *Service) require(id string) (*Session, error) {
 	st := s.sessions[id]
 	if st == nil {
@@ -118,9 +114,9 @@ func (s *Service) require(id string) (*Session, error) {
 func (s *Service) Command(ctx context.Context, r Request) (any, error) {
 	switch r.Op {
 	case "games":
-		return clone(s.profiles), nil
+		return s.registry.Profiles(), nil
 	case "game":
-		return s.profile(r.Game)
+		return s.registry.Profile(r.Game)
 	case "start":
 		return s.Start(ctx, r.Game, "")
 	case "status":
@@ -170,7 +166,7 @@ func (s *Service) Start(ctx context.Context, game, previous string) (any, error)
 	defer cancel()
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-	p, err := s.profile(game)
+	p, err := s.registry.Profile(game)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +189,7 @@ func (s *Service) Start(ctx context.Context, game, previous string) (any, error)
 	if id == "" {
 		return nil, errors.New("backend returned no lease_id")
 	}
-	st := &Session{SlotID: s.slotID, ID: id, Game: game, Phase: "starting", CreatedAt: time.Now().UTC(), PreviousSession: previous}
+	st := &Session{SlotID: s.slotID, ID: id, Game: game, Profile: &p, Phase: "starting", CreatedAt: time.Now().UTC(), PreviousSession: previous}
 	s.mu.Lock()
 	s.sessions[id] = st
 	s.current = id
@@ -316,7 +312,7 @@ func (s *Service) ManualInput(ctx context.Context, id string, steps []map[string
 
 func (s *Service) deliver(ctx context.Context, id string, steps []map[string]any) (map[string]any, error) {
 	if err := target.ValidateBatch(steps); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid_input: %w", err)
 	}
 	result, err := s.backend.Input(ctx, id, steps)
 	if err == nil {

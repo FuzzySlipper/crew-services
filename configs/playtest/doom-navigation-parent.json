@@ -1,0 +1,266 @@
+{
+  "session_id": "REPLACE_WITH_OWNED_SESSION_ID",
+  "product_url": "http://127.0.0.1:48387/",
+  "commands": [
+    "combat.observe",
+    "spatial.map ascii 15 2",
+    "navigation.targets"
+  ],
+  "capture_every": 5,
+  "policy": {
+    "goal": "For the full 60 seconds, reach the north-wing doorway (door-north-wing), use the closed door normally, then explore toward the southern shotgun (pickup-shotgun-south) and engage enemies while surviving. Continue after reaching a destination. Stop only at the time budget or player death.",
+    "instructions": "Use fresh facts and measured deltas. Positive bearing means turn right; positive aimPitchError means aim up. Select simultaneous movement, look and trigger controls. Parent gives objectives and route context, not current angles: use fresh enemy bearings. If repeated forward actions produce near-zero movement, back/strafe and turn to find an opening; do not keep pushing. Aim at living visible enemies, correct pitch too. Fire when weaponReady and current assistedHit is an Entity matching a live enemy; when aim assist is inactive use aimHit. A StaticMesh hit means the shot is obstructed: reposition. Move and aim together; strafe under fire. Seek enemies/pickups and use closed doors through ordinary X. Continue after kills until time ends or death. A blocked path alone is not an unexpected state. Choose named destinations from navigation.targets using navigation_target in parent guidance. Start with door-north-wing, then pickup-shotgun-south; select another useful destination when arrived or unavailable. When fresh route facts are supplied, steer toward nextWaypoint using bearingDegrees (positive right), then move with normal controls. When no route is supplied, use the destination position and spatial map. Route assistance never drives or opens doors. Use ordinary X at a closed reachable door. Reached proposals are not physical arrival; use arrived facts. In combat, continue toward the objective when safe rather than stopping indefinitely.",
+    "budget_ms": 60000,
+    "max_actions": 0,
+    "decision_timeout_ms": 5000,
+    "minimum_confidence": 0,
+    "stall_actions": 0,
+    "progress_pointers": [
+      "/facts/combat.observe/player/position",
+      "/facts/combat.observe/player/yawDegrees",
+      "/facts/combat.observe/player/pitchDegrees",
+      "/facts/combat.observe/player/kills"
+    ],
+    "stop_when": [
+      {
+        "pointer": "/facts/combat.observe/player/dead",
+        "operator": "eq",
+        "value": true,
+        "reason": "player_dead"
+      }
+    ],
+    "tactics": [
+      {
+        "id": "move_none",
+        "description": "Do not translate",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150
+          }
+        ]
+      },
+      {
+        "id": "forward",
+        "description": "Move forward",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "ly": 1
+          }
+        ]
+      },
+      {
+        "id": "back",
+        "description": "Back away",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "ly": -1
+          }
+        ]
+      },
+      {
+        "id": "strafe_left",
+        "description": "Move left",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "lx": -1
+          }
+        ]
+      },
+      {
+        "id": "strafe_right",
+        "description": "Move right",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "lx": 1
+          }
+        ]
+      },
+      {
+        "id": "look_none",
+        "description": "Keep current view",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150
+          }
+        ]
+      },
+      {
+        "id": "turn_left",
+        "description": "Coarse left",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "rx": -0.8
+          }
+        ]
+      },
+      {
+        "id": "turn_right",
+        "description": "Coarse right",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "rx": 0.8
+          }
+        ]
+      },
+      {
+        "id": "aim_left",
+        "description": "Fine left",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "rx": -0.3
+          }
+        ]
+      },
+      {
+        "id": "aim_right",
+        "description": "Fine right",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "rx": 0.3
+          }
+        ]
+      },
+      {
+        "id": "aim_up",
+        "description": "Fine up",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "ry": 0.3
+          }
+        ]
+      },
+      {
+        "id": "aim_down",
+        "description": "Fine down",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "ry": -0.3
+          }
+        ]
+      },
+      {
+        "id": "trigger_none",
+        "description": "Do not fire or use",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150
+          }
+        ]
+      },
+      {
+        "id": "fire",
+        "description": "Fire only with ready weapon and a clear current live target hit",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "rt": 1
+          }
+        ]
+      },
+      {
+        "id": "use",
+        "description": "Use reachable door via X",
+        "steps": [
+          {
+            "kind": "gamepad",
+            "ms": 150,
+            "buttons": [
+              "x"
+            ]
+          }
+        ]
+      }
+    ],
+    "parent": {
+      "every_actions": 10,
+      "timeout_ms": 15000,
+      "max_age_ms": 15000,
+      "event_pointers": [
+        "/facts/combat.observe/player/kills"
+      ]
+    },
+    "decision_max_age_ms": 500,
+    "control_groups": [
+      {
+        "id": "movement",
+        "instructions": "Choose displacement using obstacles, recent displacement and route objective. A forward action with zero displacement suggests obstruction; choose another direction.",
+        "tactics": [
+          "move_none",
+          "forward",
+          "back",
+          "strafe_left",
+          "strafe_right"
+        ]
+      },
+      {
+        "id": "look",
+        "instructions": "Aim toward current living target using current bearing and pitch error. Prefer fine corrections near alignment.",
+        "tactics": [
+          "look_none",
+          "turn_left",
+          "turn_right",
+          "aim_left",
+          "aim_right",
+          "aim_up",
+          "aim_down"
+        ]
+      },
+      {
+        "id": "trigger",
+        "instructions": "Fire only if weaponReady and a fresh weapon hit identifies a living enemy. Otherwise use a nearby door when appropriate or choose neutral.",
+        "tactics": [
+          "trigger_none",
+          "fire",
+          "use"
+        ]
+      }
+    ]
+  },
+  "parent_model": "codex-gpt-5.6-sol",
+  "parent_protocol": "responses",
+  "decision_view": {
+    "fields": {
+      "player": "/facts/combat.observe/player",
+      "enemies": "/facts/combat.observe/enemies",
+      "doors": "/facts/combat.observe/doors",
+      "interaction": "/facts/combat.observe/interaction",
+      "route": "/facts/navigation.route"
+    },
+    "deltas": {
+      "health_change": "/facts/combat.observe/player/health",
+      "ammo_change": "/facts/combat.observe/player/ammo/bullets",
+      "kills_change": "/facts/combat.observe/player/kills",
+      "yaw_change_degrees": "/facts/combat.observe/player/yawDegrees"
+    },
+    "positions": {
+      "movement_since_last_action": "/facts/combat.observe/player/position"
+    }
+  },
+  "navigation": {
+    "initial_target": "door-north-wing"
+  }
+}

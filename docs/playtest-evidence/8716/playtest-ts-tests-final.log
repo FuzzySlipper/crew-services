@@ -1,0 +1,656 @@
+$ tsc --build && pnpm run test:compiled
+$ node --test 'dist/**/*.test.js'
+TAP version 13
+# Subtest: reload correlation requires renderer confirmation of the same staged epoch
+ok 1 - reload correlation requires renderer confirmation of the same staged epoch
+  ---
+  duration_ms: 1.857893
+  type: 'test'
+  ...
+# Subtest: new navigation or duplicated tab does not claim another attachment recovery
+ok 2 - new navigation or duplicated tab does not claim another attachment recovery
+  ---
+  duration_ms: 0.124593
+  type: 'test'
+  ...
+# Subtest: superseded recovery cannot confirm or overwrite the last realized predecessor
+ok 3 - superseded recovery cannot confirm or overwrite the last realized predecessor
+  ---
+  duration_ms: 0.171417
+  type: 'test'
+  ...
+# Subtest: dynamic resources fence cache entries by runtime generation and share an in-flight body fetch
+ok 4 - dynamic resources fence cache entries by runtime generation and share an in-flight body fetch
+  ---
+  duration_ms: 32.580011
+  type: 'test'
+  ...
+# Subtest: dynamic resources trust delivered bodies and prune only inactive cached entries
+ok 5 - dynamic resources trust delivered bodies and prune only inactive cached entries
+  ---
+  duration_ms: 2.179783
+  type: 'test'
+  ...
+# Subtest: dynamic resources admit a content-addressed WebM video on the ordinary resource route
+ok 6 - dynamic resources admit a content-addressed WebM video on the ordinary resource route
+  ---
+  duration_ms: 0.613564
+  type: 'test'
+  ...
+# Subtest: a late response cannot populate a replacement runtime cache
+ok 7 - a late response cannot populate a replacement runtime cache
+  ---
+  duration_ms: 0.692187
+  type: 'test'
+  ...
+# Subtest: dynamic audio preserves the admitted container MIME instead of forcing WAV
+ok 8 - dynamic audio preserves the admitted container MIME instead of forcing WAV
+  ---
+  duration_ms: 1.693721
+  type: 'test'
+  ...
+# Subtest: same-origin local transport uses fixed typed operation routes and SSE outputs
+ok 9 - same-origin local transport uses fixed typed operation routes and SSE outputs
+  ---
+  duration_ms: 49.37905
+  type: 'test'
+  ...
+# Subtest: local transport distinguishes an unknown mutation outcome from an HTTP rejection
+ok 10 - local transport distinguishes an unknown mutation outcome from an HTTP rejection
+  ---
+  duration_ms: 0.626515
+  type: 'test'
+  ...
+# Subtest: local transport posts large deep timeline data as a detached immutable snapshot
+ok 11 - local transport posts large deep timeline data as a detached immutable snapshot
+  ---
+  duration_ms: 2.358727
+  type: 'test'
+  ...
+# Subtest: rejected runtime recovery facts remain decoded result facts rather than transport failures
+ok 12 - rejected runtime recovery facts remain decoded result facts rather than transport failures
+  ---
+  duration_ms: 1.995871
+  type: 'test'
+  ...
+# Subtest: local transport exposes only the fixed control-replace recovery fence
+ok 13 - local transport exposes only the fixed control-replace recovery fence
+  ---
+  duration_ms: 0.599062
+  type: 'test'
+  ...
+# Subtest: local transport preserves the UTF-8 response byte limit and committed receipt
+ok 14 - local transport preserves the UTF-8 response byte limit and committed receipt
+  ---
+  duration_ms: 0.531919
+  type: 'test'
+  ...
+# Subtest: local transport rejects a declared oversized local response before buffering
+ok 15 - local transport rejects a declared oversized local response before buffering
+  ---
+  duration_ms: 0.363457
+  type: 'test'
+  ...
+# Subtest: local transport preserves committed output headers for \#7761 when the response body truncates
+ok 16 - local transport preserves committed output headers for \#7761 when the response body truncates
+  ---
+  duration_ms: 1.033299
+  type: 'test'
+  ...
+# Subtest: local transport marks a successful response with no commit boundary outcome-unknown
+ok 17 - local transport marks a successful response with no commit boundary outcome-unknown
+  ---
+  duration_ms: 0.557895
+  type: 'test'
+  ...
+# Subtest: disconnect at cursor none replaces the baseline across host incarnations
+ok 18 - disconnect at cursor none replaces the baseline across host incarnations
+  ---
+  duration_ms: 1.69959
+  type: 'test'
+  ...
+# Subtest: disconnect at cursor 5 replaces the baseline across host incarnations
+ok 19 - disconnect at cursor 5 replaces the baseline across host incarnations
+  ---
+  duration_ms: 0.540818
+  type: 'test'
+  ...
+# Subtest: disconnect at cursor 50000 replaces the baseline across host incarnations
+ok 20 - disconnect at cursor 50000 replaces the baseline across host incarnations
+  ---
+  duration_ms: 0.470006
+  type: 'test'
+  ...
+# Subtest: local transport decodes Rust-host realtime progress output
+ok 21 - local transport decodes Rust-host realtime progress output
+  ---
+  duration_ms: 0.296698
+  type: 'test'
+  ...
+# Subtest: one runtime output batch is decoded and delivered through one batch callback
+ok 22 - one runtime output batch is decoded and delivered through one batch callback
+  ---
+  duration_ms: 0.415718
+  type: 'test'
+  ...
+# Subtest: runtime output UI snapshots retain empty strings and large deep data as detached immutable values
+ok 23 - runtime output UI snapshots retain empty strings and large deep data as detached immutable values
+  ---
+  duration_ms: 3.396164
+  type: 'test'
+  ...
+# Subtest: sixty hertz receipt stream parses once and preserves five-output order per receipt
+ok 24 - sixty hertz receipt stream parses once and preserves five-output order per receipt
+  ---
+  duration_ms: 4.893669
+  type: 'test'
+  ...
+# Subtest: local transport decodes scheduled input receipts with authoritative progress and recovery cursors
+ok 25 - local transport decodes scheduled input receipts with authoritative progress and recovery cursors
+  ---
+  duration_ms: 0.946793
+  type: 'test'
+  ...
+# Subtest: local transport accepts a host-bounded decode-resync receipt without widening outgoing input batches
+ok 26 - local transport accepts a host-bounded decode-resync receipt without widening outgoing input batches
+  ---
+  duration_ms: 1.653613
+  type: 'test'
+  ...
+# Subtest: operation response waits for its exact retained-output cursor
+ok 27 - operation response waits for its exact retained-output cursor
+  ---
+  duration_ms: 0.922458
+  type: 'test'
+  ...
+# Subtest: a committed output boundary joins a fresh baseline when its old cursor is lost
+ok 28 - a committed output boundary joins a fresh baseline when its old cursor is lost
+  ---
+  duration_ms: 16.325406
+  type: 'test'
+  ...
+# Subtest: resync-required commit reconnects the fresh output baseline without replaying the operation
+ok 29 - resync-required commit reconnects the fresh output baseline without replaying the operation
+  ---
+  duration_ms: 1.282922
+  type: 'test'
+  ...
+# Subtest: a truncated committed resync response refreshes output before surfacing its known mutation failure
+ok 30 - a truncated committed resync response refreshes output before surfacing its known mutation failure
+  ---
+  duration_ms: 1.144492
+  type: 'test'
+  ...
+# Subtest: concurrent resync-required receipts share one fresh output connection
+ok 31 - concurrent resync-required receipts share one fresh output connection
+  ---
+  duration_ms: 1.058915
+  type: 'test'
+  ...
+# Subtest: incoherent commit headers remain outcome-unknown for recovery fencing
+ok 32 - incoherent commit headers remain outcome-unknown for recovery fencing
+  ---
+  duration_ms: 0.530246
+  type: 'test'
+  ...
+# Subtest: output cursor mismatch replaces the projection and ignores late old-stream output
+ok 33 - output cursor mismatch replaces the projection and ignores late old-stream output
+  ---
+  duration_ms: 1.46173
+  type: 'test'
+  ...
+# Subtest: ordinary output fragments above 16 MiB publish once after complete ordered reassembly
+ok 34 - ordinary output fragments above 16 MiB publish once after complete ordered reassembly
+  ---
+  duration_ms: 732.410376
+  type: 'test'
+  ...
+# Subtest: private connection baseline admits metadata above the former 256 MiB bound without allocating it
+ok 35 - private connection baseline admits metadata above the former 256 MiB bound without allocating it
+  ---
+  duration_ms: 0.419681
+  type: 'test'
+  ...
+# Subtest: private connection baseline admits a bounded resource set beyond the steady-state output limit
+ok 36 - private connection baseline admits a bounded resource set beyond the steady-state output limit
+  ---
+  duration_ms: 1636.420905
+  type: 'test'
+  ...
+# Subtest: interrupted private connection baseline never installs a partial projection
+ok 37 - interrupted private connection baseline never installs a partial projection
+  ---
+  duration_ms: 0.728818
+  type: 'test'
+  ...
+# Subtest: corrupt completed fragment replacement does not publish the corrupt batch
+ok 38 - corrupt completed fragment replacement does not publish the corrupt batch
+  ---
+  duration_ms: 3.352423
+  type: 'test'
+  ...
+# Subtest: output fragments recover through a fresh baseline when an active projection is corrupt
+ok 39 - output fragments recover through a fresh baseline when an active projection is corrupt
+  ---
+  duration_ms: 2.197829
+  type: 'test'
+  ...
+# Subtest: local transport rejects malformed typed output and bounded paths
+ok 40 - local transport rejects malformed typed output and bounded paths
+  ---
+  duration_ms: 0.349918
+  type: 'test'
+  ...
+# Subtest: local transport rejects missing or incoherent host fault facts
+ok 41 - local transport rejects missing or incoherent host fault facts
+  ---
+  duration_ms: 0.799439
+  type: 'test'
+  ...
+# Subtest: ordinary outputs honor the configured quota below the hard event bound
+ok 42 - ordinary outputs honor the configured quota below the hard event bound
+  ---
+  duration_ms: 0.234715
+  type: 'test'
+  ...
+# Subtest: named output lag asks for one fresh baseline without closing the runtime transport
+ok 43 - named output lag asks for one fresh baseline without closing the runtime transport
+  ---
+  duration_ms: 1.072979
+  type: 'test'
+  ...
+# Subtest: local transport hardens the JSON border before requests
+ok 44 - local transport hardens the JSON border before requests
+  ---
+  duration_ms: 0.590846
+  type: 'test'
+  ...
+# Subtest: local transport carries immutable product payload intents without local quotas
+ok 45 - local transport carries immutable product payload intents without local quotas
+  ---
+  duration_ms: 13.45707
+  type: 'test'
+  ...
+# Subtest: local transport preserves primary and secondary pointer button edges
+ok 46 - local transport preserves primary and secondary pointer button edges
+  ---
+  duration_ms: 0.794443
+  type: 'test'
+  ...
+# Subtest: local transport preserves analog button values and rejects pressure outside its range
+ok 47 - local transport preserves analog button values and rejects pressure outside its range
+  ---
+  duration_ms: 0.586392
+  type: 'test'
+  ...
+# Subtest: renderer diagnostics use their own 256 KiB snapshot budget
+ok 48 - renderer diagnostics use their own 256 KiB snapshot budget
+  ---
+  duration_ms: 14.908657
+  type: 'test'
+  ...
+# Subtest: terminal browser diagnostics remain postable after the output transport closes
+ok 49 - terminal browser diagnostics remain postable after the output transport closes
+  ---
+  duration_ms: 0.740342
+  type: 'test'
+  ...
+# Subtest: browser diagnostics accepts the production committed response without recovery or duplicate report
+ok 50 - browser diagnostics accepts the production committed response without recovery or duplicate report
+  ---
+  duration_ms: 0.386862
+  type: 'test'
+  ...
+# Subtest: attachment health reports only renderer-confirmed baselines and correlates each request
+ok 51 - attachment health reports only renderer-confirmed baselines and correlates each request
+  ---
+  duration_ms: 1.097591
+  type: 'test'
+  ...
+# Subtest: runtime not-applied disposition survives a truncated rejection body
+ok 52 - runtime not-applied disposition survives a truncated rejection body
+  ---
+  duration_ms: 0.394229
+  type: 'test'
+  ...
+# Subtest: runtime unknown disposition survives a truncated rejection body
+ok 53 - runtime unknown disposition survives a truncated rejection body
+  ---
+  duration_ms: 0.24603
+  type: 'test'
+  ...
+# Subtest: runtime output batches admit video resources and reject duplicate identities
+ok 54 - runtime output batches admit video resources and reject duplicate identities
+  ---
+  duration_ms: 0.684072
+  type: 'test'
+  ...
+# Subtest: held connection baseline satisfies response output fences without another simulation tick
+ok 55 - held connection baseline satisfies response output fences without another simulation tick
+  ---
+  duration_ms: 0.285957
+  type: 'test'
+  ...
+# Subtest: pre-mount buffering drops liveness pulses and keeps the latest runtime readout
+ok 56 - pre-mount buffering drops liveness pulses and keeps the latest runtime readout
+  ---
+  duration_ms: 1.539907
+  type: 'test'
+  ...
+# Subtest: product frame observation retains receipt apply rate and latency without scheduling
+ok 57 - product frame observation retains receipt apply rate and latency without scheduling
+  ---
+  duration_ms: 1.17729
+  type: 'test'
+  ...
+# Subtest: rejected atomic frame receipt continues without recording an application
+ok 58 - rejected atomic frame receipt continues without recording an application
+  ---
+  duration_ms: 0.151342
+  type: 'test'
+  ...
+# Subtest: adjacent readout and progress request one batch-level host wake
+ok 59 - adjacent readout and progress request one batch-level host wake
+  ---
+  duration_ms: 0.130556
+  type: 'test'
+  ...
+# Subtest: browser health datasets skip stable attributes and passive progress
+ok 60 - browser health datasets skip stable attributes and passive progress
+  ---
+  duration_ms: 0.30921
+  type: 'test'
+  ...
+# Subtest: fixed runtime transport preserves only named operations
+ok 61 - fixed runtime transport preserves only named operations
+  ---
+  duration_ms: 1.933668
+  type: 'test'
+  ...
+# Subtest: host recovers an unknown input batch from a fresh binding after a lost control response
+ok 62 - host recovers an unknown input batch from a fresh binding after a lost control response
+  ---
+  duration_ms: 13.699618
+  type: 'test'
+  ...
+# Subtest: terminal transport failure remains authoritative when input rejects before closure
+ok 63 - terminal transport failure remains authoritative when input rejects before closure
+  ---
+  duration_ms: 1.272679
+  type: 'test'
+  ...
+# Subtest: terminal transport failure remains authoritative when input rejects after closure
+ok 64 - terminal transport failure remains authoritative when input rejects after closure
+  ---
+  duration_ms: 0.884254
+  type: 'test'
+  ...
+# Subtest: host rebuilds after rejected_atomic before applying current-epoch trailing output
+ok 65 - host rebuilds after rejected_atomic before applying current-epoch trailing output
+  ---
+  duration_ms: 3.131788
+  type: 'test'
+  ...
+# Subtest: host rebuilds after terminal before applying current-epoch trailing output
+ok 66 - host rebuilds after terminal before applying current-epoch trailing output
+  ---
+  duration_ms: 1.38008
+  type: 'test'
+  ...
+# Subtest: a fresh projection baseline received during mount is applied before readiness
+ok 67 - a fresh projection baseline received during mount is applied before readiness
+  ---
+  duration_ms: 1.04191
+  type: 'test'
+  ...
+# Subtest: a transient retained baseline rejection retries with backoff and settles the later epoch
+ok 68 - a transient retained baseline rejection retries with backoff and settles the later epoch
+  ---
+  duration_ms: 405.580741
+  type: 'test'
+  ...
+# (node:1569769) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: projection recovery keeps the host gated until retained presentation realization drains
+ok 69 - projection recovery keeps the host gated until retained presentation realization drains
+  ---
+  duration_ms: 1.79759
+  type: 'test'
+  ...
+# Subtest: active Engine canvas context loss and restoration share one fresh projection recovery
+ok 70 - active Engine canvas context loss and restoration share one fresh projection recovery
+  ---
+  duration_ms: 5.537513
+  type: 'test'
+  ...
+# Subtest: only the typed lifecycle clock regression is a dropped cadence observation
+ok 71 - only the typed lifecycle clock regression is a dropped cadence observation
+  ---
+  duration_ms: 0.195279
+  type: 'test'
+  ...
+# Subtest: renderer receipt policy keeps atomic rejections and partial presentation observable for later valid output
+ok 72 - renderer receipt policy keeps atomic rejections and partial presentation observable for later valid output
+  ---
+  duration_ms: 0.05786
+  type: 'test'
+  ...
+# Subtest: renderer receipt policy closes only a typed terminal outcome
+ok 73 - renderer receipt policy closes only a typed terminal outcome
+  ---
+  duration_ms: 0.042727
+  type: 'test'
+  ...
+# Subtest: animation preloads bind to the first retained frame without replacing admitted bytes
+ok 74 - animation preloads bind to the first retained frame without replacing admitted bytes
+  ---
+  duration_ms: 0.314846
+  type: 'test'
+  ...
+# Subtest: initial renderer baseline folds pre-publication diffs and removes only repeated definitions
+ok 75 - initial renderer baseline folds pre-publication diffs and removes only repeated definitions
+  ---
+  duration_ms: 0.386092
+  type: 'test'
+  ...
+# Subtest: a completed initial baseline consumes a published first renderer frame and carries its frontier
+ok 76 - a completed initial baseline consumes a published first renderer frame and carries its frontier
+  ---
+  duration_ms: 0.119393
+  type: 'test'
+  ...
+# Subtest: preload mounting preserves deltas after a coalesced complete baseline envelope
+ok 77 - preload mounting preserves deltas after a coalesced complete baseline envelope
+  ---
+  duration_ms: 2.619884
+  type: 'test'
+  ...
+# Subtest: a normal fresh attachment installs its complete frontier baseline before the next presentation-world delta
+ok 78 - a normal fresh attachment installs its complete frontier baseline before the next presentation-world delta
+  ---
+  duration_ms: 33.436812
+  type: 'test'
+  ...
+# Subtest: audio feedback claims the initial owner, retries without loss, and acknowledges only the submitted range
+ok 79 - audio feedback claims the initial owner, retries without loss, and acknowledges only the submitted range
+  ---
+  duration_ms: 0.581462
+  type: 'test'
+  ...
+# Subtest: terminal feedback rejection preserves the candidate and fails the caller
+ok 80 - terminal feedback rejection preserves the candidate and fails the caller
+  ---
+  duration_ms: 0.233477
+  type: 'test'
+  ...
+# Subtest: video feedback carries renderer eviction counts and clears them for a replacement owner
+ok 81 - video feedback carries renderer eviction counts and clears them for a replacement owner
+  ---
+  duration_ms: 0.295748
+  type: 'test'
+  ...
+# Subtest: ghost plate feedback replaces an active snapshot with an empty snapshot after disposal
+ok 82 - ghost plate feedback replaces an active snapshot with an empty snapshot after disposal
+  ---
+  duration_ms: 0.267153
+  type: 'test'
+  ...
+# Subtest: renderer cadence reports ghost camera changes without product updates or presentation mutations
+ok 83 - renderer cadence reports ghost camera changes without product updates or presentation mutations
+  ---
+  duration_ms: 0.43545
+  type: 'test'
+  ...
+# Subtest: rust-host idle cadence flushes an asynchronously completed audio voice
+ok 84 - rust-host idle cadence flushes an asynchronously completed audio voice
+  ---
+  duration_ms: 2.823318
+  type: 'test'
+  ...
+# Subtest: renderer diagnostics retries one recoverable rejection without loss or flood
+ok 85 - renderer diagnostics retries one recoverable rejection without loss or flood
+  ---
+  duration_ms: 0.396202
+  type: 'test'
+  ...
+# Subtest: renderer diagnostics cancels an in-flight observation after runtime replacement
+ok 86 - renderer diagnostics cancels an in-flight observation after runtime replacement
+  ---
+  duration_ms: 0.305489
+  type: 'test'
+  ...
+# Subtest: renderer diagnostics cadence sampling stays quiet until a changed sequence is due
+ok 87 - renderer diagnostics cadence sampling stays quiet until a changed sequence is due
+  ---
+  duration_ms: 0.268918
+  type: 'test'
+  ...
+# Subtest: many renderer cadence callbacks coalesce to one latest follow-up sample
+ok 88 - many renderer cadence callbacks coalesce to one latest follow-up sample
+  ---
+  duration_ms: 0.454183
+  type: 'test'
+  ...
+# Subtest: renderer diagnostics cadence retries after a failed auxiliary report
+ok 89 - renderer diagnostics cadence retries after a failed auxiliary report
+  ---
+  duration_ms: 0.3215
+  type: 'test'
+  ...
+# Subtest: renderer diagnostics cadence disposal cancels queued work before admission
+ok 90 - renderer diagnostics cadence disposal cancels queued work before admission
+  ---
+  duration_ms: 0.267567
+  type: 'test'
+  ...
+# Subtest: audio feedback flush precedes every browser-host C\# update admission lane
+ok 91 - audio feedback flush precedes every browser-host C\# update admission lane
+  ---
+  duration_ms: 0.322289
+  type: 'test'
+  ...
+# Subtest: realtime owner controls advancement without dropping typed cadence input
+ok 92 - realtime owner controls advancement without dropping typed cadence input
+  ---
+  duration_ms: 0.441373
+  type: 'test'
+  ...
+# Subtest: Rust-host output pulse drains typed input without browser advancement
+ok 93 - Rust-host output pulse drains typed input without browser advancement
+  ---
+  duration_ms: 0.141819
+  type: 'test'
+  ...
+# Subtest: input availability wakes static realtime and demand admission without a second loop
+ok 94 - input availability wakes static realtime and demand admission without a second loop
+  ---
+  duration_ms: 0.315982
+  type: 'test'
+  ...
+# Subtest: slow cadence coalesces an input wake while ingress preserves ordered edges
+ok 95 - slow cadence coalesces an input wake while ingress preserves ordered edges
+  ---
+  duration_ms: 0.40699
+  type: 'test'
+  ...
+# Subtest: a renderer cadence before a pending input wake does not drain later input early
+ok 96 - a renderer cadence before a pending input wake does not drain later input early
+  ---
+  duration_ms: 0.203481
+  type: 'test'
+  ...
+# Subtest: a cadence deferred by the serialized lane does not drain a later input wake
+ok 97 - a cadence deferred by the serialized lane does not drain a later input wake
+  ---
+  duration_ms: 0.21279
+  type: 'test'
+  ...
+# Subtest: slow admission keeps ingress overflow recovery bounded after more than 1024 input wakes
+ok 98 - slow admission keeps ingress overflow recovery bounded after more than 1024 input wakes
+  ---
+  duration_ms: 0.2999
+  type: 'test'
+  ...
+# Subtest: cadence keeps an older same-frame RAF timestamp monotonic after an input wakeup
+ok 99 - cadence keeps an older same-frame RAF timestamp monotonic after an input wakeup
+  ---
+  duration_ms: 0.533675
+  type: 'test'
+  ...
+# Subtest: transport rejects an adapter with an arbitrary or missing operation surface
+ok 100 - transport rejects an adapter with an arbitrary or missing operation surface
+  ---
+  duration_ms: 0.331952
+  type: 'test'
+  ...
+# Subtest: bundle assets are fixed JS composition roots and descriptor bytes are reproducible
+ok 101 - bundle assets are fixed JS composition roots and descriptor bytes are reproducible
+  ---
+  duration_ms: 0.898441
+  type: 'test'
+  ...
+# Subtest: bundle path and identity admission is fail-closed
+ok 102 - bundle path and identity admission is fail-closed
+  ---
+  duration_ms: 0.309754
+  type: 'test'
+  ...
+# Subtest: packaged Rust-host realtime ownership propagates through the generated bridge
+ok 103 - packaged Rust-host realtime ownership propagates through the generated bridge
+  ---
+  duration_ms: 0.126735
+  type: 'test'
+  ...
+# Subtest: standard realtime bundles default to Rust-host ownership while explicit browser ownership remains available
+ok 104 - standard realtime bundles default to Rust-host ownership while explicit browser ownership remains available
+  ---
+  duration_ms: 0.108449
+  type: 'test'
+  ...
+# Subtest: renderer preload admits mesh and GLB descriptors beyond retired byte, aggregate, and count caps
+ok 105 - renderer preload admits mesh and GLB descriptors beyond retired byte, aggregate, and count caps
+  ---
+  duration_ms: 56.345343
+  type: 'test'
+  ...
+# Subtest: renderer preload admits texture and audio descriptors beyond retired byte, aggregate, and count caps
+ok 106 - renderer preload admits texture and audio descriptors beyond retired byte, aggregate, and count caps
+  ---
+  duration_ms: 4.123265
+  type: 'test'
+  ...
+# Subtest: preload passes trusted metadata and response storage directly to the renderer
+ok 107 - preload passes trusted metadata and response storage directly to the renderer
+  ---
+  duration_ms: 0.787861
+  type: 'test'
+  ...
+1..107
+# tests 107
+# suites 0
+# pass 107
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2757.328354

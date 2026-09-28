@@ -12,7 +12,8 @@ import (
 type Guidance struct {
 	Situation        string         `json:"situation"`
 	Objective        string         `json:"objective"`
-	Target           string         `json:"target"`
+	Target           string         `json:"target,omitempty"`
+	NavigationTarget string         `json:"navigation_target,omitempty"`
 	Parameters       map[string]any `json:"parameters"`
 	PreferredTactics []string       `json:"preferred_tactics"`
 	Stop             bool           `json:"stop"`
@@ -31,8 +32,19 @@ type ParentPolicy struct {
 	EventPointers []string `json:"event_pointers,omitempty"`
 }
 type ParentDecision struct {
-	Guidance Guidance        `json:"guidance"`
-	Raw      json.RawMessage `json:"raw,omitempty"`
+	Guidance   Guidance             `json:"guidance"`
+	Raw        json.RawMessage      `json:"raw,omitempty"`
+	InputImage *ParentImageEvidence `json:"input_image,omitempty"`
+}
+
+// ParentImageEvidence identifies the local capture supplied to an opt-in
+// visual parent request. It deliberately excludes the image bytes/data URL.
+type ParentImageEvidence struct {
+	Path       string    `json:"path"`
+	SHA256     string    `json:"sha256"`
+	Bytes      int       `json:"bytes"`
+	ObservedAt time.Time `json:"observed_at"`
+	CaptureID  string    `json:"capture_id,omitempty"`
 }
 type Parent interface {
 	Advise(context.Context, State, []Tactic) (ParentDecision, error)

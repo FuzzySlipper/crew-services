@@ -15,13 +15,16 @@ import (
 )
 
 type config struct {
-	SessionID      string           `json:"session_id"`
-	ProductURL     string           `json:"product_url"`
-	Commands       []string         `json:"commands"`
-	CaptureEvery   int              `json:"capture_every,omitempty"`
-	ParentModel    string           `json:"parent_model,omitempty"`
-	ParentProtocol string           `json:"parent_protocol,omitempty"`
-	Policy         assistant.Policy `json:"policy"`
+	DecisionView   *assistant.DecisionView     `json:"decision_view,omitempty"`
+	SessionID      string                      `json:"session_id"`
+	ProductURL     string                      `json:"product_url"`
+	Commands       []string                    `json:"commands"`
+	CaptureEvery   int                         `json:"capture_every,omitempty"`
+	ParentModel    string                      `json:"parent_model,omitempty"`
+	ParentProtocol string                      `json:"parent_protocol,omitempty"`
+	ParentVision   bool                        `json:"parent_vision,omitempty"`
+	Navigation     *assistant.NavigationConfig `json:"navigation,omitempty"`
+	Policy         assistant.Policy            `json:"policy"`
 }
 
 func main() {
@@ -36,6 +39,7 @@ func run() error {
 	serviceURL := flag.String("url", client.DefaultURL, "playtest service URL")
 	router := flag.String("router", "http://127.0.0.1:18082", "den-router base URL")
 	model := flag.String("model", "jev", "router model alias")
+	scripted := flag.Bool("scripted-doom", false, "Doom heuristic comparison controller for grouped controls")
 	baseline := flag.Bool("baseline", false, "repeat the first tactic deterministically")
 	flag.Parse()
 	if *path == "" || *output == "" {
@@ -49,7 +53,7 @@ func run() error {
 	if err = json.Unmarshal(raw, &cfg); err != nil {
 		return err
 	}
-	if err = cfg.Policy.Validate(); err != nil {
+	if err = cfg.Validate(); err != nil {
 		return err
 	}
 	if cfg.SessionID == "" {
@@ -99,14 +103,26 @@ func run() error {
 		return err
 	}
 	defer file.Close()
-	env := &assistant.SessionEnvironment{Observer: assistant.Observer{Client: service, SessionID: cfg.SessionID, ProductURL: cfg.ProductURL, Commands: cfg.Commands, CaptureEvery: cfg.CaptureEvery}}
-	var controller assistant.Controller = &assistant.Jev{BaseURL: *router, Model: *model, Token: os.Getenv("PLAYTEST_ROUTER_TOKEN")}
+	env := &assistant.SessionEnvironment{Observer: assistant.Observer{Client: service, SessionID: cfg.SessionID, ProductURL: cfg.ProductURL, Commands: cfg.Commands, CaptureEvery: cfg.CaptureEvery, Navigation: cfg.Navigation}}
+	var controller assistant.Controller = &assistant.Jev{View: cfg.DecisionView, Groups: cfg.Policy.ControlGroups, BaseURL: *router, Model: *model, Token: os.Getenv("PLAYTEST_ROUTER_TOKEN")}
+	if *scripted && *baseline {
+		return fmt.Errorf("choose one baseline")
+	}
+	if *baseline && len(cfg.Policy.ControlGroups) > 0 {
+		return fmt.Errorf("first-tactic baseline requires single-choice mode")
+	}
+	if *scripted {
+		if len(cfg.Policy.ControlGroups) == 0 || cfg.ParentModel != "" {
+			return fmt.Errorf("scripted Doom requires grouped controls and no parent")
+		}
+		controller = &assistant.DoomScripted{}
+	}
 	if *baseline {
 		controller = &assistant.Baseline{}
 	}
 	var parent assistant.Parent
 	if cfg.ParentModel != "" {
-		parent = &assistant.HTTPParent{BaseURL: *router, Model: cfg.ParentModel, Protocol: cfg.ParentProtocol, Token: os.Getenv("PLAYTEST_ROUTER_TOKEN")}
+		parent = &assistant.HTTPParent{BaseURL: *router, Model: cfg.ParentModel, Protocol: cfg.ParentProtocol, Token: os.Getenv("PLAYTEST_ROUTER_TOKEN"), Vision: cfg.ParentVision}
 	}
 	result, runErr := assistant.RunWithParent(ctx, cfg.Policy, env, controller, parent, file)
 	if err = file.Sync(); err != nil {
@@ -114,4 +130,17 @@ func run() error {
 	}
 	json.NewEncoder(os.Stdout).Encode(result)
 	return runErr
+}
+
+func (c config) Validate() error {
+	if c.ParentVision && c.ParentModel == "" {
+		return fmt.Errorf("parent_vision requires parent_model")
+	}
+	if err := c.DecisionView.Validate(); err != nil {
+		return err
+	}
+	if err := c.Navigation.Validate(); err != nil {
+		return err
+	}
+	return c.Policy.Validate()
 }

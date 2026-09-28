@@ -54,6 +54,7 @@ type Request struct {
 }
 
 type Session struct {
+	Profile         *Profile       `json:"profile,omitempty"`
 	SlotID          string         `json:"slot_id,omitempty"`
 	ID              string         `json:"id"`
 	Game            string         `json:"game"`

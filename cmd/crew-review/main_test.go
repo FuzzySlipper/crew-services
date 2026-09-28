@@ -155,3 +155,23 @@ func TestStartRunLoopsUsesConfiguredBoundedLanes(t *testing.T) {
 		t.Fatal("bounded lanes did not stop")
 	}
 }
+
+func TestWorkspaceRootsConfig(t *testing.T) {
+	getenv := func(key string) string {
+		if key == "CREW_REVIEW_WORKSPACE_ROOTS" {
+			return "/repos:/other"
+		}
+		return ""
+	}
+	cfg, err := parseConfig(nil, getenv)
+	if err != nil || len(cfg.workspaceRoots) != 2 || cfg.workspaceRoots[1] != "/other" {
+		t.Fatalf("environment roots: %v %v", cfg.workspaceRoots, err)
+	}
+	cfg, err = parseConfig([]string{"-workspace-root", "/chosen"}, getenv)
+	if err != nil || len(cfg.workspaceRoots) != 1 || cfg.workspaceRoots[0] != "/chosen" {
+		t.Fatalf("flag roots: %v %v", cfg.workspaceRoots, err)
+	}
+	if _, err := parseConfig([]string{"-workspace-root", "relative"}, getenv); err == nil {
+		t.Fatal("relative root accepted")
+	}
+}

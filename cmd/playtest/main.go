@@ -63,11 +63,11 @@ func cliCommand(args []string) (client.Request, error) {
 		return client.Request{}, usageError()
 	}
 	switch args[0] {
-	case "games":
+	case "games", "reload":
 		if len(args) != 1 {
-			return client.Request{}, errors.New("usage: playtest games")
+			return client.Request{}, fmt.Errorf("usage: playtest %s", args[0])
 		}
-		return client.Request{Op: "games"}, nil
+		return client.Request{Op: args[0]}, nil
 	case "game":
 		if len(args) != 3 || args[1] != "show" {
 			return client.Request{}, errors.New("usage: playtest game show GAME")
@@ -105,6 +105,19 @@ func cliCommand(args []string) (client.Request, error) {
 			return client.Request{}, fmt.Errorf("input --json: %w", err)
 		}
 		return client.Request{Op: "input", SessionID: args[1], Steps: steps}, nil
+	case "assist":
+		if len(args) < 2 {
+			return client.Request{}, errors.New("usage: playtest assist SESSION [--json JSON]")
+		}
+		data, err := optionalJSONFlag("assist", args[2:])
+		if err != nil {
+			return client.Request{}, err
+		}
+		if len(data) == 0 {
+			data = json.RawMessage(`{"op":"discover"}`)
+		}
+		wrapped, err := json.Marshal(map[string]any{"op": "playtest", "request": data})
+		return client.Request{Op: "browser", SessionID: args[1], Data: wrapped}, err
 	case "browser", "capture", "interaction":
 		if len(args) < 2 {
 			if args[0] == "interaction" {
@@ -211,5 +224,5 @@ func writeJSON(output io.Writer, value json.RawMessage) error {
 }
 
 func usageError() error {
-	return errors.New("usage: playtest [--url URL] {games | game show GAME | start GAME | status [SESSION] | observe SESSION | interaction SESSION [--json JSON] | input SESSION --json JSON | browser SESSION --json JSON | capture SESSION [--json JSON] | run SESSION --file PATH [--budget-ms N] | script SCRIPTID | cancel SESSION | resume SESSION [--json VALUE] | recover SESSION | stop SESSION | mcp}")
+	return errors.New("usage: playtest [--url URL] {assist SESSION [--json JSON] | reload | games | game show GAME | start GAME | status [SESSION] | observe SESSION | interaction SESSION [--json JSON] | input SESSION --json JSON | browser SESSION --json JSON | capture SESSION [--json JSON] | run SESSION --file PATH [--budget-ms N] | script SCRIPTID | cancel SESSION | resume SESSION [--json VALUE] | recover SESSION | stop SESSION | mcp}\n  reload: re-read the game profile file and pool configuration without restarting sessions.")
 }

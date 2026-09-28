@@ -42,6 +42,14 @@ func (s *Service) GetManualReviewCapability(ctx context.Context, projectID strin
 			Detail:   "Manual review is available only while the task status is review.",
 		}, nil
 	}
+	if validator, ok := s.den.(WorkspaceValidator); ok {
+		if err := validator.ValidateWorkspace(ctx, key); err != nil {
+			if errors.Is(err, ErrWorkspaceRequired) || errors.Is(err, ErrWorkspaceAmbiguous) {
+				return ManualReviewCapability{Eligible: false, Mode: ManualReviewBestEffort, Label: "Local checkout needed", Detail: err.Error()}, nil
+			}
+			return ManualReviewCapability{}, err
+		}
+	}
 	capability := bestEffortCapability()
 	if store, ok := s.store.(ManualReviewSubmissionStore); ok {
 		record, found, err := store.LatestReusableSubmission(ctx, key.ProjectID, key.TaskID)
@@ -84,6 +92,12 @@ func (s *Service) SubmitManualReview(ctx context.Context, request ManualReviewSu
 	}
 	if !isReviewStatus(task.Status) {
 		return ManualReviewReceipt{}, false, ErrTaskNotReviewable
+	}
+
+	if validator, ok := s.den.(WorkspaceValidator); ok {
+		if err := validator.ValidateWorkspace(ctx, key); err != nil {
+			return ManualReviewReceipt{}, false, err
+		}
 	}
 
 	if store, ok := s.store.(ManualReviewSubmissionStore); ok {

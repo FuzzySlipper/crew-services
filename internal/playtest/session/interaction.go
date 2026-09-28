@@ -67,7 +67,7 @@ func (s *Service) interactionCall(ctx context.Context, id string, data json.RawM
 	}
 	var p Profile
 	if err == nil {
-		p, err = s.profile(st.Game)
+		p, err = s.sessionProfile(st)
 	}
 	s.mu.Unlock()
 	if err != nil {

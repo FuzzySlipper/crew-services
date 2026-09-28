@@ -40,7 +40,7 @@ func capabilities() map[string]any {
 		"absolute_pointer":      true,
 		"keyboard":              true,
 		"gamepad":               true,
-		"relative_mouse":        false,
+		"relative_mouse":        true,
 		"pointer_lock_readback": true,
 		"engine_queries":        false,
 	}
@@ -222,7 +222,7 @@ func (a *Adapter) Acquire(ctx context.Context, width, height, fps, ttl int) (map
 	}
 
 	result, err := a.call(ctx, child, "launch", map[string]any{
-		"width": width, "height": height, "headless": true,
+		"width": width, "height": height, "headless": true, "artifact_directory": directory,
 		"user_data_dir": filepath.Join(directory, "profile"), "executable_path": a.config.Chromium,
 	})
 	if err != nil {
@@ -402,6 +402,13 @@ func (a *Adapter) Browser(ctx context.Context, leaseID string, raw json.RawMessa
 	child := a.currentChild(leaseID)
 	if child == nil {
 		return nil, a.unavailableError(leaseID)
+	}
+	if request["op"] == "playtest" {
+		if action, ok := request["request"].(map[string]any); ok && (action["op"] == "record" || action["op"] == "survey") {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, 110*time.Second)
+			defer cancel()
+		}
 	}
 	return a.call(ctx, child, "browser", request)
 }

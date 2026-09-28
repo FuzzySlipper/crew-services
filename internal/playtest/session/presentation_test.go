@@ -32,8 +32,8 @@ func TestPresentationCaptureKeepsPendingFactsAndOriginal(t *testing.T) {
 	}))
 	defer host.Close()
 	s, _, id := testService(t)
-	s.profiles[0].URL = host.URL
-	s.profiles[0].PresentationObservations = true
+	s.sessions[id].Profile.URL = host.URL
+	s.sessions[id].Profile.PresentationObservations = true
 	first, err := s.Capture(context.Background(), id, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestPresentationUnavailableDoesNotLoseImage(t *testing.T) {
 			}))
 			defer host.Close()
 			s, _, id := testService(t)
-			s.profiles[0].URL = host.URL
+			s.sessions[id].Profile.URL = host.URL
 			result, err := s.Capture(context.Background(), id, json.RawMessage(`{"engine_presentation":true}`))
 			if err != nil {
 				t.Fatal(err)

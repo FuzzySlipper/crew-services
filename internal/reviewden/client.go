@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	DefaultMCPURL               = "http://192.168.1.10:5199/mcp"
+	DefaultMCPURL               = "http://192.168.1.5:5199/mcp"
 	maxResponseBytes            = 1 << 20
 	maxFinalizationRequestBytes = 16 * 1024
 )
@@ -35,17 +35,20 @@ const (
 // MCP-session state is kept here. A caller can provide an HTTP client with a
 // bounded timeout for tests or process-specific policy.
 type Client struct {
-	endpoint string
-	token    string
-	http     *http.Client
-	request  atomic.Uint64
+	endpoint       string
+	token          string
+	http           *http.Client
+	request        atomic.Uint64
+	workspaceRoots []string
 }
 
-var _ review.SubmissionDenClient = (*Client)(nil)
-var _ review.ManualReviewDenClient = (*Client)(nil)
+var (
+	_ review.SubmissionDenClient   = (*Client)(nil)
+	_ review.ManualReviewDenClient = (*Client)(nil)
+)
 
 // New constructs a Den MCP client after validating its endpoint.
-func New(endpoint, token string, httpClient *http.Client) (*Client, error) {
+func New(endpoint, token string, httpClient *http.Client, options ...func(*Client) error) (*Client, error) {
 	parsed, err := url.Parse(strings.TrimSpace(endpoint))
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return nil, errors.New("Den MCP URL must be an absolute http or https URL")
@@ -56,7 +59,13 @@ func New(endpoint, token string, httpClient *http.Client) (*Client, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 65 * time.Second}
 	}
-	return &Client{endpoint: parsed.String(), token: strings.TrimSpace(token), http: httpClient}, nil
+	client := &Client{endpoint: parsed.String(), token: strings.TrimSpace(token), http: httpClient}
+	for _, option := range options {
+		if err := option(client); err != nil {
+			return nil, err
+		}
+	}
+	return client, nil
 }
 
 // FromEnv uses the same names as the existing Den tooling. An unset URL uses
@@ -67,7 +76,7 @@ func FromEnv() (*Client, error) {
 	if endpoint == "" {
 		endpoint = DefaultMCPURL
 	}
-	return New(endpoint, os.Getenv("DEN_MCP_TOKEN"), nil)
+	return New(endpoint, os.Getenv("DEN_MCP_TOKEN"), nil, WithWorkspaceRoots(filepath.SplitList(strings.TrimSpace(os.Getenv("CREW_REVIEW_WORKSPACE_ROOTS")))))
 }
 
 type rpcResponse struct {
@@ -248,6 +257,7 @@ type contextTask struct {
 	ID               int64  `json:"id"`
 	ProjectID        string `json:"project_id"`
 	RootPath         string `json:"root_path"`
+	RepositoryURL    string `json:"repository_url"`
 	RepositoryHandle string `json:"repository_handle"`
 }
 
@@ -307,9 +317,9 @@ func (c *Client) GetReviewContext(ctx context.Context, key review.Key) (review.C
 	if response.CurrentRound.ID != key.ReviewRoundID || response.CurrentRound.ProjectID != "" && response.CurrentRound.ProjectID != key.ProjectID || response.CurrentRound.TaskID != 0 && response.CurrentRound.TaskID != key.TaskID {
 		return review.Context{}, fmt.Errorf("%w: Den context round %d does not match admitted round %d", review.ErrStaleRound, response.CurrentRound.ID, key.ReviewRoundID)
 	}
-	workspace := strings.TrimSpace(response.Task.RootPath)
-	if workspace == "" || !filepath.IsAbs(workspace) {
-		return review.Context{}, fmt.Errorf("%w; set Den project root_path (got %q)", review.ErrWorkspaceRequired, response.Task.RootPath)
+	workspace, err := c.resolveWorkspace(ctx, key.ProjectID, response.Task.RootPath, response.Task.RepositoryURL)
+	if err != nil {
+		return review.Context{}, err
 	}
 	taskData, err := c.call(ctx, "get_task_context", map[string]any{"task_id": key.TaskID})
 	if err != nil {
@@ -318,7 +328,7 @@ func (c *Client) GetReviewContext(ctx context.Context, key review.Key) (review.C
 	if _, _, _, err := decodeTaskContext(taskData, key.Task()); err != nil {
 		return review.Context{}, err
 	}
-	material, err := mergeTaskContext(data, taskData, key.Task())
+	material, err := mergeTaskContext(data, taskData, key.Task(), workspace)
 	if err != nil {
 		return review.Context{}, err
 	}
@@ -388,7 +398,7 @@ func taskContextCurrentReviewRoundID(raw json.RawMessage) (int64, error) {
 	return round.ID, nil
 }
 
-func mergeTaskContext(reviewData, taskData json.RawMessage, key review.TaskKey) (json.RawMessage, error) {
+func mergeTaskContext(reviewData, taskData json.RawMessage, key review.TaskKey, workspace string) (json.RawMessage, error) {
 	_, taskRaw, messagesRaw, err := decodeTaskContext(taskData, key)
 	if err != nil {
 		return nil, err
@@ -421,6 +431,7 @@ func mergeTaskContext(reviewData, taskData json.RawMessage, key review.TaskKey) 
 			reviewTask[field] = value
 		}
 	}
+	reviewTask["resolved_workspace"], _ = json.Marshal(workspace)
 	encodedTask, err := json.Marshal(reviewTask)
 	if err != nil {
 		return nil, fmt.Errorf("encode merged Den task context: %w", err)

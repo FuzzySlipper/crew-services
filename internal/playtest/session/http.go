@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"crew-services/internal/playtest/target"
 	"encoding/json"
 	"net/http"
 )
@@ -26,6 +27,13 @@ func CommandHandler(s Commander) http.Handler {
 			w.WriteHeader(400)
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
 			return
+		}
+		if request.Op == "input" {
+			if err := target.ValidateBatch(request.Steps); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "invalid_input: " + err.Error(), "code": "invalid_input"})
+				return
+			}
 		}
 		result, err := s.Command(r.Context(), request)
 		response := map[string]any{"ok": err == nil, "result": result}

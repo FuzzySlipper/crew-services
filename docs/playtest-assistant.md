@@ -28,7 +28,8 @@ Use this for short navigation, combat or interaction debugging when repeated
 control decisions benefit from fresh text facts. The supervising agent owns the
 mission, initial visual inspection and final judgment. Jev chooses from the
 supplied finite tactics; an optional parent model updates strategic guidance.
-Neither model client receives screenshot pixels.
+Jev receives text only. The parent can optionally receive the current screenshot
+with `parent_vision: true`; see the visual-parent configuration below.
 
 1. Discover the profile with `playtest games` / `playtest game show PROFILE`,
    start an owned session, and inspect its original screenshot and capabilities.
@@ -135,6 +136,9 @@ controller needs suitable textual facts; do not imply visual perception.
 Planner configuration supplies a goal, instructions, tactic descriptions and
 fixed input steps. Each tactic is at most two seconds; total interval is at
 most120 seconds. Jev cannot synthesize scripts, commands, durations or inputs.
+`max_actions: 0` removes the action-count cap; `stall_actions: 0` disables
+automatic stall handback. The wall-clock budget remains mandatory. Use these
+for time-limited endurance trials and retain explicit observed stop conditions.
 The deterministic baseline repeats the first tactic using the same observation,
 threshold, deadline and cleanup machinery.
 
@@ -237,7 +241,7 @@ combined with `spatial.map ascii` for a smaller local map than the JSON cell
 array. Both are product/Engine observations, not browser-inferred game state.
 `capture_every` reduces screenshot frequency; skipped captures are explicit,
 not copies falsely labeled fresh. Screenshots remain original local evidence;
-these model clients receive textual facts only. Keep the browser rendering.
+the parent receives pixels only when explicitly enabled. Keep the browser rendering.
 
 `cycle_timing` separates observation work, Jev request latency, input-call
 duration and gaps between input calls. `observation_age_at_input_ms` measures
@@ -265,3 +269,134 @@ agent through `rusty-live-debug`, not an observation command or a hidden Jev
 control. It invokes the ordinary product handler after fresh reach/visibility
 checks. See the Engine's `docs/controller-interaction.md` green path before
 resorting to repeated pixel hunting for containers or doors.
+
+## Optional visual parent
+
+Set `parent_vision: true` alongside `parent_model` and `parent_protocol` to attach
+the current observation screenshot to the parent as a native image content part.
+Both `responses` and `chat` transports support this. Jev still receives only its
+text decision view, including the parent's resulting maneuver guidance.
+
+Use `capture_every: 1` when every parent request needs a current frame. Skipped
+captures are explicitly unavailable; older images are not silently substituted.
+The image path must be readable on the machine running `playtest-assist` (a shared
+filesystem is necessary for a remote capture service). An unreadable requested
+image fails that parent request instead of pretending visual input was delivered.
+The transcript records image provenance without embedding the image payload.
+
+The [visual Doom example](../configs/playtest/doom-navigation-visual-parent.json)
+uses Luna, GPS guidance, and a current capture for each observation.
+
+Give the parent a stable local maneuver, completion condition and recovery rule,
+such as “turn toward the fresh waypoint until aligned, then advance; back away
+and reassess if displacement stays near zero.” The image and facts precede the
+model response: Jev must use current bearings, not repeat an old angle. Screenshots
+provide visible layout; spatial maps/routes provide explicit semantic assistance.
+Neither establishes pixels and queried game facts came from the exact same tick.
+
+## Compact decisions and simultaneous controls
+
+The optional top-level `decision_view` selects named JSON pointers for Jev only.
+The parent retains the full original facts/map; the transcript also retains the
+original observations. `fields` copies selected JSON values, `deltas` reports
+current minus previous numeric values, and `positions` reports x/y/z plus
+measured dx/dy/dz/displacement for position objects. Missing facts or missing
+prior samples are explicitly `unknown`, not zero. For example:
+
+```json
+"decision_view": {
+  "fields": {"player": "/facts/combat.observe/player", "enemies": "/facts/combat.observe/enemies"},
+  "deltas": {"health_change": "/facts/combat.observe/player/health"},
+  "positions": {"movement": "/facts/combat.observe/player/position"}
+}
+```
+
+Without that setting, the existing full semantic context is unchanged. A local
+map can be useful to the parent while current target facts and measured changes
+make a smaller tactical input. A zero displacement does not by itself prove
+collision; interpret it alongside the preceding requested movement.
+
+`policy.control_groups` optionally partitions fixed tactic IDs into movement,
+look, trigger or other groups. Each group has `id`, `instructions`, and `tactics`
+(the allowed tactic IDs). All referenced tactics must be single gamepad steps
+with the same hold duration, and groups must own disjoint control fields.
+Neutral options may omit axes. The runner asks one typed choice per group plus
+one continue/handback choice in a single hosted Jev request, then merges the
+selected fixed fields into one ordinary finite input. Jev cannot invent axis
+values, buttons or durations. An invalid or missing choice does not dispatch.
+Confidence gating uses the minimum returned confidence across required choices;
+per-question option distributions and the original response remain recorded,
+without claiming that confidence is calibrated or overriding the selected option.
+
+`policy.decision_max_age_ms` discards a tactical reply if its source observation
+is older than the configured wall-time limit. Zero leaves this check disabled.
+A stale reply is journaled as `decision_discarded`; the runner reobserves within
+the original interval deadline. This differs from a network timeout and does not
+retry an uncertain input. Observations begin before optional screenshot capture,
+so capture time contributes to this conservative age. Avoid starting a known
+hold that cannot finish within the interval: the runner reserves 100ms transport
+headroom and waits out the remaining budget without sending that input. Unknown
+transport delays can still produce an uncertain receipt; inspect cleanup.
+
+[The composed Doom example](../configs/playtest/doom-composed-parent.json) uses
+these options. It is experimental: `minimum_confidence: 0` retains low-confidence
+choices for gameplay measurement, while explicit handback/invalid-response/death
+and deadline checks remain. A 0.1 minimum across four answers caused early look
+ambiguity handbacks in initial trials. Neither setting is calibrated for Doom;
+record the setting and compare matched policies. Its `--scripted-doom` comparison mode requires removing parent
+configuration and uses a deliberately small Doom-specific heuristic instead of
+Jev: turn toward a living LOS target, fire only on a matching weapon ray, and
+recover after repeated blocked forward attempts. This is an explicit scripted
+reference, not Engine navigation, and its timing has no model round trip.
+It requires the example's movement/look/trigger IDs. Existing `--baseline`
+continues to mean repeat-first-tactic and requires single-choice mode.
+
+### Optional route guidance
+
+A product can expose `navigation.targets` (named destinations) and
+`navigation.route <id>` (fresh, read-only Engine route facts) through its existing
+live-debug catalog. To enable the GPS aid, add an explicit initial destination:
+
+```json
+"navigation": { "initial_target": "REPLACE_WITH_REPORTED_TARGET_ID" }
+```
+
+Use an ID from `navigation.targets`. The parent can change destinations with its
+`navigation_target` field. This is separate from the free-text combat `target`.
+An empty navigation target retains the previous destination; unknown IDs do not
+replace it. Every observation refreshes the selected route. The observation
+stores it under the stable `navigation.route` fact key, suitable for a compact
+view field such as `"route": "/facts/navigation.route"`. Keep the destination
+catalog in the parent context; Jev usually needs only the current route.
+
+The aid never presses controls, follows a path automatically, opens doors, or
+teleports the player. Jev must turn toward the next waypoint, move, avoid immediate
+obstacles, use doors normally, and fight. Treat unavailable, blocked, exhausted,
+or unreachable results as such; a route proposal does not establish physical
+arrival or certify traversability. A new parent destination takes effect with a
+new observation so its guidance is not paired with the old destination's route.
+
+For comparisons, give both variants the same mission and destination catalog;
+omit `navigation` in the unaided variant. Keep the model, finite control menu,
+budget, stop conditions and initial state matched. Record destination arrivals,
+exploration and lack of movement as well as kills and survival. Spatial maps and
+routes are explicit omniscient assistance, not evidence of unaided perception.
+
+The [Doom navigation example](../configs/playtest/doom-navigation-parent.json) starts with the north-wing door. Doom currently reports static routes and live door hints separately; some physically traversable small steps may be absent from its conservative grid (Engine follow-up #8399).
+
+The first three-per-mode Sol/Jev GPS comparison (60 seconds each) did not improve
+navigation: aided kills averaged 0.67 versus 1.0 unaided, with 31.3 versus 36.0
+explored 2 m bins; all survived and neither mode opened the objective door. Treat
+this as an available route-observation tool, not a demonstrated autonomous
+navigator. Short cell-center waypoints, weak turn-following and conservative
+route coverage remain practical limitations. Evidence: Den Engine task #8398,
+`/home/dev/evidence/jev-navigation/README.md`.
+
+The Luna visual-parent follow-up (task8400) verified actual image delivery. Three
+gameplay trials with vision produced0/0/1kills and one60s survivor; three matched
+text-only Luna trials produced0/0/0kills and no survivors. Median parent latency
+was7.13s visual versus6.39s text. Three separate Jev-timeout attempts were retained
+as infrastructure failures and replaced once each. No trial reached the door.
+This small sample does not establish visual superiority; repeated distant-door
+use choices remain a controller-guidance issue. Full evidence:
+`/home/dev/evidence/jev-luna-vision/README.md`.

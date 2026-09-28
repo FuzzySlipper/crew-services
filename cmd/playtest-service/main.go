@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -14,11 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"crew-services/internal/playtest/browser"
 	"crew-services/internal/playtest/pool"
-	"crew-services/internal/playtest/routing"
 	"crew-services/internal/playtest/session"
-	"crew-services/internal/playtest/wolf"
 )
 
 func main() {
@@ -39,14 +34,9 @@ func main() {
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		log.Fatal("listen must be a loopback IP address")
 	}
-	var config wolf.Config
-	if *configPath != "" {
-		readJSON(*configPath, &config)
-	}
-	var profiles []session.Profile
-	readJSON(*profilesPath, &profiles)
-	if len(profiles) == 0 {
-		log.Fatal("at least one game profile is required")
+	profiles, pc, err := loadConfiguration(*profilesPath, *poolPath)
+	if err != nil {
+		log.Fatal(err)
 	}
 	paths := []string{*worker}
 	if *configPath != "" {
@@ -61,77 +51,30 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	type poolConfig struct {
-		Size        int  `json:"size"`
-		QueueWaitMS *int `json:"queue_wait_ms,omitempty"`
+	registry := session.NewRegistry(profiles)
+	configs, err := loadWolfConfigs(*configPath, *poolPath)
+	if err != nil {
+		log.Fatal(err)
 	}
-	pc := poolConfig{Size: 1}
-	queueWait := 15 * time.Second
-	if *poolPath != "" {
-		readJSON(*poolPath, &pc)
-		if pc.Size < 1 {
-			log.Fatal("pool size must be positive")
-		}
-		if pc.QueueWaitMS != nil {
-			queueWait = time.Duration(*pc.QueueWaitMS) * time.Millisecond
-		}
-	}
+	builder := slotBuilder{state: absoluteState, worker: *worker, browserWorker: *browserWorker, chromium: *chromium, forward: *forward, wolfEnabled: *configPath != "", wolfConfigs: configs, registry: registry}
 	var services []*session.Service
-	usedTargets, usedCaptures, usedMoonlight := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for index := 0; index < pc.Size; index++ {
-		slotState := absoluteState
-		if index > 0 {
-			slotState = filepath.Join(absoluteState, "slots", fmt.Sprintf("slot-%d", index+1))
-		}
-		slotConfig := config
-		if *poolPath != "" && *configPath != "" {
-			readJSON(filepath.Join(filepath.Dir(*poolPath), "slots", fmt.Sprintf("slot-%d", index+1), "machine.json"), &slotConfig)
-		}
-		router := &routing.Router{Entries: map[string]routing.Entry{}}
-		if *configPath != "" {
-			targetKey := fmt.Sprintf("%s:%d", slotConfig.SSHHost, slotConfig.TargetPort)
-			captureKey, _ := filepath.Abs(slotConfig.State)
-			moonlightKey, _ := filepath.Abs(slotConfig.MoonlightConfig)
-			if usedTargets[targetKey] || usedCaptures[captureKey] || usedMoonlight[moonlightKey] {
-				log.Fatal("pool slots must have distinct native targets, capture directories and Moonlight configurations")
-			}
-			usedTargets[targetKey] = true
-			usedCaptures[captureKey] = true
-			usedMoonlight[moonlightKey] = true
-			backend, err := wolf.New(slotConfig)
-			if err != nil {
-				log.Fatal(err)
-			}
-			defer backend.Close()
-			launcher := &session.WolfLauncher{Backend: backend, SSHHost: slotConfig.SSHHost, ForwardBinary: *forward}
-			router.Entries["wolf"] = routing.Entry{Backend: backend, Launcher: launcher}
-		}
-		if *browserWorker != "" {
-			backend, err := browser.New(browser.Config{State: filepath.Join(slotState, "browser"), Worker: *browserWorker, Chromium: *chromium})
-			if err != nil {
-				log.Fatal(err)
-			}
-			defer backend.Close()
-			router.Entries["browser"] = routing.Entry{Backend: backend, Launcher: backend}
-		}
-		service, err := session.New(router, router, profiles, slotState, *worker)
+		slot, release, err := builder.create(index)
 		if err != nil {
 			log.Fatal(err)
 		}
-		services = append(services, service)
+		defer release()
+		services = append(services, slot)
 	}
-	var service interface {
-		session.Commander
-		Close(context.Context) error
-	} = services[0]
-	if *poolPath != "" {
-		pooled, err := pool.New(services, queueWait)
-		if err != nil {
-			log.Fatal(err)
-		}
-		service = pooled
+	service, err := pool.NewResizable(services, pc.wait(), registry, builder.create)
+	if err != nil {
+		log.Fatal(err)
 	}
-	server := &http.Server{Addr: *listen, Handler: session.CommandHandler(service), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	commands := &reloadService{pool: service, gamesPath: *profilesPath, poolPath: *poolPath}
+	if *poolPath == "" {
+		commands.single = services[0]
+	}
+	server := &http.Server{Addr: *listen, Handler: session.CommandHandler(commands), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -145,16 +88,6 @@ func main() {
 	}()
 	log.Printf("playtest API listening on %s", *listen)
 	if err = server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
-	}
-}
-
-func readJSON(path string, value any) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err = json.Unmarshal(data, value); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -1,0 +1,226 @@
+{
+  "final-demand-before": {
+    "submission": {
+      "backendSubmissionDurationMs": 1.7999999970197678,
+      "backendSubmissionDurationStatus": "available",
+      "frameIntervalMs": 14220.20000000298,
+      "frameIntervalStatus": "available",
+      "renderSequence": 511,
+      "schemaVersion": 1,
+      "source": "explicit",
+      "sourceTimeMs": 24861.39999999106,
+      "statistics": {
+        "animatedInstanceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 0
+        },
+        "drawCallCount": {
+          "scope": "perSubmission",
+          "status": "available",
+          "value": 207
+        },
+        "geometryResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "materialResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "renderHandleCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "schemaVersion": 1,
+        "textureResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 26
+        },
+        "triangleCount": {
+          "scope": "perSubmission",
+          "status": "available",
+          "value": 231928
+        }
+      }
+    },
+    "cadence": {
+      "evictedFailureCount": 0,
+      "failures": [],
+      "retainedFailureCount": 0,
+      "state": "ready"
+    }
+  },
+  "final-demand-after": {
+    "submission": {
+      "backendSubmissionDurationMs": 2.4000000059604645,
+      "backendSubmissionDurationStatus": "available",
+      "frameIntervalMs": 148.5,
+      "frameIntervalStatus": "available",
+      "renderSequence": 512,
+      "schemaVersion": 1,
+      "source": "explicit",
+      "sourceTimeMs": 25009.89999999106,
+      "statistics": {
+        "animatedInstanceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 0
+        },
+        "drawCallCount": {
+          "scope": "perSubmission",
+          "status": "available",
+          "value": 203
+        },
+        "geometryResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "materialResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "renderHandleCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "schemaVersion": 1,
+        "textureResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 26
+        },
+        "triangleCount": {
+          "scope": "perSubmission",
+          "status": "available",
+          "value": 230168
+        }
+      }
+    },
+    "cadence": {
+      "evictedFailureCount": 0,
+      "failures": [],
+      "retainedFailureCount": 0,
+      "state": "ready"
+    }
+  },
+  "final-continuous-before": {
+    "submission": {
+      "backendSubmissionDurationMs": 1.5999999940395355,
+      "backendSubmissionDurationStatus": "available",
+      "frameIntervalMs": 7.69999999999709,
+      "frameIntervalStatus": "available",
+      "renderSequence": 524,
+      "schemaVersion": 1,
+      "source": "explicit",
+      "sourceTimeMs": 44447.5,
+      "statistics": {
+        "animatedInstanceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 0
+        },
+        "drawCallCount": {
+          "scope": "perSubmission",
+          "status": "available",
+          "value": 203
+        },
+        "geometryResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "materialResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "renderHandleCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "schemaVersion": 1,
+        "textureResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 26
+        },
+        "triangleCount": {
+          "scope": "perSubmission",
+          "status": "available",
+          "value": 230168
+        }
+      }
+    },
+    "cadence": {
+      "evictedFailureCount": 0,
+      "failures": [],
+      "retainedFailureCount": 0,
+      "state": "ready"
+    }
+  },
+  "final-continuous-after": {
+    "submission": {
+      "backendSubmissionDurationMs": 2,
+      "backendSubmissionDurationStatus": "available",
+      "frameIntervalMs": 7.699999988079071,
+      "frameIntervalStatus": "available",
+      "renderSequence": 593,
+      "schemaVersion": 1,
+      "source": "explicit",
+      "sourceTimeMs": 45414.19999998808,
+      "statistics": {
+        "animatedInstanceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 0
+        },
+        "drawCallCount": {
+          "scope": "perSubmission",
+          "status": "available",
+          "value": 202
+        },
+        "geometryResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "materialResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "renderHandleCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 155
+        },
+        "schemaVersion": 1,
+        "textureResourceCount": {
+          "scope": "liveResident",
+          "status": "available",
+          "value": 26
+        },
+        "triangleCount": {
+          "scope": "perSubmission",
+          "status": "available",
+          "value": 222990
+        }
+      }
+    },
+    "cadence": {
+      "evictedFailureCount": 0,
+      "failures": [],
+      "retainedFailureCount": 0,
+      "state": "ready"
+    }
+  }
+}

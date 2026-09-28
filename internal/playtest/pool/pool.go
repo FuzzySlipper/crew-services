@@ -12,12 +12,18 @@ import (
 	"crew-services/internal/playtest/session"
 )
 
+type SlotFactory func(index int) (*session.Service, func(), error)
+
 type Pool struct {
 	lifecycle context.Context
 	cancel    context.CancelFunc
 	starts    sync.WaitGroup
 	mu        sync.Mutex
 	slots     []*session.Service
+	capacity  int
+	registry  *session.Registry
+	factory   SlotFactory
+	releases  []func()
 	reserved  []bool
 	waiters   []uint64
 	next      uint64
@@ -34,7 +40,7 @@ func New(slots []*session.Service, wait time.Duration) (*Pool, error) {
 		return nil, errors.New("queue_wait_ms must be 0..20000")
 	}
 	lifecycle, cancel := context.WithCancel(context.Background())
-	p := &Pool{lifecycle: lifecycle, cancel: cancel, slots: slots, reserved: make([]bool, len(slots)), changed: make(chan struct{}), wait: wait}
+	p := &Pool{lifecycle: lifecycle, cancel: cancel, slots: slots, capacity: len(slots), reserved: make([]bool, len(slots)), changed: make(chan struct{}), wait: wait}
 	for i, s := range slots {
 		if s == nil {
 			return nil, errors.New("pool slot is nil")
@@ -60,9 +66,10 @@ func (p *Pool) reserve(ctx context.Context) (int, error) {
 	p.next++
 	ticket := p.next
 	p.waiters = append(p.waiters, ticket)
+	wait := p.wait
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.removeWaiter(ticket); p.mu.Unlock() }()
-	deadline := time.NewTimer(p.wait)
+	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	for {
 		p.mu.Lock()
@@ -75,7 +82,7 @@ func (p *Pool) reserve(ctx context.Context) (int, error) {
 			return -1, err
 		}
 		if len(p.waiters) > 0 && p.waiters[0] == ticket {
-			for i, s := range p.slots {
+			for i, s := range p.slots[:p.capacity] {
 				if !p.reserved[i] && s.SlotStatus() == nil {
 					p.reserved[i] = true
 					p.removeWaiter(ticket)
@@ -101,9 +108,9 @@ func (p *Pool) reserve(ctx context.Context) (int, error) {
 func (p *Pool) Activity() any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	slots := make([]map[string]any, 0, len(p.slots))
+	slots := make([]map[string]any, 0, p.capacity)
 	active := 0
-	for i, s := range p.slots {
+	for i, s := range p.slots[:p.capacity] {
 		st := s.SlotStatus()
 		busy := p.reserved[i] || st != nil
 		if busy {
@@ -117,20 +124,21 @@ func (p *Pool) Activity() any {
 		}
 		slots = append(slots, row)
 	}
-	return map[string]any{"observed_at": time.Now().UTC(), "capacity": len(p.slots), "active_count": active, "queued_starts": len(p.waiters), "slots": slots}
+	return map[string]any{"observed_at": time.Now().UTC(), "capacity": p.capacity, "active_count": active, "queued_starts": len(p.waiters), "slots": slots}
 }
 func (p *Pool) Command(ctx context.Context, r session.Request) (any, error) {
 	p.mu.Lock()
 	closed := p.closed
+	slots := p.slots
 	p.mu.Unlock()
 	if closed && r.Op != "status" && r.Op != "games" && r.Op != "game" {
 		return nil, errors.New("pool is shutting down")
 	}
 	switch r.Op {
 	case "games", "game":
-		return p.slots[0].Command(ctx, r)
+		return slots[0].Command(ctx, r)
 	case "start":
-		if _, err := p.slots[0].Command(ctx, session.Request{Op: "game", Game: r.Game}); err != nil {
+		if _, err := slots[0].Command(ctx, session.Request{Op: "game", Game: r.Game}); err != nil {
 			return nil, err
 		}
 		index, err := p.reserve(ctx)
@@ -144,20 +152,21 @@ func (p *Pool) Command(ctx context.Context, r session.Request) (any, error) {
 			return nil, errors.New("pool is shutting down")
 		}
 		p.starts.Add(1)
+		slot := p.slots[index]
 		p.mu.Unlock()
 		defer p.starts.Done()
 		launchCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		stop := context.AfterFunc(p.lifecycle, cancel)
 		defer stop()
-		return p.slots[index].Command(launchCtx, r)
+		return slot.Command(launchCtx, r)
 	case "status":
 		if r.SessionID == "" {
 			return p.status(ctx), nil
 		}
 	}
 	index := -1
-	for i, s := range p.slots {
+	for i, s := range slots {
 		if (r.Op == "script" && s.OwnsScript(r.ScriptID)) || (r.Op != "script" && r.SessionID != "" && s.OwnsSession(r.SessionID)) {
 			index = i
 			break
@@ -168,7 +177,7 @@ func (p *Pool) Command(ctx context.Context, r session.Request) (any, error) {
 	}
 	if r.Op == "recover" {
 		p.mu.Lock()
-		if p.closed || p.reserved[index] {
+		if p.closed || index >= p.capacity || p.reserved[index] {
 			p.mu.Unlock()
 			return nil, errors.New("slot transition in progress")
 		}
@@ -183,21 +192,24 @@ func (p *Pool) Command(ctx context.Context, r session.Request) (any, error) {
 		defer stop()
 		ctx = transitionCtx
 	}
-	value, err := p.slots[index].Command(ctx, r)
+	value, err := slots[index].Command(ctx, r)
 	if r.Op == "stop" || r.Op == "cancel" {
 		p.mu.Lock()
 		p.signalLocked()
 		p.mu.Unlock()
 	}
-	if m, ok := value.(map[string]any); ok {
+	if m, ok := value.(map[string]any); ok && m != nil {
 		m["slot_id"] = slotID(index)
 	}
 	return value, err
 }
 func (p *Pool) status(ctx context.Context) any {
-	rows := make([]map[string]any, len(p.slots))
+	p.mu.Lock()
+	slots := p.slots[:p.capacity]
+	p.mu.Unlock()
+	rows := make([]map[string]any, len(slots))
 	var wg sync.WaitGroup
-	for i, s := range p.slots {
+	for i, s := range slots {
 		wg.Add(1)
 		go func(i int, s *session.Service) {
 			defer wg.Done()
@@ -219,6 +231,8 @@ func (p *Pool) status(ctx context.Context) any {
 func (p *Pool) Close(ctx context.Context) error {
 	p.mu.Lock()
 	p.closed = true
+	slots := p.slots
+	releases := p.releases
 	p.cancel()
 	p.signalLocked()
 	p.mu.Unlock()
@@ -230,11 +244,84 @@ func (p *Pool) Close(ctx context.Context) error {
 		return ctx.Err()
 	}
 	var wg sync.WaitGroup
-	errs := make([]error, len(p.slots))
-	for i, s := range p.slots {
+	errs := make([]error, len(slots))
+	for i, s := range slots {
 		wg.Add(1)
 		go func(i int, s *session.Service) { defer wg.Done(); errs[i] = s.Close(ctx) }(i, s)
 	}
 	wg.Wait()
+	for _, release := range releases {
+		release()
+	}
 	return errors.Join(errs...)
+}
+
+// NewResizable adds live configuration to the same slot allocator. All services
+// and the factory must use registry. Construction settings remain in the factory.
+func NewResizable(slots []*session.Service, wait time.Duration, registry *session.Registry, factory SlotFactory) (*Pool, error) {
+	p, err := New(slots, wait)
+	if err != nil {
+		return nil, err
+	}
+	p.registry, p.factory = registry, factory
+	return p, nil
+}
+
+// Reload publishes the registry, capacity and queue policy together. Inactive
+// tail slots retain their history and can be reused on growth; they cannot start
+// or recover a session while outside capacity. No live slot is renumbered.
+func (p *Pool) Reload(profiles []session.Profile, size int, wait time.Duration) error {
+	if err := session.ValidateProfiles(profiles); err != nil {
+		return err
+	}
+	if size < 1 {
+		return errors.New("pool size must be positive")
+	}
+	if wait < 0 || wait > 20*time.Second {
+		return errors.New("queue_wait_ms must be 0..20000")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return errors.New("pool is shutting down")
+	}
+	if p.registry == nil {
+		return errors.New("pool reload is not configured")
+	}
+	for i := size; i < p.capacity; i++ {
+		if p.reserved[i] || p.slots[i].SlotStatus() != nil {
+			return fmt.Errorf("pool_shrink_busy: %s is occupied; stop it before shrinking", slotID(i))
+		}
+	}
+	var added []*session.Service
+	var releases []func()
+	for i := len(p.slots); i < size; i++ {
+		if p.factory == nil {
+			return errors.New("pool growth is not configured")
+		}
+		slot, release, err := p.factory(i)
+		if err != nil {
+			for _, cleanup := range releases {
+				cleanup()
+			}
+			return fmt.Errorf("create %s: %w", slotID(i), err)
+		}
+		slot.ConfigureSlot(slotID(i), p.Activity)
+		added = append(added, slot)
+		releases = append(releases, release)
+	}
+	// Validation above means Replace cannot fail. Publish only after every new
+	// slot is ready; no backend selector or running session is touched.
+	if err := p.registry.Replace(profiles); err != nil {
+		for _, cleanup := range releases {
+			cleanup()
+		}
+		return err
+	}
+	p.slots = append(p.slots, added...)
+	p.reserved = append(p.reserved, make([]bool, len(added))...)
+	p.releases = append(p.releases, releases...)
+	p.capacity, p.wait = size, wait
+	p.signalLocked()
+	return nil
 }

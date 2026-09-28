@@ -484,7 +484,7 @@ func TestStopReportsSessionStatePersistenceFailureAfterCleanup(t *testing.T) {
 
 func TestRestartDoesNotReplaySavedSession(t *testing.T) {
 	s, f, id := testService(t)
-	other, err := New(f, fakeLauncher{}, s.profiles, s.stateDir, s.worker)
+	other, err := New(f, fakeLauncher{}, s.registry.Profiles(), s.stateDir, s.worker)
 	if err != nil {
 		t.Fatal(err)
 	}

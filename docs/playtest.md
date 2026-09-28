@@ -1,5 +1,102 @@
 # Agent playtesting
 
+## Adaptive Engine playtesting
+
+`playtest assist SESSION --json '{"op":"discover"}'` discovers the Engine
+inspection adapter and the product's live `playtest.help` provider. These are
+ordinary CLI/MCP tools; they do not require Jev, OpenRouter, or an encounter script.
+Use `playtest game show PROFILE` for reset/shared-host semantics. A browser context
+is isolated; the product host's simulation can still be shared.
+
+```sh
+playtest assist SESSION --json '{"op":"time","mode":"action-driven"}'
+playtest assist SESSION --json '{"op":"observe"}'
+playtest assist SESSION --json '{"op":"targets"}'
+playtest assist SESSION --json '{"op":"route","id":"door-north-wing"}'
+playtest assist SESSION --json '{"op":"act","id":"forward","ms":200,"capture":true}'
+playtest assist SESSION --json '{"op":"look","yaw":45}'
+playtest assist SESSION --json '{"op":"action","id":"attack"}'
+playtest assist SESSION --json '{"op":"act","id":"attack"}'
+```
+
+Read observations and choose the next action. Routes/suggestions are read-only
+product guidance, refreshed on request. A route reaching its goal does not mean
+the player arrived; a required door action does not mean it is in reach.
+Doom publishes current bindings, pose, health/ammo/cooldown, alive/hostile actors,
+door/pickup state, focus and ordinary-use guidance. Missing product capabilities
+are reported as unavailable. Observations include the product's generation/step;
+these are live samples, not exact screenshot correlation.
+
+### Actions and time
+
+- `time`: read, or set `mode` to `realtime`, `manual`, or `action-driven`.
+- `act`: query the current product action plan, focus the Engine canvas without a
+  gameplay click, press its ordinary physical key, release it, and return fresh
+  observations/deltas. `ms` overrides the live duration; range `(0,2000]`.
+  Both held modes advance automatically for this bounded convenience action.
+  Tap actions release after their first step; movement holds for the window.
+- `action`: inspect live duration, equipment, control and availability without acting.
+- `look`: relative yaw/pitch degrees through product look rules; no time advancement.
+- `advance`: explicit forward `ms` in `(0,2000]`, rounded up to fixed steps;
+  response reports actual advancement. No rewind or wall-time catch-up.
+- Raw `input` remains ordinary realtime input. In held modes use `act`, or
+  explicitly advance after submitting input. The agent chooses when to act.
+
+An accepted tool result reports input submission, not a confirmed hit, opened door,
+or mapped-intent acceptance. Inspect `delta`, `observation`, `focus`, `handback`,
+and `inputReleased`. On uncertain delivery, reobserve; do not replay automatically.
+Failures preserve confirmed advancement and release status. Session cancellation
+closes its browser; it never repeats uncertain actions.
+
+### Drawing and observer camera
+
+`drawing` selects `continuous` (full-rate drawing) or `on-demand`. This is independent
+of time mode; input polling and native simulation keep running. `frame` requests a
+current draw and returns renderer diagnostics. Follow with ordinary `observe SESSION`
+for an original screenshot. The observer is a renderer-only camera and never moves
+the player or changes gameplay aim/collision.
+
+```sh
+playtest assist SESSION --json '{"op":"drawing","mode":"on-demand"}'
+playtest assist SESSION --json '{"op":"advance","ms":500}'
+playtest assist SESSION --json '{"op":"frame"}'
+playtest assist SESSION --json '{"op":"camera","move":[0,3,0],"lookAt":[0,0,0]}'
+playtest assist SESSION --json '{"op":"camera","orbit":{"target":[0,0,0],"yaw":45}}'
+playtest assist SESSION --json '{"op":"camera","camera":null}'
+```
+
+`camera` without arguments reads pose and whether an observer override is active.
+It also accepts an absolute `camera` object with `position:[x,y,z]`, `yawDegrees`,
+`pitchDegrees`, or relative `yaw`/`pitch`. Null restores the current gameplay camera.
+Camera/look inspection can request a draw while normal drawing is suspended.
+
+### Surveys and recordings
+
+```sh
+playtest assist SESSION --json '{"op":"survey","count":8}'
+playtest assist SESSION --json '{"op":"record","id":"attack","ms":800,"fps":10,"gif":true}'
+```
+
+Surveys require held time. They save 4 cardinal or 8 cardinal/diagonal original
+PNGs plus a contact sheet and manifest, then restore the prior camera override.
+Check `restored`, including after a partial failure. This is observer evidence,
+not proof of player aim.
+
+Recordings arm a first screenshot before the optional action, retain every original
+frame, and generate MP4/contact sheet/optional GIF with `ffmpeg` from PATH. In held
+mode they advance and capture in short windows. In realtime they sample wall time;
+PNG capture can lower effective FPS. `nominalFps` describes encoding cadence, not a
+claim that every game frame was captured. Frames carry capture times and held-mode
+advancement. Inspect any returned original frame directly; no replay is involved.
+A named held action runs for at most 2000 ms, then remaining recording time advances
+with neutral input. Encoder failure preserves originals and its diagnostic.
+
+
+
+For the local RX 9070 XT installation on `den-agents`, use the
+[local workstation setup](playtest-local.md). Its browser sessions run on this
+machine; the Wolf/remote setup below describes the optional remote backend.
+
 Go owns local sessions, the remote Wolf input controller, and evidence. A
 separate Node worker executes submitted JavaScript. CLI and MCP use the same
 loopback service; DSH and Den are optional clients/integrations. This component
@@ -230,7 +327,12 @@ rootless Docker identity/socket. No graphics daemon or unrelated container
 restart is required.
 
 Game profiles live in `configs/playtest/games.json`; machine configuration is
-separate. Existing game servers must be running. This slice does not build or
+separate. After adding or editing a profile in the service's configured games
+file, run `playtest reload`. It re-reads that file and the pool configuration
+without restarting live sessions. A requested profile found on disk but absent
+from the loaded registry reports `it is in the profile file but not loaded; run
+'playtest reload'`. A profile absent from both, or a file that cannot be inspected,
+has a separate diagnostic. Existing game servers must be running. This slice does not build or
 restart game development servers, certify mouse aiming, implement Windows, or
 restore game snapshots. Native controller input is the proving path.
 
@@ -362,6 +464,48 @@ This read-only capture option does not visit viewpoints, hide diagnostics, wait
 for global idleness, or certify visual acceptance. See the upstream
 [presentation contract](/home/dev/rusty-engine/docs/presentation-capture.md).
 
+## Reload games and pool configuration
+
+After atomically replacing `--games` or `--pool`, run:
+
+```sh
+playtest reload
+# Equivalent on the same loopback-only API:
+curl --fail-with-body -H 'Content-Type: application/json' \
+  -d '{"op":"reload"}' http://127.0.0.1:48200/command
+```
+
+The response reports profile count, capacity and `queue_wait_ms`. The service
+reads both configured files, validates them, prepares any additional slots,
+then publishes the change. A read/JSON/schema error, duplicate profile ID,
+invalid size/wait, slot construction failure or unsafe shrink returns an error
+and keeps the previous registry, capacity and queue policy. Unknown fields are
+rejected. Each profile needs a nonempty `id` and `url`; the table cannot be empty.
+A malformed file never terminates the service. Without `--pool`, only the games
+file is reloaded and capacity remains one.
+
+Existing sessions keep their startup profile, including URL, backend, controls
+and optional interaction/presentation queries. Editing or removing that profile
+changes discovery and future starts, not live sessions. Explicit recovery creates
+a new session using the current registry. Session snapshots are saved in their
+existing evidence records. Records from older binaries without snapshots use the
+startup registry when restored.
+
+Growing capacity adds slots and wakes queued starts without restarting browsers.
+Shrinking removes only idle slots at the end: reducing capacity to 3 requires
+slot-4 and higher to be idle, even when fewer than 3 sessions are active overall.
+Reserved launches, recovery and interrupted sessions count as occupied. Slot IDs
+never change. Inactive slots retain history for inspection and later growth;
+recovering them requires restoring their capacity first. New starts use the new
+queue timeout; starts already waiting keep their original deadline.
+
+Worker paths, state paths, and Wolf machine settings remain the startup settings.
+Browser-only pools grow directly. Wolf pools can grow only into distinct native
+slots provisioned and loaded at startup; reload does not provision hardware or
+reread machine files. Adding entirely new Wolf targets still needs the ordinary
+idle-pool provisioning procedure. Use atomic file replacement to avoid exposing
+an incomplete write; a valid intermediate file is a real configuration.
+
 ## Configurable tester pool
 
 The installed pool configuration is
@@ -393,7 +537,9 @@ Recovered sessions retain their slot; interrupted sessions hold it until explici
 recovery or stop. Capture sidecars include before/after `pool_activity` snapshots.
 Occupancy is not a GPU-performance guarantee: an unattended game can keep rendering.
 
-To increase capacity, change `size` in that local file and run
+For a browser-only pool, change `size` and run `playtest reload`. The local
+RX 9070 XT installation uses capacity 10. For additional Wolf targets not
+provisioned at startup, change `size` in that local file and run
 `scripts/configure-playtest-pool.sh --pool /home/system/crew-services/playtest/pool.json --legacy-machine /home/system/crew-services/playtest/machine.json`
 from the crew-services checkout while the pool is idle, then restart
 `systemctl --user restart crew-playtest.service`. Provisioning prepares each new

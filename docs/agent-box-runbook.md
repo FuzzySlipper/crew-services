@@ -124,7 +124,7 @@ mkdir -p "$HOME/.local/state/crew-review"
 exec "$HOME/.local/bin/crew-review" \
   -listen 127.0.0.1:8413 \
   -db "$HOME/.local/state/crew-review/crew-review.sqlite" \
-  -den-mcp-url "${DEN_MCP_URL:-http://192.168.1.10:5199/mcp}" \
+  -den-mcp-url "${DEN_MCP_URL:-http://192.168.1.5:5199/mcp}" \
   -backend "${CREW_REVIEW_BACKEND:-codex}" \
   -review-profile "${CREW_REVIEW_PROFILE:-/home/system/crew-services/reviewer.md}" \
   -codex-model "${CREW_REVIEW_MODEL:-}" \
@@ -146,13 +146,19 @@ injection. Do not add those settings to `crew-review`; it only sends workspace
 and controller-owned review prompts to an opaque DSH worker. The command also
 accepts `-den-mcp-token`, `-codex-model`, `-codex-effort`, `-codex-command`,
 repeated `-codex-arg`, and `-run-interval`.
-`CREW_REVIEW_LISTEN`, `CREW_REVIEW_DB`, `DEN_MCP_TOKEN`, `CODEX_COMMAND`,
+`CREW_REVIEW_LISTEN`, `CREW_REVIEW_DB`, `DEN_MCP_URL`, `DEN_MCP_TOKEN`, `CODEX_COMMAND`,
 `CREW_REVIEW_MODEL`, `CREW_REVIEW_REASONING_EFFORT`, `CREW_REVIEW_PROFILE`,
 `CREW_REVIEW_BACKEND`, `CREW_REVIEW_DSH_URL`, `CREW_REVIEW_CAPACITY`, and
 `CREW_REVIEW_RUN_INTERVAL` are the matching
 environment settings. Keep the installed deployment values in
 `/home/system/crew-services/crew-review.env` and the dedicated instructions in
 the adjacent `reviewer.md`.
+
+After changing `DEN_MCP_URL` in that environment file, restart
+`crew-review.service` when its review pool is idle. A running process retains
+its old environment even when the file already points to the new Den host.
+Check the service's configured endpoint and complete a managed submission;
+an active systemd unit alone does not establish Den connectivity.
 
 For a persistent agent-box service, save this as
 `~/.config/systemd/user/crew-review.service`:
@@ -185,7 +191,9 @@ start can run it fresh.
 When Den MCP runs on a separate service box, keep `crew-review` loopback-only
 and carry its backend connection over SSH. On the agent box, a persistent
 reverse tunnel such as the following makes the agent-box listener available as
-`127.0.0.1:8413` on `den-srv` without opening a LAN listener:
+`127.0.0.1:8413` on `den-services` (192.168.1.5) without opening a LAN listener.
+On the migrated `den-agents` workstation, use the dedicated SSH configuration
+with its existing pinned host key:
 
 ```ini
 [Unit]
@@ -194,8 +202,8 @@ After=network-online.target crew-review.service
 Wants=network-online.target crew-review.service
 
 [Service]
-ExecStart=/usr/bin/ssh -NT -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 127.0.0.1:8413:127.0.0.1:8413 den-srv
-Restart=on-failure
+ExecStart=/usr/bin/ssh -F /home/agent/server-access/den-services/config -NT -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 127.0.0.1:8413:127.0.0.1:8413 target
+Restart=always
 RestartSec=3
 
 [Install]
@@ -203,10 +211,15 @@ WantedBy=default.target
 ```
 
 Save that unit as `~/.config/systemd/user/crew-review-den-tunnel.service`, then
-enable it after `crew-review.service`. The Den MCP `crew-review` backend remains
+run `systemctl --user daemon-reload` and
+`systemctl --user enable --now crew-review-den-tunnel.service`. Verify the manual
+review readiness GET through Den Web as well as the local runner health check.
+A healthy local runner with an absent tunnel causes gateway 502 responses for
+all manual-review tasks. Restoring the tunnel does not require restarting the
+runner or submitting a review. The Den MCP `crew-review` backend remains
 `http://127.0.0.1:8413`; from its point of view that address is the remote end
 of the tunnel. This topology requires the service account's existing key-only
-SSH route to `den-srv` and remote forwarding support.
+SSH route to `den-services` and remote forwarding support.
 
 The Den MCP facade's `submit_task_for_review` tool forwards the public
 project/task/repository/exact-SHA/checks/summary envelope to

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 const reviewDenTestSHA = "0123456789abcdef0123456789abcdef01234567"
 
 func TestGetReviewContextMapsTypedStructuredContent(t *testing.T) {
+	workspace := testCheckout(t, filepath.Join(t.TempDir(), "repo"), "https://github.com/owner/repo.git")
 	var gotRequests []struct {
 		Method string `json:"method"`
 		Params struct {
@@ -26,7 +28,7 @@ func TestGetReviewContextMapsTypedStructuredContent(t *testing.T) {
 	reviewStructured := map[string]any{
 		"schema": "den_review.reviewer_context.v1", "schema_version": 1,
 		"project_id": "dsh-crew", "task_id": 7416,
-		"task":            map[string]any{"id": 7416, "project_id": "dsh-crew", "root_path": "/home/dev/dsh-crew"},
+		"task":            map[string]any{"id": 7416, "project_id": "dsh-crew", "root_path": workspace},
 		"current_round":   map[string]any{"id": 12, "project_id": "dsh-crew", "task_id": 7416},
 		"next_state":      "source_review_ready",
 		"prior_findings":  []map[string]any{{"id": "R7416-1", "summary": "recheck claim expiry"}},
@@ -71,7 +73,7 @@ func TestGetReviewContextMapsTypedStructuredContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Key != key || got.NextState != "source_review_ready" || got.Workspace != "/home/dev/dsh-crew" {
+	if got.Key != key || got.NextState != "source_review_ready" || got.Workspace != workspace {
 		t.Fatalf("context = %+v", got)
 	}
 	var material map[string]any
@@ -79,7 +81,7 @@ func TestGetReviewContextMapsTypedStructuredContent(t *testing.T) {
 		t.Fatalf("material is not JSON: %v", err)
 	}
 	materialTask, ok := material["task"].(map[string]any)
-	if !ok || materialTask["description"] != "canonical task description" || materialTask["root_path"] != "/home/dev/dsh-crew" {
+	if !ok || materialTask["description"] != "canonical task description" || materialTask["root_path"] != workspace {
 		t.Fatalf("merged task material = %#v", material["task"])
 	}
 	if _, ok := material["recent_messages"]; !ok {
@@ -433,4 +435,54 @@ func writeErrorToolResult(w http.ResponseWriter, message string) {
 			"isError": true, "structuredContent": json.RawMessage(message),
 		},
 	})
+}
+
+func TestReviewContextDiscoversProjectCheckoutAndPreservesMetadata(t *testing.T) {
+	root := t.TempDir()
+	workspace := testCheckout(t, filepath.Join(root, "renamed"), "git@github.com:owner/project.git")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		switch request.Params.Name {
+		case "get_project":
+			writeToolResult(w, map[string]any{"project": map[string]any{"id": "project", "repository_url": "https://github.com/owner/project"}})
+		case "get_review_context":
+			writeToolResult(w, map[string]any{"project_id": "project", "task_id": 1, "task": map[string]any{"id": 1, "project_id": "project", "root_path": "", "repository_url": "https://github.com/owner/project"}, "current_round": map[string]any{"id": 2, "project_id": "project", "task_id": 1}, "next_state": "source_review_ready"})
+		case "get_task_context":
+			writeToolResult(w, map[string]any{"project_id": "project", "task_id": 1, "task": map[string]any{"id": 1, "project_id": "project", "status": "review", "description": "Review this code."}})
+		default:
+			t.Fatalf("unexpected tool %s", request.Params.Name)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "", server.Client(), WithWorkspaceRoots([]string{root}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ValidateWorkspace(context.Background(), review.TaskKey{ProjectID: "project", TaskID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.GetReviewContext(context.Background(), review.Key{ProjectID: "project", TaskID: 1, ReviewRoundID: 2, CorrelationID: "corr"})
+	if err != nil || got.Workspace != workspace {
+		t.Fatalf("context=%+v err=%v", got, err)
+	}
+	var material struct {
+		Task struct {
+			RootPath          string `json:"root_path"`
+			ResolvedWorkspace string `json:"resolved_workspace"`
+			RepositoryURL     string `json:"repository_url"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(got.Material, &material); err != nil {
+		t.Fatal(err)
+	}
+	if material.Task.RootPath != "" || material.Task.ResolvedWorkspace != workspace || material.Task.RepositoryURL != "https://github.com/owner/project" {
+		t.Fatalf("material=%s", got.Material)
+	}
 }

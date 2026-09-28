@@ -1,0 +1,75 @@
+{
+  "commands": [
+    "combat.observe",
+    "entity.children",
+    "entity.component",
+    "entity.get",
+    "entity.list",
+    "entity.stores",
+    "entity.summary",
+    "interaction.help",
+    "interaction.inspect",
+    "interaction.use",
+    "loading-bay.continuity-audit",
+    "loading-bay.diagnostics",
+    "loading-bay.geometry-audit",
+    "loading-bay.readout",
+    "loading-bay.set-track",
+    "navigation.route",
+    "navigation.targets",
+    "playtest.action",
+    "playtest.help",
+    "playtest.look",
+    "playtest.observe",
+    "spatial.map",
+    "spatial.map-at",
+    "engine.time",
+    "engine.time.mode",
+    "engine.time.advance",
+    "engine.renderer",
+    "engine.renderer.presentation",
+    "engine.renderer.detail",
+    "engine.renderer.show",
+    "engine.renderer.hide",
+    "engine.renderer.toggle",
+    "engine.renderer.status"
+  ],
+  "drawingModes": [
+    "continuous",
+    "on-demand"
+  ],
+  "inspection": true,
+  "lookAdvancesTime": false,
+  "observer": [
+    "pose",
+    "move",
+    "lookAt",
+    "orbit",
+    "restore"
+  ],
+  "product": {
+    "action": "playtest.action",
+    "actions": [
+      "forward",
+      "back",
+      "left",
+      "right",
+      "use",
+      "attack",
+      "fist",
+      "pistol",
+      "shotgun"
+    ],
+    "inputPath": "physical-keyboard",
+    "look": "playtest.look",
+    "lookAdvancesTime": false,
+    "observe": "playtest.observe"
+  },
+  "slot_id": "slot-1",
+  "time": true,
+  "timeModes": [
+    "realtime",
+    "manual",
+    "action-driven"
+  ]
+}

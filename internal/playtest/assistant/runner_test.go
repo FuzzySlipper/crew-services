@@ -116,3 +116,29 @@ func TestUnknownModelChoiceDoesNotAct(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestUncappedActionsStillStopOnObservedCondition(t *testing.T) {
+	p := policy()
+	p.MaxActions = 0
+	p.StallActions = 0
+	p.StopWhen[0].Value = float64(125)
+	f := &fakeEnv{}
+	var log strings.Builder
+	r, err := Run(context.Background(), p, f, &Baseline{}, &log)
+	if err != nil || r.Reason != "goal_observed" || f.inputs != 125 || !f.cancelled {
+		t.Fatalf("%+v %v inputs=%d", r, err, f.inputs)
+	}
+}
+func TestDisabledStallStillHonorsDeadline(t *testing.T) {
+	p := policy()
+	p.MaxActions = 0
+	p.StallActions = 0
+	p.BudgetMS = 100
+	p.DecisionTimeoutMS = 1000
+	f := &fakeEnv{fixed: true}
+	var log strings.Builder
+	r, err := Run(context.Background(), p, f, slowController{}, &log)
+	if err != nil || !f.cancelled || r.Reason == "action_limit" || r.Reason == "stalled_observed_facts" {
+		t.Fatalf("%+v %v", r, err)
+	}
+}

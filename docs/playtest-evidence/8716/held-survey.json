@@ -1,0 +1,67 @@
+{
+  "contact": "/home/agent/.local/state/crew-playtest-local/browser/8e190009-dede-4fa7-926b-eb23619dc32e/survey-3a6f2867-4b5a-4576-90fa-fdab67b9fc96/contact.png",
+  "directory": "/home/agent/.local/state/crew-playtest-local/browser/8e190009-dede-4fa7-926b-eb23619dc32e/survey-3a6f2867-4b5a-4576-90fa-fdab67b9fc96",
+  "frames": [
+    {
+      "camera": {
+        "pitchDegrees": 0,
+        "position": [
+          -5.688701629638672,
+          1.6200000047683716,
+          3
+        ],
+        "yawDegrees": 89.999995674289
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/8e190009-dede-4fa7-926b-eb23619dc32e/survey-3a6f2867-4b5a-4576-90fa-fdab67b9fc96/0.png",
+      "relativeYawDegrees": 0
+    },
+    {
+      "camera": {
+        "pitchDegrees": 0,
+        "position": [
+          -5.688701629638672,
+          1.6200000047683716,
+          3
+        ],
+        "yawDegrees": 179.99999567428898
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/8e190009-dede-4fa7-926b-eb23619dc32e/survey-3a6f2867-4b5a-4576-90fa-fdab67b9fc96/1.png",
+      "relativeYawDegrees": 90
+    },
+    {
+      "camera": {
+        "pitchDegrees": 0,
+        "position": [
+          -5.688701629638672,
+          1.6200000047683716,
+          3
+        ],
+        "yawDegrees": 269.999995674289
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/8e190009-dede-4fa7-926b-eb23619dc32e/survey-3a6f2867-4b5a-4576-90fa-fdab67b9fc96/2.png",
+      "relativeYawDegrees": 180
+    },
+    {
+      "camera": {
+        "pitchDegrees": 0,
+        "position": [
+          -5.688701629638672,
+          1.6200000047683716,
+          3
+        ],
+        "yawDegrees": 359.999995674289
+      },
+      "path": "/home/agent/.local/state/crew-playtest-local/browser/8e190009-dede-4fa7-926b-eb23619dc32e/survey-3a6f2867-4b5a-4576-90fa-fdab67b9fc96/3.png",
+      "relativeYawDegrees": 270
+    }
+  ],
+  "restored": true,
+  "slot_id": "slot-1",
+  "time": {
+    "advancedMs": 0,
+    "fixedStepHz": 60,
+    "mode": "action-driven",
+    "simulationStep": "709",
+    "worldHeld": true
+  }
+}

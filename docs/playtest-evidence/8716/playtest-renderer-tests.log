@@ -1,0 +1,897 @@
+$ tsc --build && pnpm run test:compiled
+$ node --test 'dist/**/*.test.js'
+TAP version 13
+# Subtest: animated mesh capture rejects unbounded or inexact requests before touching a surface
+ok 1 - animated mesh capture rejects unbounded or inexact requests before touching a surface
+  ---
+  duration_ms: 1.873486
+  type: 'test'
+  ...
+# Subtest: mutable animated source releases retired immutable GLBs and reloads the same hash
+ok 2 - mutable animated source releases retired immutable GLBs and reloads the same hash
+  ---
+  duration_ms: 42.661175
+  type: 'test'
+  ...
+# Subtest: animated clip packs admit a set beyond the retired count cap
+ok 3 - animated clip packs admit a set beyond the retired count cap
+  ---
+  duration_ms: 93.15962
+  type: 'test'
+  ...
+# Subtest: animated clip packs admit bytes beyond the retired aggregate cap
+ok 4 - animated clip packs admit bytes beyond the retired aggregate cap
+  ---
+  duration_ms: 48.796883
+  type: 'test'
+  ...
+# Subtest: standalone clip-pack loading resolves packs sequentially with maximum resolver concurrency one
+ok 5 - standalone clip-pack loading resolves packs sequentially with maximum resolver concurrency one
+  ---
+  duration_ms: 13.472275
+  type: 'test'
+  ...
+# THREE.GLTFLoader: Couldn't load texture blob:nodedata:e5ba8146-338f-4026-b78d-4da198605127
+# THREE.GLTFLoader: Couldn't load texture blob:nodedata:5e3c3175-ac85-4587-819f-d2f3c5025b33
+# THREE.GLTFLoader: Couldn't load texture blob:nodedata:f2676cd3-cd1b-4707-9b96-29f347dd9fa4
+# Subtest: cue definition validation is typed and preserves the prior retained cue snapshot
+ok 6 - cue definition validation is typed and preserves the prior retained cue snapshot
+  ---
+  duration_ms: 6.412463
+  type: 'test'
+  ...
+# Subtest: G1 controller sequence drives deterministic renderer-local blend and smooth sampling
+ok 7 - G1 controller sequence drives deterministic renderer-local blend and smooth sampling
+  ---
+  duration_ms: 49.644449
+  type: 'test'
+  ...
+# Subtest: renderer host maps only direct LoopOnce mixer completion into bounded facts
+ok 8 - renderer host maps only direct LoopOnce mixer completion into bounded facts
+  ---
+  duration_ms: 10.47639
+  type: 'test'
+  ...
+# Subtest: a reconstructed controller begins cue sampling at its retained clip phase
+ok 9 - a reconstructed controller begins cue sampling at its retained clip phase
+  ---
+  duration_ms: 14.430193
+  type: 'test'
+  ...
+# Subtest: animation host isolates missing targets and clips with typed diagnostics
+ok 10 - animation host isolates missing targets and clips with typed diagnostics
+  ---
+  duration_ms: 9.27865
+  type: 'test'
+  ...
+# Subtest: missing animation host returns an explicit typed domain diagnostic
+ok 11 - missing animation host returns an explicit typed domain diagnostic
+  ---
+  duration_ms: 0.949898
+  type: 'test'
+  ...
+# Subtest: Firefox method-based listener synchronizes without degrading presentation
+ok 12 - Firefox method-based listener synchronizes without degrading presentation
+  ---
+  duration_ms: 4.780339
+  type: 'test'
+  ...
+# Subtest: Web Audio host emits catalog-hash-bound 3D cues and caches decoded clips
+ok 13 - Web Audio host emits catalog-hash-bound 3D cues and caches decoded clips
+  ---
+  duration_ms: 2.339128
+  type: 'test'
+  ...
+# Subtest: audio realization facts use numeric correlations and reject stale completion callbacks
+ok 14 - audio realization facts use numeric correlations and reject stale completion callbacks
+  ---
+  duration_ms: 2.214989
+  type: 'test'
+  ...
+# Subtest: audio realization and diagnostic retention are bounded while fact IDs stay monotonic
+ok 15 - audio realization and diagnostic retention are bounded while fact IDs stay monotonic
+  ---
+  duration_ms: 1.327879
+  type: 'test'
+  ...
+# Subtest: failed one-shot diagnostics retain the exact signal correlation
+ok 16 - failed one-shot diagnostics retain the exact signal correlation
+  ---
+  duration_ms: 0.680941
+  type: 'test'
+  ...
+# Subtest: listener updates after disposal retain a diagnostic without writing Web Audio state
+ok 17 - listener updates after disposal retain a diagnostic without writing Web Audio state
+  ---
+  duration_ms: 0.428285
+  type: 'test'
+  ...
+# Subtest: retained 2D/3D sources create update destroy and clean up independently
+ok 18 - retained 2D/3D sources create update destroy and clean up independently
+  ---
+  duration_ms: 1.163762
+  type: 'test'
+  ...
+# Subtest: retained voice controls retain logical state and reconstruct sources at the correct cursor
+ok 19 - retained voice controls retain logical state and reconstruct sources at the correct cursor
+  ---
+  duration_ms: 0.916241
+  type: 'test'
+  ...
+# Subtest: restore realizes the Engine cursor without restarting paused or completed voices
+ok 20 - restore realizes the Engine cursor without restarting paused or completed voices
+  ---
+  duration_ms: 1.352993
+  type: 'test'
+  ...
+# Subtest: reset and disposal fence pending decode before an old graph can enter a new owner
+ok 21 - reset and disposal fence pending decode before an old graph can enter a new owner
+  ---
+  duration_ms: 1.546099
+  type: 'test'
+  ...
+# Subtest: resource retention evicts decoded clips only after active voice release
+ok 22 - resource retention evicts decoded clips only after active voice release
+  ---
+  duration_ms: 0.643541
+  type: 'test'
+  ...
+# Subtest: fixed bus controls own existing and future graph gain state
+ok 23 - fixed bus controls own existing and future graph gain state
+  ---
+  duration_ms: 0.72516
+  type: 'test'
+  ...
+# Subtest: retained entity-attached audio follows scene movement without descriptor updates
+ok 24 - retained entity-attached audio follows scene movement without descriptor updates
+  ---
+  duration_ms: 0.642128
+  type: 'test'
+  ...
+# Subtest: missing audio host returns an explicit typed domain diagnostic
+ok 25 - missing audio host returns an explicit typed domain diagnostic
+  ---
+  duration_ms: 1.37919
+  type: 'test'
+  ...
+# Subtest: audio host decodes trusted resource bytes under the declared identity
+ok 26 - audio host decodes trusted resource bytes under the declared identity
+  ---
+  duration_ms: 0.453425
+  type: 'test'
+  ...
+# Subtest: audio host accepts a manifest-native FNV content hash
+ok 27 - audio host accepts a manifest-native FNV content hash
+  ---
+  duration_ms: 0.332771
+  type: 'test'
+  ...
+# Subtest: missing audio resources fail locally with typed operation diagnostics
+ok 28 - missing audio resources fail locally with typed operation diagnostics
+  ---
+  duration_ms: 0.393039
+  type: 'test'
+  ...
+# Subtest: blocked AudioContext and malformed frame return explicit failures
+ok 29 - blocked AudioContext and malformed frame return explicit failures
+  ---
+  duration_ms: 1.044674
+  type: 'test'
+  ...
+# Subtest: compressed audio/ogg streams through the ordinary graph without whole-clip decoding
+ok 30 - compressed audio/ogg streams through the ordinary graph without whole-clip decoding
+  ---
+  duration_ms: 3.58226
+  type: 'test'
+  ...
+# Subtest: compressed audio/mpeg streams through the ordinary graph without whole-clip decoding
+ok 31 - compressed audio/mpeg streams through the ordinary graph without whole-clip decoding
+  ---
+  duration_ms: 0.824425
+  type: 'test'
+  ...
+# Subtest: compressed audio/flac streams through the ordinary graph without whole-clip decoding
+ok 32 - compressed audio/flac streams through the ordinary graph without whole-clip decoding
+  ---
+  duration_ms: 0.512487
+  type: 'test'
+  ...
+# Subtest: compressed streams bound concurrent decoders and cancel late metadata on reset
+ok 33 - compressed streams bound concurrent decoders and cancel late metadata on reset
+  ---
+  duration_ms: 8.471456
+  type: 'test'
+  ...
+# Subtest: compressed asynchronous play rejection reports failure and releases the media source
+ok 34 - compressed asynchronous play rejection reports failure and releases the media source
+  ---
+  duration_ms: 0.917796
+  type: 'test'
+  ...
+# Subtest: billboard host creates updates localizes lays out and destroys multiple entity cues
+ok 35 - billboard host creates updates localizes lays out and destroys multiple entity cues
+  ---
+  duration_ms: 4.638197
+  type: 'test'
+  ...
+# Subtest: billboard updates validate the merged structured layout before mutation
+ok 36 - billboard updates validate the merged structured layout before mutation
+  ---
+  duration_ms: 2.257483
+  type: 'test'
+  ...
+# Subtest: billboard layers and distance culling are renderer-owned and do not alter descriptors
+ok 37 - billboard layers and distance culling are renderer-owned and do not alter descriptors
+  ---
+  duration_ms: 0.830467
+  type: 'test'
+  ...
+# Subtest: persistent missing anchors retain a bounded deduplicated diagnostic
+ok 38 - persistent missing anchors retain a bounded deduplicated diagnostic
+  ---
+  duration_ms: 1.047382
+  type: 'test'
+  ...
+# Subtest: pending async resource admission cannot resurrect a billboard after cleanup
+ok 39 - pending async resource admission cannot resurrect a billboard after cleanup
+  ---
+  duration_ms: 20.775574
+  type: 'test'
+  ...
+# Subtest: font and icon resources use declared identities to cache trusted delivery
+ok 40 - font and icon resources use declared identities to cache trusted delivery
+  ---
+  duration_ms: 4.843461
+  type: 'test'
+  ...
+# Subtest: billboard resource leases unload and reload fonts and icons by retained hash
+ok 41 - billboard resource leases unload and reload fonts and icons by retained hash
+  ---
+  duration_ms: 3.141165
+  type: 'test'
+  ...
+# Subtest: a missing billboard host is isolated with an explicit domain receipt
+ok 42 - a missing billboard host is isolated with an explicit domain receipt
+  ---
+  duration_ms: 2.010623
+  type: 'test'
+  ...
+# Subtest: camera transition sampling is disposable and preserves exact caller endpoints
+ok 43 - camera transition sampling is disposable and preserves exact caller endpoints
+  ---
+  duration_ms: 3.727095
+  type: 'test'
+  ...
+# Subtest: camera transition sampling rejects malformed renderer timing
+ok 44 - camera transition sampling rejects malformed renderer timing
+  ---
+  duration_ms: 0.623999
+  type: 'test'
+  ...
+# Subtest: editor viewport isolates equal handles across deterministic runtime authored and overlay channels
+ok 45 - editor viewport isolates equal handles across deterministic runtime authored and overlay channels
+  ---
+  duration_ms: 22.115436
+  type: 'test'
+  ...
+# Subtest: editor viewport readout exposes retained generic lights and voxel material style
+ok 46 - editor viewport readout exposes retained generic lights and voxel material style
+  ---
+  duration_ms: 1.255646
+  type: 'test'
+  ...
+# Subtest: editor viewport owns bounded lifecycle resize clear and channel disposal
+ok 47 - editor viewport owns bounded lifecycle resize clear and channel disposal
+  ---
+  duration_ms: 1.433408
+  type: 'test'
+  ...
+# Subtest: editor viewport preserves unavailable and unsupported backend statistics
+ok 48 - editor viewport preserves unavailable and unsupported backend statistics
+  ---
+  duration_ms: 0.253994
+  type: 'test'
+  ...
+# Subtest: editor viewport validates and realizes one public procedural grid outside scene channels
+ok 49 - editor viewport validates and realizes one public procedural grid outside scene channels
+  ---
+  duration_ms: 1.221606
+  type: 'test'
+  ...
+# Subtest: editor viewport accepts stored and caller cameras and maps pixel picks to typed logical hints
+ok 50 - editor viewport accepts stored and caller cameras and maps pixel picks to typed logical hints
+  ---
+  duration_ms: 1.448702
+  type: 'test'
+  ...
+# Subtest: one degraded resource channel leaves healthy runtime and overlay projections intact
+ok 51 - one degraded resource channel leaves healthy runtime and overlay projections intact
+  ---
+  duration_ms: 1.248243
+  type: 'test'
+  ...
+# Subtest: editor viewport delegates world projection to the exact mounted backend camera
+ok 52 - editor viewport delegates world projection to the exact mounted backend camera
+  ---
+  duration_ms: 0.318594
+  type: 'test'
+  ...
+# Subtest: typed ghost plate host preserves the live presentation when a recapture fails and exposes focused readout
+ok 53 - typed ghost plate host preserves the live presentation when a recapture fails and exposes focused readout
+  ---
+  duration_ms: 4.208159
+  type: 'test'
+  ...
+# Subtest: renderer-host projects render frames through the neutral projection model
+ok 54 - renderer-host projects render frames through the neutral projection model
+  ---
+  duration_ms: 3.221899
+  type: 'test'
+  ...
+# Subtest: renderer-host creates a visible default surface frame
+ok 55 - renderer-host creates a visible default surface frame
+  ---
+  duration_ms: 1.176932
+  type: 'test'
+  ...
+# Subtest: mesh resource host admits exact bounded bytes and rejects drift
+ok 56 - mesh resource host admits exact bounded bytes and rejects drift
+  ---
+  duration_ms: 2.330976
+  type: 'test'
+  ...
+# Subtest: mesh resource host admits a descriptor beyond retired per-resource and aggregate byte caps before resolver failure
+ok 57 - mesh resource host admits a descriptor beyond retired per-resource and aggregate byte caps before resolver failure
+  ---
+  duration_ms: 0.580104
+  type: 'test'
+  ...
+# Subtest: mesh resource host borrows immutable resolver bytes under the declared identity
+ok 58 - mesh resource host borrows immutable resolver bytes under the declared identity
+  ---
+  duration_ms: 2.160239
+  type: 'test'
+  ...
+# Subtest: texture resource host borrows immutable resolver bytes under the declared identity
+ok 59 - texture resource host borrows immutable resolver bytes under the declared identity
+  ---
+  duration_ms: 0.924446
+  type: 'test'
+  ...
+# Subtest: texture resource host admits descriptors beyond retired byte, aggregate, and count caps before resolver failure
+ok 60 - texture resource host admits descriptors beyond retired byte, aggregate, and count caps before resolver failure
+  ---
+  duration_ms: 7.4882
+  type: 'test'
+  ...
+# Subtest: resource-backed game surface resource source trusts delivered texture bytes
+ok 61 - resource-backed game surface resource source trusts delivered texture bytes
+  ---
+  duration_ms: 0.760685
+  type: 'test'
+  ...
+# Subtest: resource-backed game surface admits mesh resources before backend mount
+ok 62 - resource-backed game surface admits mesh resources before backend mount
+  ---
+  duration_ms: 1.014871
+  type: 'test'
+  ...
+# Subtest: renderer-host exposes backend-neutral stored editor camera resolution
+ok 63 - renderer-host exposes backend-neutral stored editor camera resolution
+  ---
+  duration_ms: 0.90551
+  type: 'test'
+  ...
+# Subtest: animated mesh projection loads the committed GLB and advances selected playback
+ok 64 - animated mesh projection loads the committed GLB and advances selected playback
+  ---
+  duration_ms: 56.565319
+  type: 'test'
+  ...
+# Subtest: animated mesh projection accepts the manifest-native FNV content hash
+ok 65 - animated mesh projection accepts the manifest-native FNV content hash
+  ---
+  duration_ms: 18.045599
+  type: 'test'
+  ...
+# Subtest: animated mesh projection permits a static GLTF resource with no required clips
+ok 66 - animated mesh projection permits a static GLTF resource with no required clips
+  ---
+  duration_ms: 7.049149
+  type: 'test'
+  ...
+# Subtest: renderer-host realizes a checked zero-clip unlit GLB through the established mesh lifecycle
+ok 67 - renderer-host realizes a checked zero-clip unlit GLB through the established mesh lifecycle
+  ---
+  duration_ms: 2.507746
+  type: 'test'
+  ...
+# Subtest: animated resources trust declared identity while retaining typed decoding diagnostics
+ok 68 - animated resources trust declared identity while retaining typed decoding diagnostics
+  ---
+  duration_ms: 13.044585
+  type: 'test'
+  ...
+# Subtest: renderer-host declarations expose no concrete backend or donor runtime types
+ok 69 - renderer-host declarations expose no concrete backend or donor runtime types
+  ---
+  duration_ms: 0.928837
+  type: 'test'
+  ...
+# Subtest: inspection surface owns coherent pointer orbit plus focused movement orbit and zoom
+ok 70 - inspection surface owns coherent pointer orbit plus focused movement orbit and zoom
+  ---
+  duration_ms: 16.260862
+  type: 'test'
+  ...
+# Subtest: inspection controls apply configurable six-axis movement, boost, inversion, and pointer pan
+ok 71 - inspection controls apply configurable six-axis movement, boost, inversion, and pointer pan
+  ---
+  duration_ms: 0.926001
+  type: 'test'
+  ...
+# Subtest: inspection surface retargets its orbit pivot without changing orientation or distance
+ok 72 - inspection surface retargets its orbit pivot without changing orientation or distance
+  ---
+  duration_ms: 1.355478
+  type: 'test'
+  ...
+# Subtest: inspection surface frames finite bounds from a deterministic front view
+ok 73 - inspection surface frames finite bounds from a deterministic front view
+  ---
+  duration_ms: 0.866602
+  type: 'test'
+  ...
+# Subtest: inspection surface applies replaces and clears the engine procedural grid
+ok 74 - inspection surface applies replaces and clears the engine procedural grid
+  ---
+  duration_ms: 1.469629
+  type: 'test'
+  ...
+# Subtest: inspection controls bound pitch and camera distance under repeated focused input
+ok 75 - inspection controls bound pitch and camera distance under repeated focused input
+  ---
+  duration_ms: 1.964058
+  type: 'test'
+  ...
+# Subtest: inspection controls clamp the initial camera to the pitch bound before mount readout
+ok 76 - inspection controls clamp the initial camera to the pitch bound before mount readout
+  ---
+  duration_ms: 1.356079
+  type: 'test'
+  ...
+# Subtest: inspection surface retains accepted frames, fails closed on malformed replacement, and owns resize
+ok 77 - inspection surface retains accepted frames, fails closed on malformed replacement, and owns resize
+  ---
+  duration_ms: 2.570849
+  type: 'test'
+  ...
+# Subtest: inspection surface incrementally applies an authored patch after its retained base
+ok 78 - inspection surface incrementally applies an authored patch after its retained base
+  ---
+  duration_ms: 2.012177
+  type: 'test'
+  ...
+# Subtest: inspection surface publishes immutable mount explicit and automatic submission samples
+ok 79 - inspection surface publishes immutable mount explicit and automatic submission samples
+  ---
+  duration_ms: 1.010716
+  type: 'test'
+  ...
+# Subtest: inspection surface delegates disposable authored animation sampling and playback
+ok 80 - inspection surface delegates disposable authored animation sampling and playback
+  ---
+  duration_ms: 1.707081
+  type: 'test'
+  ...
+# Subtest: inspection submission preserves classified counters and lifecycle history
+ok 81 - inspection submission preserves classified counters and lifecycle history
+  ---
+  duration_ms: 1.057442
+  type: 'test'
+  ...
+# Subtest: inspection surface atomically replaces authored content at exact chunk and retained limits
+ok 82 - inspection surface atomically replaces authored content at exact chunk and retained limits
+  ---
+  duration_ms: 240.923126
+  type: 'test'
+  ...
+# Subtest: inspection chunk replacement rejects malformed bounds and ordering without changing authored state
+ok 83 - inspection chunk replacement rejects malformed bounds and ordering without changing authored state
+  ---
+  duration_ms: 4.074881
+  type: 'test'
+  ...
+# Subtest: inspection chunk replacement rolls back when backend realization rejects the candidate
+ok 84 - inspection chunk replacement rolls back when backend realization rejects the candidate
+  ---
+  duration_ms: 1.184409
+  type: 'test'
+  ...
+# Subtest: inspection surface keeps incremental runtime projection distinct from authored replacement
+ok 85 - inspection surface keeps incremental runtime projection distinct from authored replacement
+  ---
+  duration_ms: 2.173433
+  type: 'test'
+  ...
+# Subtest: inspection surface replaces and clears disposable debug overlays independently
+ok 86 - inspection surface replaces and clears disposable debug overlays independently
+  ---
+  duration_ms: 0.573395
+  type: 'test'
+  ...
+# Subtest: inspection surface rejects malformed and over-limit runtime frames without changing retained runtime state
+ok 87 - inspection surface rejects malformed and over-limit runtime frames without changing retained runtime state
+  ---
+  duration_ms: 1.298666
+  type: 'test'
+  ...
+# Subtest: inspection input fail-safes clear latched movement and drag before rendering resumes
+ok 88 - inspection input fail-safes clear latched movement and drag before rendering resumes
+  ---
+  duration_ms: 1.247229
+  type: 'test'
+  ...
+# Subtest: inspection surface start stop and disposal release animation input renderer and resize resources
+ok 89 - inspection surface start stop and disposal release animation input renderer and resize resources
+  ---
+  duration_ms: 0.606392
+  type: 'test'
+  ...
+# Subtest: inspection surface rejects a malformed initial frame and disposes the prepared viewport
+ok 90 - inspection surface rejects a malformed initial frame and disposes the prepared viewport
+  ---
+  duration_ms: 0.562991
+  type: 'test'
+  ...
+# Subtest: particle host realizes deterministic bursts and expires disposable billboards
+ok 91 - particle host realizes deterministic bursts and expires disposable billboards
+  ---
+  duration_ms: 6.109897
+  type: 'test'
+  ...
+# Subtest: a missing entity anchor diagnoses without consuming the burst signal
+ok 92 - a missing entity anchor diagnoses without consuming the burst signal
+  ---
+  duration_ms: 1.02872
+  type: 'test'
+  ...
+# Subtest: missing particle resources fail locally without consuming the burst
+ok 93 - missing particle resources fail locally without consuming the burst
+  ---
+  duration_ms: 0.579705
+  type: 'test'
+  ...
+# Subtest: a partial sink failure rolls back the whole burst and leaves its signal retryable
+ok 94 - a partial sink failure rolls back the whole burst and leaves its signal retryable
+  ---
+  duration_ms: 0.805173
+  type: 'test'
+  ...
+# Subtest: a retained create does not publish its handle when its sink batch fails
+ok 95 - a retained create does not publish its handle when its sink batch fails
+  ---
+  duration_ms: 0.730688
+  type: 'test'
+  ...
+# Subtest: particle host accepts a manifest-native FNV content hash
+ok 96 - particle host accepts a manifest-native FNV content hash
+  ---
+  duration_ms: 0.382206
+  type: 'test'
+  ...
+# Subtest: cube debris sweeps against emitter-local planes without resolving sprite resources
+ok 97 - cube debris sweeps against emitter-local planes without resolving sprite resources
+  ---
+  duration_ms: 1.031584
+  type: 'test'
+  ...
+# Subtest: a terminal low-speed impact honors kill before the ordinary sleep threshold
+ok 98 - a terminal low-speed impact honors kill before the ordinary sleep threshold
+  ---
+  duration_ms: 0.538789
+  type: 'test'
+  ...
+# Subtest: a pre-limit low-speed impact may still sleep under kill-at-limit policy
+ok 99 - a pre-limit low-speed impact may still sleep under kill-at-limit policy
+  ---
+  duration_ms: 0.912439
+  type: 'test'
+  ...
+# Subtest: retained emitters can explicitly clear optional collision
+ok 100 - retained emitters can explicitly clear optional collision
+  ---
+  duration_ms: 1.20183
+  type: 'test'
+  ...
+# Subtest: retained emitter create update destroy owns continuous simulation and cleanup
+ok 101 - retained emitter create update destroy owns continuous simulation and cleanup
+  ---
+  duration_ms: 1.10032
+  type: 'test'
+  ...
+# Subtest: particle sprite leases survive an emitter visual update until old particles expire
+ok 102 - particle sprite leases survive an emitter visual update until old particles expire
+  ---
+  duration_ms: 3.549603
+  type: 'test'
+  ...
+# Subtest: missing anchor budgets and unavailable host degrade independently after scene
+ok 103 - missing anchor budgets and unavailable host degrade independently after scene
+  ---
+  duration_ms: 2.302314
+  type: 'test'
+  ...
+# Subtest: presentation demand is limited to active advancing mechanisms
+ok 104 - presentation demand is limited to active advancing mechanisms
+  ---
+  duration_ms: 2.581983
+  type: 'test'
+  ...
+# Subtest: unknown advancing hosts conservatively retain continuous advancement
+ok 105 - unknown advancing hosts conservatively retain continuous advancement
+  ---
+  duration_ms: 0.406725
+  type: 'test'
+  ...
+# Subtest: billboard hosts advance while indicators are active
+ok 106 - billboard hosts advance while indicators are active
+  ---
+  duration_ms: 4.81872
+  type: 'test'
+  ...
+# Subtest: one failing optional advancing domain degrades while later domains and future advances continue
+ok 107 - one failing optional advancing domain degrades while later domains and future advances continue
+  ---
+  duration_ms: 0.775462
+  type: 'test'
+  ...
+# Subtest: a local optional presentation rejection preserves other domains and a later valid operation
+ok 108 - a local optional presentation rejection preserves other domains and a later valid operation
+  ---
+  duration_ms: 4.303942
+  type: 'test'
+  ...
+# Subtest: listener host exceptions degrade audio once and never escape the render cadence
+ok 109 - listener host exceptions degrade audio once and never escape the render cadence
+  ---
+  duration_ms: 0.4447
+  type: 'test'
+  ...
+# Subtest: listener synchronization is typed, local, and forwards only to audio hosts that support it
+ok 110 - listener synchronization is typed, local, and forwards only to audio hosts that support it
+  ---
+  duration_ms: 1.32013
+  type: 'test'
+  ...
+# Subtest: realization feedback operations preserve their private-field-backed host receivers
+ok 111 - realization feedback operations preserve their private-field-backed host receivers
+  ---
+  duration_ms: 0.682589
+  type: 'test'
+  ...
+# Subtest: an obsolete empty host receipt cannot acknowledge requested operations
+ok 112 - an obsolete empty host receipt cannot acknowledge requested operations
+  ---
+  duration_ms: 0.757021
+  type: 'test'
+  ...
+# Subtest: no completed submission is reported as pending
+ok 113 - no completed submission is reported as pending
+  ---
+  duration_ms: 2.069058
+  type: 'test'
+  ...
+# Subtest: an applied newer publication remains pending until a matching submission is retained
+ok 114 - an applied newer publication remains pending until a matching submission is retained
+  ---
+  duration_ms: 0.503147
+  type: 'test'
+  ...
+# Subtest: a newer view revision or viewport size keeps the prior presentation pending
+ok 115 - a newer view revision or viewport size keeps the prior presentation pending
+  ---
+  duration_ms: 0.217449
+  type: 'test'
+  ...
+# Subtest: pending realizations keep an otherwise matching presentation pending
+ok 116 - pending realizations keep an otherwise matching presentation pending
+  ---
+  duration_ms: 0.16281
+  type: 'test'
+  ...
+# Subtest: lost or disposed availability reports unavailable while preserving the prior submission
+ok 117 - lost or disposed availability reports unavailable while preserving the prior submission
+  ---
+  duration_ms: 0.338913
+  type: 'test'
+  ...
+# Subtest: observation preserves the exact submitted object and makes no GPU or capture claim
+ok 118 - observation preserves the exact submitted object and makes no GPU or capture claim
+  ---
+  duration_ms: 0.18799
+  type: 'test'
+  ...
+# Subtest: a requested redraw remains pending even without a new publication or view counter
+ok 119 - a requested redraw remains pending even without a new publication or view counter
+  ---
+  duration_ms: 0.23347
+  type: 'test'
+  ...
+# Subtest: surface identities work without secure-context randomUUID and differ across surfaces
+ok 120 - surface identities work without secure-context randomUUID and differ across surfaces
+  ---
+  duration_ms: 8.557838
+  type: 'test'
+  ...
+# Subtest: listener selects the earliest primary view by renderer order then id
+ok 121 - listener selects the earliest primary view by renderer order then id
+  ---
+  duration_ms: 11.923505
+  type: 'test'
+  ...
+# Subtest: listener immediately falls back for offscreen-only and cleared primary compositions
+ok 122 - listener immediately falls back for offscreen-only and cleared primary compositions
+  ---
+  duration_ms: 0.452464
+  type: 'test'
+  ...
+# Subtest: listener normalizes explicit basis and otherwise derives canonical yaw/pitch basis
+ok 123 - listener normalizes explicit basis and otherwise derives canonical yaw/pitch basis
+  ---
+  duration_ms: 0.441547
+  type: 'test'
+  ...
+# Subtest: stored editor camera resolver owns canonical axis-aligned pose and basis semantics
+ok 124 - stored editor camera resolver owns canonical axis-aligned pose and basis semantics
+  ---
+  duration_ms: 3.74372
+  type: 'test'
+  ...
+# Subtest: stored editor camera resolver deterministically normalizes a non-axis-aligned look-at input
+ok 125 - stored editor camera resolver deterministically normalizes a non-axis-aligned look-at input
+  ---
+  duration_ms: 0.755429
+  type: 'test'
+  ...
+# Subtest: stored editor camera resolver rejects malformed inputs without returning partial camera state
+ok 126 - stored editor camera resolver rejects malformed inputs without returning partial camera state
+  ---
+  duration_ms: 0.497122
+  type: 'test'
+  ...
+# Subtest: host admission observation separates demand backend blocks and admissions
+ok 127 - host admission observation separates demand backend blocks and admissions
+  ---
+  duration_ms: 3.806598
+  type: 'test'
+  ...
+# Subtest: host admission history is bounded while lifetime counters remain exact
+ok 128 - host admission history is bounded while lifetime counters remain exact
+  ---
+  duration_ms: 0.62025
+  type: 'test'
+  ...
+# Subtest: renderer surface context events prevent loss and report one typed recovery episode
+ok 129 - renderer surface context events prevent loss and report one typed recovery episode
+  ---
+  duration_ms: 2.981054
+  type: 'test'
+  ...
+# Subtest: surface submission sample freezes exact per-submission and live-resident counters
+ok 130 - surface submission sample freezes exact per-submission and live-resident counters
+  ---
+  duration_ms: 5.809786
+  type: 'test'
+  ...
+# Subtest: surface statistics distinguish unavailable, unsupported, and invalid values from zero
+ok 131 - surface statistics distinguish unavailable, unsupported, and invalid values from zero
+  ---
+  duration_ms: 0.758936
+  type: 'test'
+  ...
+# Subtest: static automatic submissions are coalesced until owner state changes
+ok 132 - static automatic submissions are coalesced until owner state changes
+  ---
+  duration_ms: 3.470054
+  type: 'test'
+  ...
+# Subtest: controls presentation and retained animation preserve continuous demand
+ok 133 - controls presentation and retained animation preserve continuous demand
+  ---
+  duration_ms: 0.355299
+  type: 'test'
+  ...
+# Subtest: an explicit submission settles pending and resize demand
+ok 134 - an explicit submission settles pending and resize demand
+  ---
+  duration_ms: 0.20307
+  type: 'test'
+  ...
+# Subtest: surface timing distinguishes cadence from synchronous backend submission
+ok 135 - surface timing distinguishes cadence from synchronous backend submission
+  ---
+  duration_ms: 1.577483
+  type: 'test'
+  ...
+# Subtest: surface timing rejects discontinuities without poisoning the next valid sample
+ok 136 - surface timing rejects discontinuities without poisoning the next valid sample
+  ---
+  duration_ms: 0.303611
+  type: 'test'
+  ...
+# Subtest: invalid source time fails without mutating the latest sample
+ok 137 - invalid source time fails without mutating the latest sample
+  ---
+  duration_ms: 0.455291
+  type: 'test'
+  ...
+# Subtest: headless live telemetry omits unavailable counters and preserves bounded history
+ok 138 - headless live telemetry omits unavailable counters and preserves bounded history
+  ---
+  duration_ms: 6.336891
+  type: 'test'
+  ...
+# Subtest: surface telemetry takes renderer-owned counters from the immutable submission sample
+ok 139 - surface telemetry takes renderer-owned counters from the immutable submission sample
+  ---
+  duration_ms: 2.271945
+  type: 'test'
+  ...
+# Subtest: surface telemetry rejects forged ownership and statistics without mutation
+ok 140 - surface telemetry rejects forged ownership and statistics without mutation
+  ---
+  duration_ms: 2.649504
+  type: 'test'
+  ...
+# Subtest: telemetry overlay projects the same snapshot and local toggle changes no sample
+ok 141 - telemetry overlay projects the same snapshot and local toggle changes no sample
+  ---
+  duration_ms: 2.214572
+  type: 'test'
+  ...
+# Subtest: surface telemetry reports unavailable first cadence without inventing a zero
+ok 142 - surface telemetry reports unavailable first cadence without inventing a zero
+  ---
+  duration_ms: 1.078058
+  type: 'test'
+  ...
+# Subtest: missing overlay realization does not block scene or other telemetry access
+ok 143 - missing overlay realization does not block scene or other telemetry access
+  ---
+  duration_ms: 2.393551
+  type: 'test'
+  ...
+# Subtest: video host records completion, removes its media element, and ignores stale replacement events
+ok 144 - video host records completion, removes its media element, and ignores stale replacement events
+  ---
+  duration_ms: 5.010708
+  type: 'test'
+  ...
+# Subtest: video host reports a resolver failure and fences a pending play cancelled by skip
+ok 145 - video host reports a resolver failure and fences a pending play cancelled by skip
+  ---
+  duration_ms: 0.592221
+  type: 'test'
+  ...
+# Subtest: video host skip records a terminal observation and cleanup removes the active element
+ok 146 - video host skip records a terminal observation and cleanup removes the active element
+  ---
+  duration_ms: 0.347661
+  type: 'test'
+  ...
+# Subtest: video host reset clears its retained and evicted terminal-fact accounting
+ok 147 - video host reset clears its retained and evicted terminal-fact accounting
+  ---
+  duration_ms: 0.996757
+  type: 'test'
+  ...
+1..147
+# tests 147
+# suites 0
+# pass 147
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 665.445777

@@ -26,27 +26,48 @@ const (
 // product-published read-only facts. ProductURL is supplied by the planner and
 // checked against the active session profile by the command entrypoint.
 type Observer struct {
-	Client       *client.Client
-	SessionID    string
-	ProductURL   string
-	CaptureEvery int
-	observations int
-	Commands     []string
+	Client           *client.Client
+	SessionID        string
+	ProductURL       string
+	CaptureEvery     int
+	observations     int
+	Commands         []string
+	Navigation       *NavigationConfig
+	navigationTarget string
 }
 
 // Observation keeps capture metadata and product facts separate. Capture is
 // original playtest-service metadata; it makes no visual interpretation claim.
 // Facts retain their original JSON values so product numeric precision survives.
 type Observation struct {
-	CapturedAt time.Time                  `json:"captured_at"`
-	Capture    json.RawMessage            `json:"capture"`
-	Facts      map[string]json.RawMessage `json:"facts"`
+	CapturedAt       time.Time                  `json:"captured_at"`
+	Capture          json.RawMessage            `json:"capture"`
+	Facts            map[string]json.RawMessage `json:"facts"`
+	NavigationTarget string                     `json:"navigation_target,omitempty"`
 }
+
+// SetNavigationTarget only changes the target selected for a later observation.
+// The runner calls it at an action boundary; parent goroutines never access it.
+func (o *Observer) SetNavigationTarget(target string) error {
+	if !validNavigationTarget(target) {
+		return errors.New("navigation target must use 1..64 ASCII letters, digits, _ or -")
+	}
+	o.navigationTarget = target
+	return nil
+}
+
+func (o *Observer) NavigationEnabled() bool { return o.Navigation != nil }
 
 // Observe captures the current native screenshot metadata, then executes only
 // allowlisted read-only product queries. A requested but unavailable fact is an
 // error; callers must not replace it with a guessed value.
 func (o *Observer) Observe(ctx context.Context) (Observation, error) {
+	if err := o.Navigation.Validate(); err != nil {
+		return Observation{}, err
+	}
+	if o.Navigation != nil && o.navigationTarget == "" {
+		o.navigationTarget = o.Navigation.InitialTarget
+	}
 	commands := make([]string, len(o.Commands))
 	for i, command := range o.Commands {
 		validated, err := validateCommand(command)
@@ -81,8 +102,11 @@ func (o *Observer) Observe(ctx context.Context) (Observation, error) {
 		capture = json.RawMessage(`{"status":"not_captured_this_update"}`)
 	}
 	o.observations++
-	result := Observation{CapturedAt: started, Capture: capture, Facts: make(map[string]json.RawMessage, len(commands))}
-	if len(commands) == 0 {
+	result := Observation{CapturedAt: started, Capture: capture, Facts: make(map[string]json.RawMessage, len(commands)+2)}
+	if o.Navigation != nil {
+		result.NavigationTarget = o.navigationTarget
+	}
+	if len(commands) == 0 && o.Navigation == nil {
 		return result, nil
 	}
 
@@ -97,28 +121,58 @@ func (o *Observer) Observe(ctx context.Context) (Observation, error) {
 	if err != nil {
 		return Observation{}, err
 	}
+	required := make(map[string]bool, len(commands)+2)
 	for _, command := range commands {
-		if !catalog[commandName(command)] {
-			return Observation{}, fmt.Errorf("capability_unavailable: product debug command %q", commandName(command))
+		required[commandName(command)] = true
+	}
+	if o.Navigation != nil {
+		required["navigation.targets"] = true
+		required["navigation.route"] = true
+	}
+	for command := range required {
+		if !catalog[command] {
+			return Observation{}, fmt.Errorf("capability_unavailable: product debug command %q", command)
 		}
 	}
 	for _, command := range commands {
+		if o.Navigation != nil && command == "navigation.targets" {
+			continue
+		}
 		raw, err := transport.execute(ctx, command)
 		if err != nil {
 			return Observation{}, fmt.Errorf("observe product debug command %q: %w", command, err)
 		}
 		result.Facts[command] = rawJSON(raw)
 	}
+	if o.Navigation != nil {
+		targets, err := transport.execute(ctx, "navigation.targets")
+		if err != nil {
+			return Observation{}, fmt.Errorf("observe product debug command navigation.targets: %w", err)
+		}
+		result.Facts["navigation.targets"] = rawJSON(targets)
+		ids, err := navigationTargetIDs(result.Facts["navigation.targets"])
+		if err != nil {
+			return Observation{}, err
+		}
+		if _, ok := ids[o.navigationTarget]; !ok {
+			return Observation{}, fmt.Errorf("navigation target %q is unavailable", o.navigationTarget)
+		}
+		route, err := transport.execute(ctx, "navigation.route "+o.navigationTarget)
+		if err != nil {
+			return Observation{}, fmt.Errorf("observe product debug command navigation.route: %w", err)
+		}
+		result.Facts["navigation.route"] = rawJSON(route)
+	}
 	return result, nil
 }
 
 func validateCommand(command string) (string, error) {
 	fields := strings.Fields(command)
-	if len(fields) == 1 && (fields[0] == "loading-bay.readout" || fields[0] == "combat.observe" || fields[0] == "interaction.inspect" || fields[0] == "interaction.help") {
+	if len(fields) == 1 && (fields[0] == "loading-bay.readout" || fields[0] == "combat.observe" || fields[0] == "interaction.inspect" || fields[0] == "interaction.help" || fields[0] == "navigation.targets") {
 		return fields[0], nil
 	}
 	if len(fields) != 4 || fields[0] != "spatial.map" || (fields[1] != "json" && fields[1] != "ascii") {
-		return "", errors.New("product observation command must be combat.observe, interaction.inspect, interaction.help, loading-bay.readout or spatial.map <json|ascii> <radius> <cellSize>")
+		return "", errors.New("product observation command must be combat.observe, interaction.inspect, interaction.help, loading-bay.readout or spatial.map <json|ascii> <radius> <cellSize>; navigation queries are configuration-owned")
 	}
 	radius, err := strconv.Atoi(fields[2])
 	if err != nil || radius < 0 || radius > 15 {

@@ -1,0 +1,68 @@
+{
+  "arrival": {
+    "arrived": false,
+    "currentRegion": "spawn",
+    "visited": false
+  },
+  "bearingConvention": "positive right toward nextWaypoint",
+  "bearingDegrees": null,
+  "distance": 37.22907,
+  "distanceFromPlayerFeet": 37.22907,
+  "distanceMeaning": "player feet to final target feet",
+  "doorGuidance": {
+    "dynamicObstaclesIncluded": false,
+    "interaction": {
+      "reason": "OutsideQuery",
+      "selected": null,
+      "targetedUseEnabled": true
+    },
+    "nearbyDoors": [],
+    "warning": "static route; doors require ordinary use"
+  },
+  "engine": {
+    "initialNavigationRevision": 1,
+    "initialProjectionHash": 2559810967114870300,
+    "navigationRevision": 1,
+    "outcome": "NoPath",
+    "projectionHash": 2559810967114870300,
+    "routeReached": false,
+    "routeReachedMeaning": "path-query result only; player arrival is arrival.arrived",
+    "visited": 0
+  },
+  "nextWaypoint": null,
+  "pathLengthCells": null,
+  "remainingGridPathLengthEstimate": null,
+  "remainingPathLengthEstimate": null,
+  "requiredAction": {
+    "eligibleNow": false,
+    "key": "E",
+    "kind": "use",
+    "label": "north wing door",
+    "state": "closed",
+    "targetId": 20000
+  },
+  "routeTargetId": "door-north-wing",
+  "slot_id": "slot-1",
+  "source": {
+    "feet": {
+      "x": -5.6887016,
+      "y": 0,
+      "z": 3
+    },
+    "position": {
+      "x": -5.6887016,
+      "y": 0.9,
+      "z": 3
+    },
+    "stamp": {
+      "generation": 1,
+      "step": 706
+    }
+  },
+  "status": "route-unavailable",
+  "suggestion": null,
+  "targetBearingDegrees": -70.07268,
+  "targetId": "door-north-wing",
+  "targetLabel": "north wing doorway",
+  "waypointDistance": null
+}

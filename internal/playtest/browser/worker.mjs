@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { playtest } from './playtest.mjs'
 import { createInterface } from 'node:readline'
 import { chromium } from 'playwright'
 
@@ -10,10 +11,28 @@ const MAX_TARGETS = 100
 const TOKEN_LIFETIME_MS = 30_000
 const DEFAULT_TIMEOUT = 5_000
 const MAX_TIMEOUT = 15_000
+const POINTER_STATE_KEY = '__crewPlaytestPointer'
+const POINTER_INIT_SCRIPT = `(() => {
+  const state = { x: 0, y: 0, observed: false };
+  Object.defineProperty(window, '${POINTER_STATE_KEY}', { value: state });
+  window.addEventListener('mousemove', event => {
+    if (!event.isTrusted) return;
+    if (document.pointerLockElement && state.observed) {
+      state.x += event.movementX;
+      state.y += event.movementY;
+    } else {
+      state.x = event.clientX;
+      state.y = event.clientY;
+    }
+    state.observed = true;
+  }, true);
+})();`
+
 const GAMEPAD_STATE_KEY = '__crewPlaytestGamepad'
 const GAMEPAD_BUTTONS = Object.freeze({ a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, lt: 6, rt: 7, back: 8, start: 9, ls: 10, rs: 11, up: 12, down: 13, left: 14, right: 15, guide: 16 })
 const GAMEPAD_BUTTON_COUNT = 17
 
+let artifactDirectory
 let context
 let page
 let config
@@ -133,6 +152,7 @@ async function currentPage() {
 }
 
 async function launch(params) {
+  artifactDirectory = params.artifact_directory
   if (context) throw new Error('browser is already launched')
   config = params
   const width = params.width
@@ -143,6 +163,7 @@ async function launch(params) {
   context = await chromium.launchPersistentContext(params.user_data_dir, launchOptions)
   context.setDefaultTimeout(DEFAULT_TIMEOUT)
   await context.addInitScript({ content: GAMEPAD_INIT_SCRIPT })
+  await context.addInitScript({ content: POINTER_INIT_SCRIPT })
   page = context.pages()[0] || await context.newPage()
   page.on('console', message => addBounded(consoleEvents, { type: message.type(), text: message.text().slice(0, 4096), truncated: message.text().length > 4096, location: message.location() }))
   page.on('pageerror', error => addBounded(pageErrors, serializeError(error).slice(0, 4096)))
@@ -299,6 +320,7 @@ async function select(params) {
 async function browser(params) {
   if (!params || typeof params !== 'object' || Array.isArray(params)) throw new Error('browser request must be an object')
   switch (params.op) {
+    case 'playtest': return playtest(await currentPage(), artifactDirectory, params.request ?? {})
     case 'inspect': return inspect(params)
     case 'click': return click(params)
     case 'fill': return fill(params)
@@ -324,8 +346,18 @@ async function input(params) {
         try { await new Promise(resolve => setTimeout(resolve, step.ms)) } finally { for (const key of [...keys].reverse()) await active.keyboard.up(key) }
         break
       }
-      case 'move':
-        throw new Error('capability_unavailable: relative mouse move is not supported by a browser page; use point for absolute coordinates')
+      case 'move': {
+        // Read the browser-observed position: locator clicks also move the
+        // pointer, and pointer lock freezes clientX/Y while deltas continue.
+        const position = await active.evaluate(key => {
+          const state = window[key];
+          if (!document.pointerLockElement) throw new Error('relative mouse move requires pointer lock');
+          if (!state?.observed) throw new Error('relative mouse position is unavailable; click to acquire pointer lock');
+          return { x: state.x, y: state.y };
+        }, POINTER_STATE_KEY)
+        await active.mouse.move(position.x + step.dx, position.y + step.dy)
+        break
+      }
       case 'point':
         cursor = pointParams(step)
         await active.mouse.move(cursor.x, cursor.y); break
@@ -348,7 +380,7 @@ function validateInputStep(step) {
   switch (step.kind) {
     case 'wait': if (!Number.isInteger(step.ms) || step.ms < 0 || step.ms > 10_000) throw new Error('wait ms must be 0..10000'); return step
     case 'hold': if (!Array.isArray(step.keys) || step.keys.length < 1 || step.keys.length > 8 || !Number.isInteger(step.ms) || step.ms < 0 || step.ms > 10_000) throw new Error('hold requires 1..8 keys and ms 0..10000'); return { ...step, keys: step.keys.map(playwrightKey) }
-    case 'move': if (!Number.isFinite(step.dx) || !Number.isFinite(step.dy)) throw new Error('move requires finite dx and dy'); throw new Error('capability_unavailable: relative mouse move is not supported by a browser page; use point for absolute coordinates')
+    case 'move': if (!Number.isSafeInteger(step.dx) || !Number.isSafeInteger(step.dy) || Math.abs(step.dx) > 32767 || Math.abs(step.dy) > 32767) throw new Error('move requires integer dx and dy within -32767..32767'); return step
     case 'point': return { ...step, ...pointParams(step) }
     case 'click': if (!Number.isInteger(step.ms) || step.ms < 0 || step.ms > 10_000) throw new Error('click ms must be 0..10000'); return { ...step, button: button(step.button) }
     case 'gamepad': return gamepadStep(step)

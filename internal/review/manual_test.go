@@ -21,6 +21,7 @@ type manualDen struct {
 	contextNext      string
 	contextMaterial  []byte
 	requestReviewErr error
+	workspaceErr     error
 }
 
 func (d *manualDen) GetTaskContext(context.Context, TaskKey) (TaskContext, error) {
@@ -313,5 +314,26 @@ func TestManualReviewHTTPContractAndTaskConflict(t *testing.T) {
 	}
 	if body["code"] != "task_not_reviewable" {
 		t.Fatalf("conflict body=%v", body)
+	}
+}
+
+func (d *manualDen) ValidateWorkspace(context.Context, TaskKey) error { return d.workspaceErr }
+
+func TestManualReviewPreflightsCheckoutBeforeCreatingRound(t *testing.T) {
+	den := &manualDen{task: TaskContext{ProjectID: "dsh-crew", TaskID: 7416, Status: "review"}, workspaceErr: ErrWorkspaceRequired}
+	service, store, _ := manualFixture(t, den)
+	defer store.Close()
+	capability, err := service.GetManualReviewCapability(context.Background(), "dsh-crew", 7416)
+	if err != nil || capability.Eligible || !strings.Contains(capability.Detail, "local Git checkout") {
+		t.Fatalf("capability=%+v err=%v", capability, err)
+	}
+	_, _, err = service.SubmitManualReview(context.Background(), ManualReviewSubmissionRequest{ProjectID: "dsh-crew", TaskID: 7416})
+	if !errors.Is(err, ErrWorkspaceRequired) || den.manualCalls != 0 || den.contextCalls != 0 {
+		t.Fatalf("err=%v round calls=%d context calls=%d", err, den.manualCalls, den.contextCalls)
+	}
+	response := httptest.NewRecorder()
+	NewHandler(service).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/projects/dsh-crew/tasks/7416/manual-review", nil))
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "checkout_not_found") {
+		t.Fatalf("response=%d %s", response.Code, response.Body.String())
 	}
 }

@@ -137,6 +137,7 @@ func NewHandler(s *Service) http.Handler {
 	})
 	return m
 }
+
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	defer r.Body.Close()
@@ -152,11 +153,13 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	}
 	return true
 }
+
 func write(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
+
 func errJSON(w http.ResponseWriter, e error) {
 	status := 400
 	code := "invalid"
@@ -179,6 +182,14 @@ func errJSON(w http.ResponseWriter, e error) {
 	if errors.Is(e, ErrTooLate) {
 		status = 409
 		code = "too_late"
+	}
+	if errors.Is(e, ErrWorkspaceRequired) {
+		status = http.StatusConflict
+		code = "checkout_not_found"
+	}
+	if errors.Is(e, ErrWorkspaceAmbiguous) {
+		status = http.StatusConflict
+		code = "checkout_ambiguous"
 	}
 	write(w, status, map[string]string{"code": code, "error": e.Error()})
 }

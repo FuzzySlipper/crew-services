@@ -42,11 +42,11 @@ var (
 	// a service restart into a terminal review failure.
 	ErrRuntimeUnavailable = errors.New("reviewer runtime is unavailable")
 	ErrAffinityBusy       = errors.New("retained reviewer is busy")
-	// ErrWorkspaceRequired marks an absent or non-absolute Den checkout. A
-	// repository handle is logical identity, not a local filesystem workspace.
-	ErrWorkspaceRequired = errors.New("Den project root_path must be an absolute local checkout path")
-	ErrSubmissionChanged = errors.New("review submission changed while it was being advanced")
-	ErrSubmissionStore   = errors.New("review submission store is not configured")
+	// Checkout resolution belongs to the review-host adapter.
+	ErrWorkspaceRequired  = errors.New("no matching local Git checkout found")
+	ErrWorkspaceAmbiguous = errors.New("multiple matching local Git checkouts found")
+	ErrSubmissionChanged  = errors.New("review submission changed while it was being advanced")
+	ErrSubmissionStore    = errors.New("review submission store is not configured")
 )
 
 // Key is Den's logical review identity. Source evidence is intentionally not part of it.
@@ -427,15 +427,19 @@ type SubmissionDenClient interface {
 	WatchGitHubChecks(context.Context, GateRequest) (GateEvidence, error)
 	GetGitHubCheckGate(context.Context, GateRequest) (GateEvidence, error)
 }
-type Worker interface{}
-type ReviewerRuntime interface {
-	Acquire(context.Context, TaskKey, string, string) (Worker, error)
-	Run(context.Context, Worker, string, func(Completion) error) error
-	Release(context.Context, Worker) error
-	Close() error
-}
-type Clock interface{ Now() time.Time }
-type SystemClock struct{}
+type (
+	Worker          interface{}
+	ReviewerRuntime interface {
+		Acquire(context.Context, TaskKey, string, string) (Worker, error)
+		Run(context.Context, Worker, string, func(Completion) error) error
+		Release(context.Context, Worker) error
+		Close() error
+	}
+)
+type (
+	Clock       interface{ Now() time.Time }
+	SystemClock struct{}
+)
 
 func (SystemClock) Now() time.Time { return time.Now().UTC() }
 
@@ -452,8 +456,15 @@ type UnavailableRuntime struct{}
 func (UnavailableRuntime) Acquire(context.Context, TaskKey, string, string) (Worker, error) {
 	return nil, errors.New("reviewer runtime is not configured")
 }
+
 func (UnavailableRuntime) Run(context.Context, Worker, string, func(Completion) error) error {
 	return errors.New("reviewer runtime is not configured")
 }
 func (UnavailableRuntime) Release(context.Context, Worker) error { return nil }
 func (UnavailableRuntime) Close() error                          { return nil }
+
+// WorkspaceValidator optionally preflights local checkout availability before
+// manual admission creates a Den review round. It performs no mutations.
+type WorkspaceValidator interface {
+	ValidateWorkspace(context.Context, TaskKey) error
+}

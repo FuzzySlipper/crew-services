@@ -1,0 +1,1620 @@
+$ tsc --build && pnpm run test:compiled
+$ node --test 'dist/**/*.test.js'
+TAP version 13
+# Subtest: projection pick returns typed source evidence without changing projection or authority-shaped state
+ok 1 - projection pick returns typed source evidence without changing projection or authority-shaped state
+  ---
+  duration_ms: 13.674847
+  type: 'test'
+  ...
+# Subtest: projection pick filters are descriptive only and invalid rays fail closed
+ok 2 - projection pick filters are descriptive only and invalid rays fail closed
+  ---
+  duration_ms: 2.887863
+  type: 'test'
+  ...
+# Subtest: projection pick ignores retained objects hidden at the object or ancestor boundary
+ok 3 - projection pick ignores retained objects hidden at the object or ancestor boundary
+  ---
+  duration_ms: 6.911381
+  type: 'test'
+  ...
+# Subtest: world projection uses the configured Three perspective camera
+ok 4 - world projection uses the configured Three perspective camera
+  ---
+  duration_ms: 0.874182
+  type: 'test'
+  ...
+# Subtest: browser surface composes world then camera-relative presentation after clearing depth
+ok 5 - browser surface composes world then camera-relative presentation after clearing depth
+  ---
+  duration_ms: 6.557279
+  type: 'test'
+  ...
+# Subtest: browser surface keeps bounded viewmodel transforms camera-relative across world poses
+ok 6 - browser surface keeps bounded viewmodel transforms camera-relative across world poses
+  ---
+  duration_ms: 1.723338
+  type: 'test'
+  ...
+# Subtest: software backing-buffer caps do not feed back into logical canvas size
+ok 7 - software backing-buffer caps do not feed back into logical canvas size
+  ---
+  duration_ms: 3.95537
+  type: 'test'
+  ...
+# Subtest: explicit CSS dimensions remain the logical viewport
+ok 8 - explicit CSS dimensions remain the logical viewport
+  ---
+  duration_ms: 0.292275
+  type: 'test'
+  ...
+# Subtest: presentation advances between fixed samples, preserves latest look, and holds on missing samples
+ok 9 - presentation advances between fixed samples, preserves latest look, and holds on missing samples
+  ---
+  duration_ms: 7.446822
+  type: 'test'
+  ...
+# Subtest: full pose retains roll through quaternion interpolation and cuts reset immediately
+ok 10 - full pose retains roll through quaternion interpolation and cuts reset immediately
+  ---
+  duration_ms: 3.700107
+  type: 'test'
+  ...
+# Subtest: jitter and snapshot republication do not rewind presentation; timeline regressions reset
+ok 11 - jitter and snapshot republication do not rewind presentation; timeline regressions reset
+  ---
+  duration_ms: 1.292573
+  type: 'test'
+  ...
+# Subtest: a paused source timeline reanchors so subsequent samples still interpolate
+ok 12 - a paused source timeline reanchors so subsequent samples still interpolate
+  ---
+  duration_ms: 0.682053
+  type: 'test'
+  ...
+# Subtest: Three camera realizes canonical Engine pose 0/0
+ok 13 - Three camera realizes canonical Engine pose 0/0
+  ---
+  duration_ms: 7.478873
+  type: 'test'
+  ...
+# Subtest: Three camera realizes canonical Engine pose 90/0
+ok 14 - Three camera realizes canonical Engine pose 90/0
+  ---
+  duration_ms: 0.622064
+  type: 'test'
+  ...
+# Subtest: Three camera realizes canonical Engine pose -90/0
+ok 15 - Three camera realizes canonical Engine pose -90/0
+  ---
+  duration_ms: 4.165158
+  type: 'test'
+  ...
+# Subtest: Three camera realizes canonical Engine pose 30/20
+ok 16 - Three camera realizes canonical Engine pose 30/20
+  ---
+  duration_ms: 0.560914
+  type: 'test'
+  ...
+# Subtest: Three camera realizes canonical Engine pose -35/-25
+ok 17 - Three camera realizes canonical Engine pose -35/-25
+  ---
+  duration_ms: 0.53331
+  type: 'test'
+  ...
+# Subtest: procedural XZ grid keeps every line on the explicit Y-up plane and origin lattice
+ok 18 - procedural XZ grid keeps every line on the explicit Y-up plane and origin lattice
+  ---
+  duration_ms: 5.640979
+  type: 'test'
+  ...
+# Subtest: camera movement changes projected extent without changing descriptor spacing or origin
+ok 19 - camera movement changes projected extent without changing descriptor spacing or origin
+  ---
+  duration_ms: 3.272716
+  type: 'test'
+  ...
+# Subtest: Three realization updates and removes the public descriptor without scene authority nodes
+ok 20 - Three realization updates and removes the public descriptor without scene authority nodes
+  ---
+  duration_ms: 6.786239
+  type: 'test'
+  ...
+# Subtest: real projection channels isolate equal handles in fixed runtime authored and overlay cells
+ok 21 - real projection channels isolate equal handles in fixed runtime authored and overlay cells
+  ---
+  duration_ms: 8.936905
+  type: 'test'
+  ...
+# Subtest: real projection channel replacement is atomic and does not disturb sibling channels
+ok 22 - real projection channel replacement is atomic and does not disturb sibling channels
+  ---
+  duration_ms: 2.129234
+  type: 'test'
+  ...
+# Subtest: one missing editor resource fails closed without degrading healthy runtime projection
+ok 23 - one missing editor resource fails closed without degrading healthy runtime projection
+  ---
+  duration_ms: 1.032452
+  type: 'test'
+  ...
+# Subtest: editor viewport establishes shared scene depth before grid and clears only for overlay
+ok 24 - editor viewport establishes shared scene depth before grid and clears only for overlay
+  ---
+  duration_ms: 3.34906
+  type: 'test'
+  ...
+# Subtest: borrowed prepared frames validate metadata without acquiring caller textures
+ok 25 - borrowed prepared frames validate metadata without acquiring caller textures
+  ---
+  duration_ms: 4.511675
+  type: 'test'
+  ...
+# Subtest: borrowed prepared frames reject non-finite depth metadata
+ok 26 - borrowed prepared frames reject non-finite depth metadata
+  ---
+  duration_ms: 0.892057
+  type: 'test'
+  ...
+# Subtest: capture rejects invalid requests without rendering or replacing the current frame
+ok 27 - capture rejects invalid requests without rendering or replacing the current frame
+  ---
+  duration_ms: 6.223606
+  type: 'test'
+  ...
+# Subtest: capture accepts the 4096 experiment ceiling without allocating CPU pixel arrays
+ok 28 - capture accepts the 4096 experiment ceiling without allocating CPU pixel arrays
+  ---
+  duration_ms: 7.076849
+  type: 'test'
+  ...
+# Subtest: successful recapture is atomic, restores caller state, and disposes replaced resources
+ok 29 - successful recapture is atomic, restores caller state, and disposes replaced resources
+  ---
+  duration_ms: 5.888733
+  type: 'test'
+  ...
+# Subtest: failed recapture retains the last successful frame and restores state
+ok 30 - failed recapture retains the last successful frame and restores state
+  ---
+  duration_ms: 1.678305
+  type: 'test'
+  ...
+# Subtest: partial capture-target allocation disposes earlier attachments exactly once and returns a typed rejection
+ok 31 - partial capture-target allocation disposes earlier attachments exactly once and returns a typed rejection
+  ---
+  duration_ms: 1.470548
+  type: 'test'
+  ...
+# Subtest: ghost admission accounts live peers and replacement peak while retaining the old plate
+ok 32 - ghost admission accounts live peers and replacement peak while retaining the old plate
+  ---
+  duration_ms: 25.416957
+  type: 'test'
+  ...
+# Subtest: failed ghost candidates do not debit accounting from another live presentation
+ok 33 - failed ghost candidates do not debit accounting from another live presentation
+  ---
+  duration_ms: 5.175883
+  type: 'test'
+  ...
+# Subtest: successful replacement adjusts current accounting once and disposal releases the exact boundary
+ok 34 - successful replacement adjusts current accounting once and disposal releases the exact boundary
+  ---
+  duration_ms: 4.372252
+  type: 'test'
+  ...
+# Subtest: captured ghost scenes stay isolated across placement updates and change only on explicit recapture
+ok 35 - captured ghost scenes stay isolated across placement updates and change only on explicit recapture
+  ---
+  duration_ms: 3.377081
+  type: 'test'
+  ...
+# Subtest: ghost sectors and hysteresis follow independent view positions, not camera yaw or fallback passes
+ok 36 - ghost sectors and hysteresis follow independent view positions, not camera yaw or fallback passes
+  ---
+  duration_ms: 11.533302
+  type: 'test'
+  ...
+# Subtest: ghost capture keeps the baked skinned pose instead of restoring bind geometry
+ok 37 - ghost capture keeps the baked skinned pose instead of restoring bind geometry
+  ---
+  duration_ms: 5.342818
+  type: 'test'
+  ...
+# Subtest: sector selection holds through the boundary hysteresis then chooses the nearest sector
+ok 38 - sector selection holds through the boundary hysteresis then chooses the nearest sector
+  ---
+  duration_ms: 2.157118
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 35 aspect 0.75
+ok 39 - perspective ghost compression preserves source ndc at fov 35 aspect 0.75
+  ---
+  duration_ms: 1.402435
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 35 aspect 1
+ok 40 - perspective ghost compression preserves source ndc at fov 35 aspect 1
+  ---
+  duration_ms: 0.496204
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 75 aspect 0.75
+ok 41 - perspective ghost compression preserves source ndc at fov 75 aspect 0.75
+  ---
+  duration_ms: 0.453348
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 75 aspect 1
+ok 42 - perspective ghost compression preserves source ndc at fov 75 aspect 1
+  ---
+  duration_ms: 0.423333
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 110 aspect 0.75
+ok 43 - perspective ghost compression preserves source ndc at fov 110 aspect 0.75
+  ---
+  duration_ms: 0.243068
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 110 aspect 1
+ok 44 - perspective ghost compression preserves source ndc at fov 110 aspect 1
+  ---
+  duration_ms: 0.308589
+  type: 'test'
+  ...
+# Subtest: asymmetric perspective projection remains invariant
+ok 45 - asymmetric perspective projection remains invariant
+  ---
+  duration_ms: 0.315433
+  type: 'test'
+  ...
+# Subtest: source shell admission includes unorm8 precision and bounded one-texel repair
+ok 46 - source shell admission includes unorm8 precision and bounded one-texel repair
+  ---
+  duration_ms: 2.439657
+  type: 'test'
+  ...
+# Subtest: orthographic compression changes only camera-space depth
+ok 47 - orthographic compression changes only camera-space depth
+  ---
+  duration_ms: 0.934206
+  type: 'test'
+  ...
+# Subtest: cpu warp fails closed for invalid depth and retention
+ok 48 - cpu warp fails closed for invalid depth and retention
+  ---
+  duration_ms: 1.232721
+  type: 'test'
+  ...
+# Subtest: presentation owns ghost materials but borrows geometry and capture textures
+ok 49 - presentation owns ghost materials but borrows geometry and capture textures
+  ---
+  duration_ms: 6.816031
+  type: 'test'
+  ...
+# Subtest: accelerated timer queries own a bounded ring without requiring sync fences
+ok 50 - accelerated timer queries own a bounded ring without requiring sync fences
+  ---
+  duration_ms: 2.697434
+  type: 'test'
+  ...
+# Subtest: non-accelerated and timing-fallback paths stay at one submission
+ok 51 - non-accelerated and timing-fallback paths stay at one submission
+  ---
+  duration_ms: 0.284807
+  type: 'test'
+  ...
+# Subtest: known software WebGL renderers select software submission duty
+ok 52 - known software WebGL renderers select software submission duty
+  ---
+  duration_ms: 2.230185
+  type: 'test'
+  ...
+# Subtest: hardware and unavailable WebGL identities remain distinct
+ok 53 - hardware and unavailable WebGL identities remain distinct
+  ---
+  duration_ms: 0.269011
+  type: 'test'
+  ...
+# Subtest: fast completed work retains display-rate automatic submission
+ok 54 - fast completed work retains display-rate automatic submission
+  ---
+  duration_ms: 2.793959
+  type: 'test'
+  ...
+# Subtest: accelerated measured deadline starts with enclosed work rather than double-counting submit return
+ok 55 - accelerated measured deadline starts with enclosed work rather than double-counting submit return
+  ---
+  duration_ms: 0.67523
+  type: 'test'
+  ...
+# Subtest: accelerated admission uses the RAF submission clock instead of callback-observation jitter
+ok 56 - accelerated admission uses the RAF submission clock instead of callback-observation jitter
+  ---
+  duration_ms: 0.338491
+  type: 'test'
+  ...
+# Subtest: slow completed work progressively lowers automatic GPU duty
+ok 57 - slow completed work progressively lowers automatic GPU duty
+  ---
+  duration_ms: 0.255895
+  type: 'test'
+  ...
+# Subtest: accelerated measured work ignores delayed polling while the default fence remains strict
+ok 58 - accelerated measured work ignores delayed polling while the default fence remains strict
+  ---
+  duration_ms: 2.156906
+  type: 'test'
+  ...
+# Subtest: accelerated measurements pipeline display-rate work behind a strict fixed cap
+ok 59 - accelerated measurements pipeline display-rate work behind a strict fixed cap
+  ---
+  duration_ms: 0.865314
+  type: 'test'
+  ...
+# Subtest: the timer-query ring stays bounded when accelerated WebGL has no sync fences
+ok 60 - the timer-query ring stays bounded when accelerated WebGL has no sync fences
+  ---
+  duration_ms: 0.508087
+  type: 'test'
+  ...
+# Subtest: a completed accelerated measurement paces later ring submissions prospectively
+ok 61 - a completed accelerated measurement paces later ring submissions prospectively
+  ---
+  duration_ms: 0.252868
+  type: 'test'
+  ...
+# Subtest: invalid measurement-ring bounds fail before timer mutation
+ok 62 - invalid measurement-ring bounds fail before timer mutation
+  ---
+  duration_ms: 0.872073
+  type: 'test'
+  ...
+# Subtest: late completion wall time corrects an under-reported timer duration for an unknown renderer
+ok 63 - late completion wall time corrects an under-reported timer duration for an unknown renderer
+  ---
+  duration_ms: 0.776441
+  type: 'test'
+  ...
+# Subtest: completion wall latency paces automatic work without timer-query support
+ok 64 - completion wall latency paces automatic work without timer-query support
+  ---
+  duration_ms: 0.402798
+  type: 'test'
+  ...
+# Subtest: failed timer query retains completion-wall pacing
+ok 65 - failed timer query retains completion-wall pacing
+  ---
+  duration_ms: 0.346404
+  type: 'test'
+  ...
+# Subtest: software rendering treats observed completion age as work pressure
+ok 66 - software rendering treats observed completion age as work pressure
+  ---
+  duration_ms: 0.217749
+  type: 'test'
+  ...
+# Subtest: exceptionally slow work retains equal headroom plus a bounded progressive gap
+ok 67 - exceptionally slow work retains equal headroom plus a bounded progressive gap
+  ---
+  duration_ms: 0.163065
+  type: 'test'
+  ...
+# Subtest: multi-second software completion cannot collapse to a one-hundred-ms gap
+ok 68 - multi-second software completion cannot collapse to a one-hundred-ms gap
+  ---
+  duration_ms: 0.11488
+  type: 'test'
+  ...
+# Subtest: a pending timer query keeps automatic work bounded
+ok 69 - a pending timer query keeps automatic work bounded
+  ---
+  duration_ms: 0.099762
+  type: 'test'
+  ...
+# Subtest: explicit replacement and abort release older query state
+ok 70 - explicit replacement and abort release older query state
+  ---
+  duration_ms: 0.208763
+  type: 'test'
+  ...
+# Subtest: unsupported disjoint and exceptional timing degrade without deadlock
+ok 71 - unsupported disjoint and exceptional timing degrade without deadlock
+  ---
+  duration_ms: 3.407056
+  type: 'test'
+  ...
+# Subtest: automatic GPU submission stays blocked until the exact fence signals
+ok 72 - automatic GPU submission stays blocked until the exact fence signals
+  ---
+  duration_ms: 3.689842
+  type: 'test'
+  ...
+# Subtest: a later explicit submission replaces the fence and covers prior work
+ok 73 - a later explicit submission replaces the fence and covers prior work
+  ---
+  duration_ms: 0.512871
+  type: 'test'
+  ...
+# Subtest: accelerated automatic work uses a fixed completion ring without becoming unbounded
+ok 74 - accelerated automatic work uses a fixed completion ring without becoming unbounded
+  ---
+  duration_ms: 0.441021
+  type: 'test'
+  ...
+# Subtest: a runtime timer fallback can restore the strict one-fence admission limit
+ok 75 - a runtime timer fallback can restore the strict one-fence admission limit
+  ---
+  duration_ms: 0.274375
+  type: 'test'
+  ...
+# Subtest: invalid completion-ring bounds fail before any driver mutation
+ok 76 - invalid completion-ring bounds fail before any driver mutation
+  ---
+  duration_ms: 0.758151
+  type: 'test'
+  ...
+# Subtest: unsupported and failed fences degrade without deadlocking rendering
+ok 77 - unsupported and failed fences degrade without deadlocking rendering
+  ---
+  duration_ms: 0.278211
+  type: 'test'
+  ...
+# Subtest: driver exceptions disable optional pacing without escaping or leaking
+ok 78 - driver exceptions disable optional pacing without escaping or leaking
+  ---
+  duration_ms: 0.375058
+  type: 'test'
+  ...
+# Subtest: inspection preserves textures and original physical surface; clones are instance-owned
+ok 79 - inspection preserves textures and original physical surface; clones are instance-owned
+  ---
+  duration_ms: 5.813358
+  type: 'test'
+  ...
+# Subtest: whole-voxel normals accept integer unit faces, reject ordinary meshes and restore borrowed geometry
+ok 80 - whole-voxel normals accept integer unit faces, reject ordinary meshes and restore borrowed geometry
+  ---
+  duration_ms: 30.788781
+  type: 'test'
+  ...
+# Subtest: capture owns active inspection geometry and materials across source toggles and release
+ok 81 - capture owns active inspection geometry and materials across source toggles and release
+  ---
+  duration_ms: 6.690753
+  type: 'test'
+  ...
+# Subtest: Three particle sink pools billboards and instanced cubes with bounded batches
+ok 82 - Three particle sink pools billboards and instanced cubes with bounded batches
+  ---
+  duration_ms: 8.756208
+  type: 'test'
+  ...
+# Subtest: Three particle sink rejects duplicate ids and use after disposal
+ok 83 - Three particle sink rejects duplicate ids and use after disposal
+  ---
+  duration_ms: 1.567078
+  type: 'test'
+  ...
+# Subtest: capture restores WebGL state and returns top-down straight-alpha PNG pixels
+ok 84 - capture restores WebGL state and returns top-down straight-alpha PNG pixels
+  ---
+  duration_ms: 13.919892
+  type: 'test'
+  ...
+# Subtest: capture rejects an unsupported exact RGBA16F multisample count
+ok 85 - capture rejects an unsupported exact RGBA16F multisample count
+  ---
+  duration_ms: 1.77734
+  type: 'test'
+  ...
+# Subtest: GLB export includes embedded clips when the selected animated handle is the subtree root
+ok 86 - GLB export includes embedded clips when the selected animated handle is the subtree root
+  ---
+  duration_ms: 129.320412
+  type: 'test'
+  ...
+# Subtest: create places a node in the scene layer with its transform
+ok 87 - create places a node in the scene layer with its transform
+  ---
+  duration_ms: 5.85576
+  type: 'test'
+  ...
+# Subtest: update mutates transform and visibility
+ok 88 - update mutates transform and visibility
+  ---
+  duration_ms: 3.907062
+  type: 'test'
+  ...
+# Subtest: recovered publication frontiers continue through the Three renderer
+ok 89 - recovered publication frontiers continue through the Three renderer
+  ---
+  duration_ms: 2.834904
+  type: 'test'
+  ...
+# Subtest: isolated capture scenes realize a frozen frame without changing the live renderer
+ok 90 - isolated capture scenes realize a frozen frame without changing the live renderer
+  ---
+  duration_ms: 1.475413
+  type: 'test'
+  ...
+# Subtest: isolated captures allow disabled automatic lights without adding undefined objects
+ok 91 - isolated captures allow disabled automatic lights without adding undefined objects
+  ---
+  duration_ms: 1.314385
+  type: 'test'
+  ...
+# Subtest: isolated capture scenes recreate mounted neutral lighting for world and viewmodel sources
+ok 92 - isolated capture scenes recreate mounted neutral lighting for world and viewmodel sources
+  ---
+  duration_ms: 12.235055
+  type: 'test'
+  ...
+# Subtest: failed realization leaves the shared projection unadvanced and requires a fresh renderer
+ok 93 - failed realization leaves the shared projection unadvanced and requires a fresh renderer
+  ---
+  duration_ms: 4.431423
+  type: 'test'
+  ...
+# Subtest: standalone ThreeRenderer retains and advances its private projection
+ok 94 - standalone ThreeRenderer retains and advances its private projection
+  ---
+  duration_ms: 0.827296
+  type: 'test'
+  ...
+# Subtest: destroy removes the node and frees the handle
+ok 95 - destroy removes the node and frees the handle
+  ---
+  duration_ms: 0.893172
+  type: 'test'
+  ...
+# Subtest: retained resource statistics stay exact across create update destroy and disposal
+ok 96 - retained resource statistics stay exact across create update destroy and disposal
+  ---
+  duration_ms: 1.751432
+  type: 'test'
+  ...
+# Subtest: renderer-neutral lights retain parent, update, disable, degrade shadows, and destroy
+ok 97 - renderer-neutral lights retain parent, update, disable, degrade shadows, and destroy
+  ---
+  duration_ms: 1.994557
+  type: 'test'
+  ...
+# Subtest: point and spot adapters preserve range, decay, cone, and direction
+ok 98 - point and spot adapters preserve range, decay, cone, and direction
+  ---
+  duration_ms: 3.631437
+  type: 'test'
+  ...
+# Subtest: world meshes receive shadows at creation and transform frames leave retained resources alone
+ok 99 - world meshes receive shadows at creation and transform frames leave retained resources alone
+  ---
+  duration_ms: 14.991145
+  type: 'test'
+  ...
+# Subtest: renderer disposal releases nested retained resources and all handles
+ok 100 - renderer disposal releases nested retained resources and all handles
+  ---
+  duration_ms: 1.053735
+  type: 'test'
+  ...
+# Subtest: duplicate create and stale/unknown handles throw
+ok 101 - duplicate create and stale/unknown handles throw
+  ---
+  duration_ms: 0.606464
+  type: 'test'
+  ...
+# Subtest: partial frame failure retires the backend until a fresh baseline
+ok 102 - partial frame failure retires the backend until a fresh baseline
+  ---
+  duration_ms: 0.674752
+  type: 'test'
+  ...
+# Subtest: debug-layer nodes land in the debug group
+ok 103 - debug-layer nodes land in the debug group
+  ---
+  duration_ms: 0.950428
+  type: 'test'
+  ...
+# Subtest: nested group snapshots retain their root scene layer
+ok 104 - nested group snapshots retain their root scene layer
+  ---
+  duration_ms: 1.047568
+  type: 'test'
+  ...
+# Subtest: visibilityReadout classifies retained handles by effective visibility and frustum
+ok 105 - visibilityReadout classifies retained handles by effective visibility and frustum
+  ---
+  duration_ms: 6.237966
+  type: 'test'
+  ...
+# Subtest: camera-relative descendants live only in the dedicated viewmodel scene
+ok 106 - camera-relative descendants live only in the dedicated viewmodel scene
+  ---
+  duration_ms: 0.806684
+  type: 'test'
+  ...
+# Subtest: applyEncodedFrame strictly decodes and sequences create→update→destroy
+ok 107 - applyEncodedFrame strictly decodes and sequences create→update→destroy
+  ---
+  duration_ms: 3.711717
+  type: 'test'
+  ...
+# Subtest: applies the Rust-compatible render fixture sequence end-to-end
+ok 108 - applies the Rust-compatible render fixture sequence end-to-end
+  ---
+  duration_ms: 1.147217
+  type: 'test'
+  ...
+# Subtest: realizes every operation in the comprehensive retained fixture
+ok 109 - realizes every operation in the comprehensive retained fixture
+  ---
+  duration_ms: 8.923562
+  type: 'test'
+  ...
+# Subtest: replaceMeshPayload uploads a BufferGeometry with groups and material slots
+ok 110 - replaceMeshPayload uploads a BufferGeometry with groups and material slots
+  ---
+  duration_ms: 0.821715
+  type: 'test'
+  ...
+# Subtest: pickMesh traces an uploaded mesh handle back to its authority provenance
+ok 111 - pickMesh traces an uploaded mesh handle back to its authority provenance
+  ---
+  duration_ms: 0.654759
+  type: 'test'
+  ...
+# Subtest: pickMesh fails closed on a stale/missing handle (no invented source)
+ok 112 - pickMesh fails closed on a stale/missing handle (no invented source)
+  ---
+  duration_ms: 0.679703
+  type: 'test'
+  ...
+# Subtest: registered slot colour maps to the group material; unregistered uses a fallback
+ok 113 - registered slot colour maps to the group material; unregistered uses a fallback
+  ---
+  duration_ms: 0.914332
+  type: 'test'
+  ...
+# Subtest: voxel material descriptors style uploaded groups and redefine them live
+ok 114 - voxel material descriptors style uploaded groups and redefine them live
+  ---
+  duration_ms: 1.198401
+  type: 'test'
+  ...
+# Subtest: replaceMeshPayload disposes the previous geometry and material
+ok 115 - replaceMeshPayload disposes the previous geometry and material
+  ---
+  duration_ms: 0.747708
+  type: 'test'
+  ...
+# Subtest: published chunk frame replaces only changed geometry and rejects stale replay
+ok 116 - published chunk frame replaces only changed geometry and rejects stale replay
+  ---
+  duration_ms: 0.898638
+  type: 'test'
+  ...
+# Subtest: uploaded voxel meshes stay lit and preserve wireframe/opacity across updates and remeshes
+ok 117 - uploaded voxel meshes stay lit and preserve wireframe/opacity across updates and remeshes
+  ---
+  duration_ms: 0.815507
+  type: 'test'
+  ...
+# Subtest: replaceMeshPayload on an unknown handle throws
+ok 118 - replaceMeshPayload on an unknown handle throws
+  ---
+  duration_ms: 0.293555
+  type: 'test'
+  ...
+# Subtest: inline and shared-buffer sources produce equivalent geometry
+ok 119 - inline and shared-buffer sources produce equivalent geometry
+  ---
+  duration_ms: 1.405199
+  type: 'test'
+  ...
+# Subtest: shared-buffer source with no provider fails closed
+ok 120 - shared-buffer source with no provider fails closed
+  ---
+  duration_ms: 0.540246
+  type: 'test'
+  ...
+# Subtest: unknown and stale shared-buffer ids produce a classified error, not an empty mesh
+ok 121 - unknown and stale shared-buffer ids produce a classified error, not an empty mesh
+  ---
+  duration_ms: 1.026824
+  type: 'test'
+  ...
+# Subtest: a buffer too small for the declared layout fails closed
+ok 122 - a buffer too small for the declared layout fails closed
+  ---
+  duration_ms: 0.596042
+  type: 'test'
+  ...
+# Subtest: replaceMeshPayload releases the borrow on success (borrow → copy → release)
+ok 123 - replaceMeshPayload releases the borrow on success (borrow → copy → release)
+  ---
+  duration_ms: 0.595007
+  type: 'test'
+  ...
+# Subtest: resource mesh payloads produce equivalent geometry and release their borrow
+ok 124 - resource mesh payloads produce equivalent geometry and release their borrow
+  ---
+  duration_ms: 1.171908
+  type: 'test'
+  ...
+# Subtest: packed-v3 meshes realize UV and RGBA streams with vertex-color materials
+ok 125 - packed-v3 meshes realize UV and RGBA streams with vertex-color materials
+  ---
+  duration_ms: 1.244109
+  type: 'test'
+  ...
+# Subtest: resource mesh payloads fail closed on missing providers and invalid headers
+ok 126 - resource mesh payloads fail closed on missing providers and invalid headers
+  ---
+  duration_ms: 0.729338
+  type: 'test'
+  ...
+# Subtest: defineStaticMesh consumes a shared-buffer payload and releases the borrow
+ok 127 - defineStaticMesh consumes a shared-buffer payload and releases the borrow
+  ---
+  duration_ms: 0.573014
+  type: 'test'
+  ...
+# Subtest: defineStaticMesh with a handle payload but no provider fails closed
+ok 128 - defineStaticMesh with a handle payload but no provider fails closed
+  ---
+  duration_ms: 0.394193
+  type: 'test'
+  ...
+# Subtest: defineStaticMesh with an unknown handle fails closed without leaking a borrow
+ok 129 - defineStaticMesh with an unknown handle fails closed without leaking a borrow
+  ---
+  duration_ms: 0.31544
+  type: 'test'
+  ...
+# Subtest: defineStaticMesh releases the borrow even when the copy fails (too small)
+ok 130 - defineStaticMesh releases the borrow even when the copy fails (too small)
+  ---
+  duration_ms: 0.346743
+  type: 'test'
+  ...
+# Subtest: a release failure on the success path is classified, not swallowed
+ok 131 - a release failure on the success path is classified, not swallowed
+  ---
+  duration_ms: 0.286342
+  type: 'test'
+  ...
+# Subtest: static meshes retain normalized vertex alpha with generic mask and double-sided material policy
+ok 132 - static meshes retain normalized vertex alpha with generic mask and double-sided material policy
+  ---
+  duration_ms: 0.774283
+  type: 'test'
+  ...
+# Subtest: defineStaticMesh resolves draw groups through shuffled material slots
+ok 133 - defineStaticMesh resolves draw groups through shuffled material slots
+  ---
+  duration_ms: 0.604273
+  type: 'test'
+  ...
+# Subtest: defineStaticMesh rejects wholly unbound draw groups before publication
+ok 134 - defineStaticMesh rejects wholly unbound draw groups before publication
+  ---
+  duration_ms: 0.304115
+  type: 'test'
+  ...
+# Subtest: voxel-object instances share frame meshes and swap frames without handle churn
+ok 135 - voxel-object instances share frame meshes and swap frames without handle churn
+  ---
+  duration_ms: 2.416366
+  type: 'test'
+  ...
+# Subtest: voxel-scene material definitions do not replace voxel-object palette materials
+ok 136 - voxel-scene material definitions do not replace voxel-object palette materials
+  ---
+  duration_ms: 0.803882
+  type: 'test'
+  ...
+# Subtest: voxel-object definitions consume the content-addressed mesh resource path
+ok 137 - voxel-object definitions consume the content-addressed mesh resource path
+  ---
+  duration_ms: 0.644493
+  type: 'test'
+  ...
+# Subtest: voxel-object explicit release bounds GPU lifetime
+ok 138 - voxel-object explicit release bounds GPU lifetime
+  ---
+  duration_ms: 0.77881
+  type: 'test'
+  ...
+# Subtest: voxel surface redefinition, release, and reopen keep retained resources bounded
+ok 139 - voxel surface redefinition, release, and reopen keep retained resources bounded
+  ---
+  duration_ms: 1.306792
+  type: 'test'
+  ...
+# Subtest: two instances share one BufferGeometry and the asset is reference-counted
+ok 140 - two instances share one BufferGeometry and the asset is reference-counted
+  ---
+  duration_ms: 0.637046
+  type: 'test'
+  ...
+# Subtest: compatible repeated static instances batch without losing handle identity or lifecycle
+ok 141 - compatible repeated static instances batch without losing handle identity or lifecycle
+  ---
+  duration_ms: 23.8099
+  type: 'test'
+  ...
+# Subtest: a static batch realization failure makes the mutated renderer explicitly terminal
+ok 142 - a static batch realization failure makes the mutated renderer explicitly terminal
+  ---
+  duration_ms: 0.823829
+  type: 'test'
+  ...
+# Subtest: dense level-scale repeated instances compact visible members into bounded definition batches
+ok 143 - dense level-scale repeated instances compact visible members into bounded definition batches
+  ---
+  duration_ms: 18.974013
+  type: 'test'
+  ...
+# Subtest: compatible static batches repack exact visible handles as the camera moves
+ok 144 - compatible static batches repack exact visible handles as the camera moves
+  ---
+  duration_ms: 2.890964
+  type: 'test'
+  ...
+# Subtest: batch admission excludes invisible, overridden, reflected, and non-world instances
+ok 145 - batch admission excludes invisible, overridden, reflected, and non-world instances
+  ---
+  duration_ms: 1.720411
+  type: 'test'
+  ...
+# Subtest: static mesh definitions survive zero instances until explicit release or renderer disposal
+ok 146 - static mesh definitions survive zero instances until explicit release or renderer disposal
+  ---
+  duration_ms: 1.271974
+  type: 'test'
+  ...
+# Subtest: a frame can destroy the last static mesh instance and recreate it without resource churn
+ok 147 - a frame can destroy the last static mesh instance and recreate it without resource churn
+  ---
+  duration_ms: 1.126214
+  type: 'test'
+  ...
+# Subtest: per-instance material overrides apply only to that instance
+ok 148 - per-instance material overrides apply only to that instance
+  ---
+  duration_ms: 0.339669
+  type: 'test'
+  ...
+# Subtest: inline and resource PNG textures converge on one generic static-mesh material path
+ok 149 - inline and resource PNG textures converge on one generic static-mesh material path
+  ---
+  duration_ms: 2.42822
+  type: 'test'
+  ...
+# Subtest: generic materials use baked mesh UVs regardless of deprecated strategy metadata
+ok 150 - generic materials use baked mesh UVs regardless of deprecated strategy metadata
+  ---
+  duration_ms: 1.826678
+  type: 'test'
+  ...
+# Subtest: texture redefine disposes replaced and final GPU resources exactly once
+ok 151 - texture redefine disposes replaced and final GPU resources exactly once
+  ---
+  duration_ms: 1.537815
+  type: 'test'
+  ...
+# Subtest: logical texture material and atlas releases require dependency order and dispose the retained texture
+ok 152 - logical texture material and atlas releases require dependency order and dispose the retained texture
+  ---
+  duration_ms: 1.056275
+  type: 'test'
+  ...
+# Subtest: retained resource pruning preserves live texture users, then disposes and reloads their GPU texture
+ok 153 - retained resource pruning preserves live texture users, then disposes and reloads their GPU texture
+  ---
+  duration_ms: 1.850257
+  type: 'test'
+  ...
+# Subtest: retained resource pruning releases unused static definitions and admits a later reload
+ok 154 - retained resource pruning releases unused static definitions and admits a later reload
+  ---
+  duration_ms: 0.640513
+  type: 'test'
+  ...
+# Subtest: retained resource pruning keeps an animated ghost capture alive until its lease releases
+ok 155 - retained resource pruning keeps an animated ghost capture alive until its lease releases
+  ---
+  duration_ms: 2.243825
+  type: 'test'
+  ...
+# Subtest: animated meshes release after their instances and captures, then can be redefined
+ok 156 - animated meshes release after their instances and captures, then can be redefined
+  ---
+  duration_ms: 3.089151
+  type: 'test'
+  ...
+# Subtest: sky background flips asymmetric equirectangular content without changing its retained source
+ok 157 - sky background flips asymmetric equirectangular content without changing its retained source
+  ---
+  duration_ms: 1.600205
+  type: 'test'
+  ...
+# Subtest: voxel surface specializes one greedy quad for repeat and atlas-safe sampling
+ok 158 - voxel surface specializes one greedy quad for repeat and atlas-safe sampling
+  ---
+  duration_ms: 2.004125
+  type: 'test'
+  ...
+# Subtest: uploaded voxel mesh realizes its retained voxel-surface texture
+ok 159 - uploaded voxel mesh realizes its retained voxel-surface texture
+  ---
+  duration_ms: 0.979398
+  type: 'test'
+  ...
+# Subtest: voxel texture and material redefine together without remeshing
+ok 160 - voxel texture and material redefine together without remeshing
+  ---
+  duration_ms: 1.070785
+  type: 'test'
+  ...
+# Subtest: texture admission uses device capacity before borrowing and isolated captures inherit it
+ok 161 - texture admission uses device capacity before borrowing and isolated captures inherit it
+  ---
+  duration_ms: 0.726509
+  type: 'test'
+  ...
+# Subtest: a capable device admits and decodes a texture wider than the old 4096 policy
+ok 162 - a capable device admits and decodes a texture wider than the old 4096 policy
+  ---
+  duration_ms: 10.116592
+  type: 'test'
+  ...
+# Subtest: retains more than 256 textures and releases them on disposal
+ok 163 - retains more than 256 textures and releases them on disposal
+  ---
+  duration_ms: 36.029465
+  type: 'test'
+  ...
+# Subtest: trusted PNG delivery decodes without rechecking content identity or chunk CRCs
+ok 164 - trusted PNG delivery decodes without rechecking content identity or chunk CRCs
+  ---
+  duration_ms: 0.707944
+  type: 'test'
+  ...
+# Subtest: malformed texture realization retires the surface and releases borrowed and owned resources
+ok 165 - malformed texture realization retires the surface and releases borrowed and owned resources
+  ---
+  duration_ms: 1.037048
+  type: 'test'
+  ...
+# Subtest: defineMaterial maps a static-mesh slot to its defined colour, not a placeholder
+ok 166 - defineMaterial maps a static-mesh slot to its defined colour, not a placeholder
+  ---
+  duration_ms: 0.463466
+  type: 'test'
+  ...
+# Subtest: a slot with no material descriptor falls back deterministically and is counted
+ok 167 - a slot with no material descriptor falls back deterministically and is counted
+  ---
+  duration_ms: 0.337666
+  type: 'test'
+  ...
+# Subtest: two voxel materials project to distinct retained render descriptors
+ok 168 - two voxel materials project to distinct retained render descriptors
+  ---
+  duration_ms: 0.330716
+  type: 'test'
+  ...
+# Subtest: redefining a material live-replaces instance materials and disposes the old
+ok 169 - redefining a material live-replaces instance materials and disposes the old
+  ---
+  duration_ms: 0.460735
+  type: 'test'
+  ...
+# Subtest: material feedback updates one instance without duplicating its asset or handle
+ok 170 - material feedback updates one instance without duplicating its asset or handle
+  ---
+  duration_ms: 0.769341
+  type: 'test'
+  ...
+# Subtest: fallback material use is visible in diagnostics with the material id
+ok 171 - fallback material use is visible in diagnostics with the material id
+  ---
+  duration_ms: 0.357963
+  type: 'test'
+  ...
+# Subtest: a sprite frame maps to its atlas UV sub-rectangle deterministically
+ok 172 - a sprite frame maps to its atlas UV sub-rectangle deterministically
+  ---
+  duration_ms: 1.111572
+  type: 'test'
+  ...
+# Subtest: multi-row sprite atlases select top-left image-space rows without vertical reversal
+ok 173 - multi-row sprite atlases select top-left image-space rows without vertical reversal
+  ---
+  duration_ms: 0.422973
+  type: 'test'
+  ...
+# Subtest: a sprite frame with no atlas frame falls back to full UVs and is counted
+ok 174 - a sprite frame with no atlas frame falls back to full UVs and is counted
+  ---
+  duration_ms: 0.284864
+  type: 'test'
+  ...
+# Subtest: sprite atlases bind retained PNG textures and refresh live sprites on replacement
+ok 175 - sprite atlases bind retained PNG textures and refresh live sprites on replacement
+  ---
+  duration_ms: 1.141496
+  type: 'test'
+  ...
+# Subtest: retained sprites realize bounded authored normals, alpha, shadows, and linear texture data
+ok 176 - retained sprites realize bounded authored normals, alpha, shadows, and linear texture data
+  ---
+  duration_ms: 0.723154
+  type: 'test'
+  ...
+# Subtest: one admitted compatible clip pack serves independent instances with origin-qualified clips
+ok 177 - one admitted compatible clip pack serves independent instances with origin-qualified clips
+  ---
+  duration_ms: 4.087081
+  type: 'test'
+  ...
+# Subtest: clip descriptors bind one exact decoded source name and duration
+ok 178 - clip descriptors bind one exact decoded source name and duration
+  ---
+  duration_ms: 0.419931
+  type: 'test'
+  ...
+# Subtest: mixed-case clip and rig identities use code-unit canonical order
+ok 179 - mixed-case clip and rig identities use code-unit canonical order
+  ---
+  duration_ms: 0.66049
+  type: 'test'
+  ...
+# Subtest: clip-pack channels reject malformed decoded keyframes before publication
+ok 180 - clip-pack channels reject malformed decoded keyframes before publication
+  ---
+  duration_ms: 1.448905
+  type: 'test'
+  ...
+# Subtest: clip packs admit a joint forest when the designated root is structural
+ok 181 - clip packs admit a joint forest when the designated root is structural
+  ---
+  duration_ms: 1.042084
+  type: 'test'
+  ...
+# Subtest: clip packs retain multiple root translations as authored pose when motion is unspecified
+ok 182 - clip packs retain multiple root translations as authored pose when motion is unspecified
+  ---
+  duration_ms: 0.686987
+  type: 'test'
+  ...
+# Subtest: animated GLB loader realizes KHR_texture_transform from retained source bytes
+ok 183 - animated GLB loader realizes KHR_texture_transform from retained source bytes
+  ---
+  duration_ms: 49.164736
+  type: 'test'
+  ...
+# Subtest: animated GLB loader preserves physical material extension values and texture
+ok 184 - animated GLB loader preserves physical material extension values and texture
+  ---
+  duration_ms: 6.659582
+  type: 'test'
+  ...
+# Subtest: committed animated GLB instances share GPU resources while playback remains independent
+ok 185 - committed animated GLB instances share GPU resources while playback remains independent
+  ---
+  duration_ms: 25.857858
+  type: 'test'
+  ...
+# Subtest: the native rig fingerprint admits an actual same-GLB clip pack without weakening validation
+ok 186 - the native rig fingerprint admits an actual same-GLB clip pack without weakening validation
+  ---
+  duration_ms: 15.011186
+  type: 'test'
+  ...
+# Subtest: animated mesh playback is command-selected and advances through renderer ticks only
+ok 187 - animated mesh playback is command-selected and advances through renderer ticks only
+  ---
+  duration_ms: 1.105993
+  type: 'test'
+  ...
+# Subtest: LoopOnce natural completion is mixer-event driven and rejects invalidated epochs
+ok 188 - LoopOnce natural completion is mixer-event driven and rejects invalidated epochs
+  ---
+  duration_ms: 1.224385
+  type: 'test'
+  ...
+# Subtest: animated skinning inspection samples more than 256 named joints into the live pose
+ok 189 - animated skinning inspection samples more than 256 named joints into the live pose
+  ---
+  duration_ms: 6.644992
+  type: 'test'
+  ...
+# Subtest: animated skinning inspection rejects zero and non-finite weight sums as normalized
+ok 190 - animated skinning inspection rejects zero and non-finite weight sums as normalized
+  ---
+  duration_ms: 0.890599
+  type: 'test'
+  ...
+# Subtest: animated instances reuse asset-scoped geometry and materials with independent skeletons and lifecycle
+ok 191 - animated instances reuse asset-scoped geometry and materials with independent skeletons and lifecycle
+  ---
+  duration_ms: 1.549333
+  type: 'test'
+  ...
+# Subtest: animated mesh adapter fails closed for missing resources and clips
+ok 192 - animated mesh adapter fails closed for missing resources and clips
+  ---
+  duration_ms: 0.463307
+  type: 'test'
+  ...
+# Subtest: animated mesh accepts the resource selected by its asset identity
+ok 193 - animated mesh accepts the resource selected by its asset identity
+  ---
+  duration_ms: 0.316742
+  type: 'test'
+  ...
+# Subtest: animated mesh overrides are instance-owned, live-redefined, and capture-safe after source release
+ok 194 - animated mesh overrides are instance-owned, live-redefined, and capture-safe after source release
+  ---
+  duration_ms: 2.614153
+  type: 'test'
+  ...
+# Subtest: createSprite builds a plane geometry (not THREE.Sprite) with render order + depth policy
+ok 195 - createSprite builds a plane geometry (not THREE.Sprite) with render order + depth policy
+  ---
+  duration_ms: 0.348119
+  type: 'test'
+  ...
+# Subtest: viewport sprites stay in their CSS rectangle across FOV, zoom, and transformed parents
+ok 196 - viewport sprites stay in their CSS rectangle across FOV, zoom, and transformed parents
+  ---
+  duration_ms: 0.982074
+  type: 'test'
+  ...
+# Subtest: pixel sprites keep CSS-pixel dimensions under perspective FOV changes
+ok 197 - pixel sprites keep CSS-pixel dimensions under perspective FOV changes
+  ---
+  duration_ms: 0.616669
+  type: 'test'
+  ...
+# Subtest: textureless legacy and explicit blend sprites retain distinct depth policy
+ok 198 - textureless legacy and explicit blend sprites retain distinct depth policy
+  ---
+  duration_ms: 0.28864
+  type: 'test'
+  ...
+# Subtest: sprite billboards face the active camera while none preserves the authored rotation
+ok 199 - sprite billboards face the active camera while none preserves the authored rotation
+  ---
+  duration_ms: 0.684534
+  type: 'test'
+  ...
+# Subtest: cylindrical billboards keep a valid orientation when horizontal distance is zero
+ok 200 - cylindrical billboards keep a valid orientation when horizontal distance is zero
+  ---
+  duration_ms: 0.30409
+  type: 'test'
+  ...
+# Subtest: billboards recompute for each camera, including orthographic projection
+ok 201 - billboards recompute for each camera, including orthographic projection
+  ---
+  duration_ms: 0.586648
+  type: 'test'
+  ...
+# Subtest: sprite frame/tint updates are deterministic and projection-driven
+ok 202 - sprite frame/tint updates are deterministic and projection-driven
+  ---
+  duration_ms: 0.238796
+  type: 'test'
+  ...
+# Subtest: reserved lit/shadow shading is accepted (renderer does not force unlit-only)
+ok 203 - reserved lit/shadow shading is accepted (renderer does not force unlit-only)
+  ---
+  duration_ms: 0.289506
+  type: 'test'
+  ...
+# Subtest: pickSprite traces to source entity / scene node / asset, never a render handle as authority
+ok 204 - pickSprite traces to source entity / scene node / asset, never a render handle as authority
+  ---
+  duration_ms: 0.242588
+  type: 'test'
+  ...
+# Subtest: large shared-buffer payload uploads with the declared counts
+ok 205 - large shared-buffer payload uploads with the declared counts
+  ---
+  duration_ms: 1.981067
+  type: 'test'
+  ...
+# Subtest: create/replace/destroy/invalidate cycle leaves no leaked geometry and stable diagnostics
+ok 206 - create/replace/destroy/invalidate cycle leaves no leaked geometry and stable diagnostics
+  ---
+  duration_ms: 0.639303
+  type: 'test'
+  ...
+# Subtest: uploaded chunks consolidate equivalent opaque groups and retain shared materials through edits and disposal
+ok 207 - uploaded chunks consolidate equivalent opaque groups and retain shared materials through edits and disposal
+  ---
+  duration_ms: 0.579927
+  type: 'test'
+  ...
+# Subtest: inspection bounds follow the displayed pose without replacing playback and survive baseline recreation
+ok 208 - inspection bounds follow the displayed pose without replacing playback and survive baseline recreation
+  ---
+  duration_ms: 1.633413
+  type: 'test'
+  ...
+# Subtest: sky blend retains shader and geometry while the product clock changes
+ok 209 - sky blend retains shader and geometry while the product clock changes
+  ---
+  duration_ms: 1.132433
+  type: 'test'
+  ...
+# Subtest: retained joint attachment follows sampled poses, detaches, and dies with its body
+ok 210 - retained joint attachment follows sampled poses, detaches, and dies with its body
+  ---
+  duration_ms: 1.189722
+  type: 'test'
+  ...
+# Subtest: local static changes leave unrelated batch groups and resource owners untouched
+ok 211 - local static changes leave unrelated batch groups and resource owners untouched
+  ---
+  duration_ms: 2.155366
+  type: 'test'
+  ...
+# Subtest: software rendering bounds backing-buffer work without changing smaller requests
+ok 212 - software rendering bounds backing-buffer work without changing smaller requests
+  ---
+  duration_ms: 3.022196
+  type: 'test'
+  ...
+# Subtest: accelerated and unknown renderers preserve the requested ratio
+ok 213 - accelerated and unknown renderers preserve the requested ratio
+  ---
+  duration_ms: 0.338724
+  type: 'test'
+  ...
+# Subtest: invalid renderer ratios fail before surface mutation
+ok 214 - invalid renderer ratios fail before surface mutation
+  ---
+  duration_ms: 0.898086
+  type: 'test'
+  ...
+# Subtest: legacy sprite shading resolves without admitting custom shader source
+ok 215 - legacy sprite shading resolves without admitting custom shader source
+  ---
+  duration_ms: 3.565549
+  type: 'test'
+  ...
+# Subtest: legacy omission preserves depth writes while explicit blend remains depth-write-free
+ok 216 - legacy omission preserves depth writes while explicit blend remains depth-write-free
+  ---
+  duration_ms: 1.996139
+  type: 'test'
+  ...
+# Subtest: bounded sprite modes select stock Three material features and alpha policy
+ok 217 - bounded sprite modes select stock Three material features and alpha policy
+  ---
+  duration_ms: 1.899086
+  type: 'test'
+  ...
+# Subtest: synthetic normals share one shader variant while tint remains per instance
+ok 218 - synthetic normals share one shader variant while tint remains per instance
+  ---
+  duration_ms: 2.639709
+  type: 'test'
+  ...
+# Subtest: material variant identity excludes mutable per-instance tint and texture identity
+ok 219 - material variant identity excludes mutable per-instance tint and texture identity
+  ---
+  duration_ms: 0.250946
+  type: 'test'
+  ...
+# Subtest: static room frame projects and renders through the package-root path
+ok 220 - static room frame projects and renders through the package-root path
+  ---
+  duration_ms: 24.153173
+  type: 'test'
+  ...
+# Subtest: static-room helper matches the committed successor golden snapshot
+ok 221 - static-room helper matches the committed successor golden snapshot
+  ---
+  duration_ms: 5.318161
+  type: 'test'
+  ...
+# Subtest: composition publication is immutable and target revisions cannot be resurrected
+ok 222 - composition publication is immutable and target revisions cannot be resurrected
+  ---
+  duration_ms: 10.153287
+  type: 'test'
+  ...
+# Subtest: composition visibility preserves configured view and camera identity
+ok 223 - composition visibility preserves configured view and camera identity
+  ---
+  duration_ms: 1.167142
+  type: 'test'
+  ...
+# Subtest: composed primary views keep viewmodel transforms camera-relative across world poses
+ok 224 - composed primary views keep viewmodel transforms camera-relative across world poses
+  ---
+  duration_ms: 3.111427
+  type: 'test'
+  ...
+# Subtest: camera-dependent realization is prepared for each actual primary and offscreen draw
+ok 225 - camera-dependent realization is prepared for each actual primary and offscreen draw
+  ---
+  duration_ms: 2.523618
+  type: 'test'
+  ...
+# Subtest: changed target facts require a higher revision and publish exactly once
+ok 226 - changed target facts require a higher revision and publish exactly once
+  ---
+  duration_ms: 2.29781
+  type: 'test'
+  ...
+# Subtest: target allocation failure leaves the prior composition unchanged
+ok 227 - target allocation failure leaves the prior composition unchanged
+  ---
+  duration_ms: 1.262779
+  type: 'test'
+  ...
+# Subtest: camera samples survive republication but reset across runtime replacement with reused identities
+ok 228 - camera samples survive republication but reset across runtime replacement with reused identities
+  ---
+  duration_ms: 1.856198
+  type: 'test'
+  ...
+# Subtest: borrowed prepared frames validate metadata without acquiring caller textures
+ok 229 - borrowed prepared frames validate metadata without acquiring caller textures
+  ---
+  duration_ms: 3.88587
+  type: 'test'
+  ...
+# Subtest: borrowed prepared frames reject non-finite depth metadata
+ok 230 - borrowed prepared frames reject non-finite depth metadata
+  ---
+  duration_ms: 0.777025
+  type: 'test'
+  ...
+# Subtest: capture rejects invalid requests without rendering or replacing the current frame
+ok 231 - capture rejects invalid requests without rendering or replacing the current frame
+  ---
+  duration_ms: 2.969604
+  type: 'test'
+  ...
+# Subtest: capture accepts the 4096 experiment ceiling without allocating CPU pixel arrays
+ok 232 - capture accepts the 4096 experiment ceiling without allocating CPU pixel arrays
+  ---
+  duration_ms: 10.243789
+  type: 'test'
+  ...
+# Subtest: successful recapture is atomic, restores caller state, and disposes replaced resources
+ok 233 - successful recapture is atomic, restores caller state, and disposes replaced resources
+  ---
+  duration_ms: 5.752512
+  type: 'test'
+  ...
+# Subtest: failed recapture retains the last successful frame and restores state
+ok 234 - failed recapture retains the last successful frame and restores state
+  ---
+  duration_ms: 2.072882
+  type: 'test'
+  ...
+# Subtest: all enhancement modes reuse one bounded base and splat resource pair
+ok 235 - all enhancement modes reuse one bounded base and splat resource pair
+  ---
+  duration_ms: 8.939164
+  type: 'test'
+  ...
+# Subtest: configuration updates are validated, fail-atomic, and avoid recapture
+ok 236 - configuration updates are validated, fail-atomic, and avoid recapture
+  ---
+  duration_ms: 5.681391
+  type: 'test'
+  ...
+# Subtest: depth relief is rebased to captured subject bounds instead of the camera clip range
+ok 237 - depth relief is rebased to captured subject bounds instead of the camera clip range
+  ---
+  duration_ms: 1.847792
+  type: 'test'
+  ...
+# Subtest: depth-parallax uses bounded connected-card POM with vertex fallback when disabled
+ok 238 - depth-parallax uses bounded connected-card POM with vertex fallback when disabled
+  ---
+  duration_ms: 2.932303
+  type: 'test'
+  ...
+# Subtest: neighboring representations support opaque, dithered, and alpha transition weights
+ok 239 - neighboring representations support opaque, dithered, and alpha transition weights
+  ---
+  duration_ms: 1.049316
+  type: 'test'
+  ...
+# Subtest: splat density scales independently to the bounded 512 square maximum
+ok 240 - splat density scales independently to the bounded 512 square maximum
+  ---
+  duration_ms: 5.763666
+  type: 'test'
+  ...
+# Subtest: source replacement rebinds borrowed textures without disposing either frame
+ok 241 - source replacement rebinds borrowed textures without disposing either frame
+  ---
+  duration_ms: 1.758795
+  type: 'test'
+  ...
+# Subtest: orientation policies respect capture basis, blend endpoints, and transformed parents
+ok 242 - orientation policies respect capture basis, blend endpoints, and transformed parents
+  ---
+  duration_ms: 7.391713
+  type: 'test'
+  ...
+# Subtest: world-upright orientation removes capture elevation while preserving azimuth
+ok 243 - world-upright orientation removes capture elevation while preserving azimuth
+  ---
+  duration_ms: 3.505221
+  type: 'test'
+  ...
+# Subtest: transition partition admits exactly one depiction at every bounded threshold
+ok 244 - transition partition admits exactly one depiction at every bounded threshold
+  ---
+  duration_ms: 10.04778
+  type: 'test'
+  ...
+# Subtest: edge cue draws one depiction and rapid reversal settles coherently
+ok 245 - edge cue draws one depiction and rapid reversal settles coherently
+  ---
+  duration_ms: 7.282474
+  type: 'test'
+  ...
+# Subtest: single-plate edge cue is a narrow mirrored band that travels fully off the plate
+ok 246 - single-plate edge cue is a narrow mirrored band that travels fully off the plate
+  ---
+  duration_ms: 0.66743
+  type: 'test'
+  ...
+# Subtest: sector selection holds through the boundary hysteresis then chooses the nearest sector
+ok 247 - sector selection holds through the boundary hysteresis then chooses the nearest sector
+  ---
+  duration_ms: 0.136228
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 35 aspect 0.75
+ok 248 - perspective ghost compression preserves source ndc at fov 35 aspect 0.75
+  ---
+  duration_ms: 0.42847
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 35 aspect 1
+ok 249 - perspective ghost compression preserves source ndc at fov 35 aspect 1
+  ---
+  duration_ms: 0.198951
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 75 aspect 0.75
+ok 250 - perspective ghost compression preserves source ndc at fov 75 aspect 0.75
+  ---
+  duration_ms: 0.206588
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 75 aspect 1
+ok 251 - perspective ghost compression preserves source ndc at fov 75 aspect 1
+  ---
+  duration_ms: 0.177661
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 110 aspect 0.75
+ok 252 - perspective ghost compression preserves source ndc at fov 110 aspect 0.75
+  ---
+  duration_ms: 0.285703
+  type: 'test'
+  ...
+# Subtest: perspective ghost compression preserves source ndc at fov 110 aspect 1
+ok 253 - perspective ghost compression preserves source ndc at fov 110 aspect 1
+  ---
+  duration_ms: 0.391231
+  type: 'test'
+  ...
+# Subtest: asymmetric perspective projection remains invariant
+ok 254 - asymmetric perspective projection remains invariant
+  ---
+  duration_ms: 0.246099
+  type: 'test'
+  ...
+# Subtest: source shell admission includes unorm8 precision and bounded one-texel repair
+ok 255 - source shell admission includes unorm8 precision and bounded one-texel repair
+  ---
+  duration_ms: 0.461927
+  type: 'test'
+  ...
+# Subtest: orthographic compression changes only camera-space depth
+ok 256 - orthographic compression changes only camera-space depth
+  ---
+  duration_ms: 0.179137
+  type: 'test'
+  ...
+# Subtest: cpu warp fails closed for invalid depth and retention
+ok 257 - cpu warp fails closed for invalid depth and retention
+  ---
+  duration_ms: 0.337333
+  type: 'test'
+  ...
+# Subtest: presentation owns ghost materials but borrows geometry and capture textures
+ok 258 - presentation owns ghost materials but borrows geometry and capture textures
+  ---
+  duration_ms: 1.374408
+  type: 'test'
+  ...
+# Subtest: held animation frame banks capture each exact pose-direction once and select without recapture
+ok 259 - held animation frame banks capture each exact pose-direction once and select without recapture
+  ---
+  duration_ms: 33.415466
+  type: 'test'
+  ...
+# Subtest: held animation cadence expansion, quotas, cancellation, and failed replacement preserve a live bank
+ok 260 - held animation cadence expansion, quotas, cancellation, and failed replacement preserve a live bank
+  ---
+  duration_ms: 15.078597
+  type: 'test'
+  ...
+# Subtest: held animation frame-bank admission is scene-wide, exact-union bounded, and source-transform stale-safe
+ok 261 - held animation frame-bank admission is scene-wide, exact-union bounded, and source-transform stale-safe
+  ---
+  duration_ms: 7.354695
+  type: 'test'
+  ...
+# Subtest: prepared voxel-sprite scene owns enhancement resources but borrows retained textures
+ok 262 - prepared voxel-sprite scene owns enhancement resources but borrows retained textures
+  ---
+  duration_ms: 3.331673
+  type: 'test'
+  ...
+# Subtest: retained capture isolates visibility and preserves the prior representation on recapture failure
+ok 263 - retained capture isolates visibility and preserves the prior representation on recapture failure
+  ---
+  duration_ms: 2.618498
+  type: 'test'
+  ...
+# Subtest: runtime capture defaults to an isolated studio rig and restores scene lights
+ok 264 - runtime capture defaults to an isolated studio rig and restores scene lights
+  ---
+  duration_ms: 1.979676
+  type: 'test'
+  ...
+# Subtest: ghost-plate freezes an isolated multipart pose without mutating the canonical retained hierarchy
+ok 265 - ghost-plate freezes an isolated multipart pose without mutating the canonical retained hierarchy
+  ---
+  duration_ms: 11.639157
+  type: 'test'
+  ...
+# Subtest: ghost-plate bakes a frozen skinned pose without retaining bind-matrix authority
+ok 266 - ghost-plate bakes a frozen skinned pose without retaining bind-matrix authority
+  ---
+  duration_ms: 3.566085
+  type: 'test'
+  ...
+# Subtest: atlas reference sampling is Euclidean and continuous across independent chunk phases
+ok 267 - atlas reference sampling is Euclidean and continuous across independent chunk phases
+  ---
+  duration_ms: 3.781982
+  type: 'test'
+  ...
+# Subtest: stale, mismatched, and out-of-bounds retained texture facts fail closed
+ok 268 - stale, mismatched, and out-of-bounds retained texture facts fail closed
+  ---
+  duration_ms: 0.81551
+  type: 'test'
+  ...
+1..268
+# tests 268
+# suites 0
+# pass 268
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 880.360605
