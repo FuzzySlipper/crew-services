@@ -1,5 +1,8 @@
 # Agent playtesting
 
+- [Tester prompts and exit interviews](playtest-agent-prompts.md)
+- [Adding playtest support to another Engine product](playtest-product-integration.md)
+
 ## Adaptive Engine playtesting
 
 `playtest assist SESSION --json '{"op":"discover"}'` discovers the Engine

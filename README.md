@@ -1,6 +1,8 @@
 # crew-services
 
-For native-controller game testing, see [Agent playtesting](docs/playtest.md).
+For game and browser testing, see [Agent playtesting](docs/playtest.md),
+[tester prompts](docs/playtest-agent-prompts.md), and the
+[Engine product integration guide](docs/playtest-product-integration.md).
 The separate `playtest-service` and `playtest-target` Go processes own sessions
 and input; `playtest` provides CLI/MCP access and a supervised JavaScript worker
 composes actions. This does not depend on the messaging fabric.
