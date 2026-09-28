@@ -1,0 +1,16 @@
+{
+  "accepted": false,
+  "capture": "/home/agent/.local/state/crew-playtest-local/browser/22c7d7ec-b210-4733-9458-0c565662bd58/action-a268d60d-79de-4077-bfe1-53ebc1e5f59d.png",
+  "plan": {
+    "available": false,
+    "durationMs": 1257.142857142857,
+    "equipment": "Shotgun",
+    "heldKeys": null,
+    "hold": false,
+    "id": "attack",
+    "key": "ControlLeft",
+    "reason": "weapon-not-ready"
+  },
+  "reason": "weapon-not-ready",
+  "slot_id": "slot-1"
+}

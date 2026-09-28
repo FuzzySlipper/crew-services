@@ -1,0 +1,12 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  LoadingBay.Game -> /home/agent/dev/rusty-doom/csharp/LoadingBay.Game/bin/Debug/net10.0/LoadingBay.Game.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:00.65
+RUSTY_DEV {"detail":{"contentStoreRoot":"/home/agent/dev/rusty-doom/.runtime/content-store","loader":"coreclr","persistenceRoot":"/home/agent/dev/rusty-doom/.runtime/persistence","pid":1993369,"productDirectory":"/home/agent/dev/rusty-doom/csharp/LoadingBay.Game/obj/Rusty.Engine/Product","project":"/home/agent/dev/rusty-doom/csharp/LoadingBay.Game/LoadingBay.Game.csproj","runtimeInstanceId":1992754,"runtimePack":"/home/agent/dev/rusty-doom/.runtime/playtest-development-20260928k/runtime-pack","watchPaths":["/home/agent/dev/rusty-doom/csharp/LoadingBay.Game","/home/agent/dev/rusty-doom/csharp/LoadingBay.Game/../../dist/apps/loading-bay/browser","/home/agent/dev/rusty-doom/csharp/LoadingBay.Game/../../content"]},"event":"started","schemaVersion":1}
+C# CoreCLR product host listening at http://127.0.0.1:4394
+Press Ctrl+C to stop.

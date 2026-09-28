@@ -1,0 +1,272 @@
+   Compiling engine-spatial v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/engine-spatial)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.47s
+     Running unittests src/lib.rs (target/debug/deps/engine_spatial-dd3f34a4ed868887)
+
+running 11 tests
+test character_controller::tests::look_diagnostic_retains_rejection_cause ... ok
+test character_controller::tests::look_rebase_and_reset_preserve_explicit_product_state_semantics ... ok
+test character_controller::tests::look_clamps_pitch_and_bounds_delta ... ok
+test character_controller::tests::validation_names_invalid_field ... ok
+test character_controller::tests::multiple_side_contacts_preserve_vertical_escape ... ok
+test character_controller::tests::sparse_config_documents_inherit_defaults ... ok
+test voxel_edit::tests::stale_duplicate_and_invalid_batches_fail_as_one_validation_unit ... ok
+test voxel_edit::tests::accepted_edits_are_coordinate_ordered_and_advance_once ... ok
+test voxel_edit::tests::empty_oversized_and_exhausted_requests_are_rejected ... ok
+test character_controller::tests::look_uses_engine_heading_convention ... ok
+test voxel_history_codec::tests::decode_rejects_invalid_material_in_unapplied_redo_tail ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/character_controller.rs (target/debug/deps/character_controller-2058fe014f02afd4)
+
+running 29 tests
+test collision_resident_mesh_is_one_support_authority_and_carries_without_aabb ... ok
+test moving_platform_support_is_retained_and_carries_next_step ... ok
+test descending_step_uses_floor_snap_without_manufacturing_an_up_step ... ok
+test live_voxel_edit_beneath_character_invalidates_support_and_continues ... ok
+test representative_character_controller_performance_budget ... ignored, performance probe; run with scripts/measure-character-controller.sh
+test platform_translation_and_rotation_carry_flags_are_independent ... ok
+test static_mesh_aabb_hole_remains_passable_and_unadmitted_mesh_is_collision_only ... ok
+test buffered_jump_consumes_on_ground_and_coyote_jump_consumes_once ... ok
+test external_impulse_remains_separate_from_controlled_velocity ... ok
+test level_motion_normalizes_diagonal_and_receipt_owns_continuation ... ok
+test environment_change_between_prepare_and_commit_is_fail_atomic ... ok
+test floor_snap_and_open_ledge_have_distinct_support_outcomes ... ok
+test noncollidable_material_layer_preserves_cells_but_rays_and_characters_reach_floor ... ok
+test crouch_preserves_feet_and_standing_waits_for_clearance ... ok
+test airborne_character_landing_on_steep_ramp_keeps_sliding_down ... ok
+test buffered_jump_fires_after_landing_and_coyote_jump_fires_once ... ok
+test ceiling_stops_upward_velocity_without_bounce ... ok
+test unresolved_deep_overlap_rejects_without_partial_publication ... ok
+test character_capsule_edge_and_ordinary_controls_cross_a_quarter_meter_step ... ok
+test floor_wall_lip_retains_stable_support_at_rest_and_under_pressure ... ok
+test bounded_autostep_climbs_a_low_voxel_and_reports_the_choice ... ok
+test character_can_retreat_from_rejected_trench_step ... ok
+test wall_slide_preserves_tangent_motion_and_reports_contact ... ok
+test thin_trailing_ledge_cannot_manufacture_an_upward_step ... ok
+test inside_corner_stops_inward_motion_and_outside_corner_preserves_progress ... ok
+test fixed_step_partitions_are_repeatable_and_near_equivalent ... ok
+test trench_ledge_within_step_limit_climbs_to_real_upper_support ... ok
+test generated_commands_remain_finite_and_within_solver_bounds ... ok
+test standable_ramp_climbs_while_over_limit_ramp_blocks_and_slides ... ok
+
+test result: ok. 28 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/character_modes.rs (target/debug/deps/character_modes-e1d0bd22fa4c4a55)
+
+running 7 tests
+test modes_reject_invalid_environment_before_moving ... ok
+test water_exit_returns_to_air_gravity ... ok
+test crossing_water_boundary_activates_swimming_on_accepted_position ... ok
+test climb_rail_is_bounded_and_release_falls ... ok
+test submerged_character_floats_swims_and_reports_breathing_facts ... ok
+test buoyancy_settles_at_surface_without_floor_snap ... ok
+test flight_and_climbing_use_collision_sweep ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/character_tether.rs (target/debug/deps/character_tether-3157f881e8e8a54e)
+
+running 11 tests
+test invalid_attachment_and_stale_step_do_not_mutate_character ... ok
+test dynamic_anchor_saturates_both_sides_and_reports_unresolved_distance ... ok
+test local_anchor_edit_readmits_reach_and_release_keeps_endpoint_identity ... ok
+test high_speed_catch_is_inelastic_and_planar_input_preserves_inertial_tangent ... ok
+test slack_tether_preserves_platform_carry_and_jump_departure_velocity ... ok
+test repeated_attach_and_release_never_adds_unrequested_energy ... ok
+test loaded_reeling_is_rate_limited_and_snapshot_restores_attachment ... ok
+test fixed_anchor_swing_repeats_without_energy_growth_and_release_retains_momentum ... ok
+test slack_ground_controls_jump_and_ledge_departure_keep_the_same_controller ... ok
+test infeasible_rope_correction_stops_at_terrain_instead_of_teleporting ... ok
+test floor_snap_does_not_launch_a_reeling_character ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/entity_motion.rs (target/debug/deps/entity_motion-572db543e03482ca)
+
+running 4 tests
+test entity_aabb_motion_slides_and_commits_once ... ok
+test first_person_collision_keeps_look_rotation_when_translation_blocks ... ok
+test first_person_motion_updates_pose_and_clamps_pitch ... ok
+test typed_spatial_view_matches_retained_entity_motion_resolution ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/implicit_stair_probe.rs (target/debug/deps/implicit_stair_probe-36c3b641ec54cc84)
+
+running 2 tests
+test hard_riser_collision_is_unchanged_by_render_attribute_vertex_splits ... ok
+test bevelled_implicit_stairs_reach_the_upper_passage ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.42s
+
+     Running tests/mechanics.rs (target/debug/deps/mechanics-088b98def7957926)
+
+running 16 tests
+test fixed_step_integration_preserves_donor_velocity_acceleration_and_gravity_behavior ... ok
+test entity_bounds_trigger_keeps_canonical_subject_eligibility ... ok
+test entity_bounds_trigger_ignores_collision_state_and_keeps_geometry_diagnostics ... ok
+test malformed_definitions_stale_entities_and_read_quotas_are_typed ... ok
+test non_solid_trigger_senses_kinematic_traversal_with_one_enter_and_one_exit ... ok
+test trigger_endpoint_activation_lifecycle_and_face_touching_semantics_are_explicit ... ok
+test trigger_enter_continue_and_exit_are_reconciled_once ... ok
+test zero_steps_and_invalid_inputs_are_typed ... ok
+test trigger_geometry_uses_entity_state_world_transform_composition ... ok
+test trigger_overlap_pages_report_total_empty_final_page_and_stale_revision ... ok
+test trigger_snapshots_preserve_geometry_source_and_decode_legacy_definitions ... ok
+test trigger_lifecycle_retirement_is_revision_guarded_and_reactivation_is_deliberate ... ok
+test trigger_restore_rebases_active_set_and_overlaps_without_edges ... ok
+test trigger_snapshot_restore_preserves_pairs_without_duplicate_enter ... ok
+test collision_required_integration_fails_closed_without_query_and_resolves_with_spatial_query ... ok
+test generated_tunnel_cells_feed_existing_collision_navigation_and_mesh_authority ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/occlusion.rs (target/debug/deps/occlusion-cd565b1739290248)
+
+running 4 tests
+test hidden_active_door_matches_motion_until_disabled_or_moved_open ... ok
+test exact_ties_prefer_lowest_entity_identity_before_voxel ... ok
+test strict_nearest_order_selects_entity_then_voxel_when_entity_is_ignored ... ok
+test invalid_and_over_quota_queries_are_typed_and_leave_authority_unchanged ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/perception.rs (target/debug/deps/perception-09a7359b3f3d7041)
+
+running 5 tests
+test distance_rejected_pairs_are_not_retained_and_duplicate_ids_are_rejected ... ok
+test evaluates_distance_facing_and_deterministic_visible_reduction ... ok
+test retained_static_mesh_occludes_visibility_while_a_clear_target_remains_visible ... ok
+test qualified_pairs_page_deterministically_without_silent_cap_loss ... ok
+test reports_facing_rejection_and_voxel_occlusion_as_typed_pair_facts ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rigid_body.rs (target/debug/deps/rigid_body-5e70b1766bfee247)
+
+running 21 tests
+test rigid_body_per_tick_release_characterization ... ignored, release characterization; run with scripts/measure-rigid-body.sh
+test new_tether_outside_radius_rejects_without_replacing_old_definitions ... ok
+test axis_locks_do_not_change_disabled_body_behavior ... ok
+test all_axis_locks_are_valid_and_stationary ... ok
+test explicit_mass_policy_maps_through_spatial_step_and_survives_publication ... ok
+test canonical_solver_enforces_planar_axis_locks_without_rejecting_locked_influences ... ok
+test bounded_step_and_motion_admission_reject_before_mutation ... ok
+test caller_driven_step_integrates_gravity_impulse_and_rotation ... ok
+test tether_edit_invalidates_prepared_body_publication ... ok
+test rope_solver_configuration_is_bounded_and_invalidates_candidates ... ok
+test prepared_steps_reject_stale_slots_without_publishing_derived_state ... ok
+test prepared_steps_reject_changed_lock_facts_without_publishing_derived_state ... ok
+test prepared_steps_reject_static_environment_replacement_without_entity_mutation ... ok
+test prepared_steps_bind_relationship_and_body_set_authority ... ok
+test snapshot_reopen_continues_with_rebuilt_derived_world_deterministically ... ok
+test tether_continuation_restores_lengths_and_catch_state ... ok
+test product_owned_loop_recomputes_force_and_torque_for_each_single_substep ... ok
+test dynamic_contacts_respect_filtering_and_sleep_wake_state ... ok
+test dynamic_bodies_contact_voxel_and_static_mesh_environment ... ok
+test bounded_stack_settles_without_interpenetrating_the_floor ... ok
+test body_and_action_quotas_reject_before_entity_mutation ... ok
+
+test result: ok. 20 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests/spatial.rs (target/debug/deps/spatial-cc0d6f8915e48361)
+
+running 17 tests
+test every_material_authority_constructor_enforces_edit_vocabulary_bounds ... ok
+test scene_admission_bounds_dense_chunk_allocation ... ok
+test collision_queries_cover_chunks_negative_space_and_raycast ... ok
+test one_motion_phase_commits_many_entities_at_one_revision ... ok
+test incremental_mesh_build_failure_leaves_authority_and_chunks_unchanged ... ok
+test central_motion_phase_blocks_one_axis_without_tunneling ... ok
+test unit_chunks_dirty_both_signed_seam_neighbors ... ok
+test static_mesh_projection_joins_world_queries_and_survives_voxel_rebuilds ... ok
+test accepted_edit_order_does_not_change_authority_receipt_or_projections ... ok
+test interior_and_boundary_edits_publish_exact_incremental_chunk_sets ... ok
+test generated_pillar_drives_collision_navigation_and_visible_mesh_from_one_world ... ok
+test rejected_edit_leaves_authority_and_every_projection_unchanged ... ok
+test generated_exit_aperture_is_canonical_collision_navigation_and_mesh_empty_space ... ok
+test greedy_dirty_halo_is_face_only_while_reconstructed_modes_include_edges_and_corners ... ok
+test edit_rebuilds_collision_navigation_and_mesh_then_removal_is_reversible ... ok
+test generated_room_is_deterministic_and_seed_changes_canonical_voxels_and_mesh ... ok
+test bounded_room_fixture_stays_one_chunk_with_reviewable_mesh_counts ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/voxel_authoring.rs (target/debug/deps/voxel_authoring-33258649c96c314c)
+
+running 14 tests
+test house_template_rejects_invalid_material_and_overflow_without_output ... ok
+test primitive_boxes_preserve_filled_shell_and_edge_semantics ... ok
+test primitive_lines_round_half_away_from_zero_and_deduplicate_radius ... ok
+test primitive_generation_rejects_invalid_or_unbounded_requests_before_authority ... ok
+test house_template_is_deterministic_bounded_and_preserves_openings ... ok
+test renderer_hints_are_revalidated_for_local_and_transformed_instances ... ok
+test edit_preview_rebuilds_without_mutation_then_commits_exact_candidate ... ok
+test edit_preview_rejects_a_later_static_collision_replacement_without_rollback ... ok
+test history_quota_and_stale_hash_rejections_do_not_mutate_state ... ok
+test history_preview_rejects_a_later_static_collision_replacement_without_rollback ... ok
+test history_codec_rejects_invalid_redo_authority_and_preserves_live_revision ... ok
+test bounded_history_undo_redo_revert_and_fork_keep_one_coherent_scene ... ok
+test history_codec_preserves_redo_tail_and_rejects_corruption ... ok
+test history_restore_keeps_live_static_collision_and_rebase_context ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/voxel_preparation.rs (target/debug/deps/voxel_preparation-05d8dafecbdda7d1)
+
+running 4 tests
+test stale_background_candidate_cannot_overwrite_newer_scene ... ok
+test dropping_preparation_discards_result_without_publication ... ok
+test background_preparation_leaves_source_unchanged_and_commits_atomically ... ok
+test rebase_during_preparation_rejects_old_local_projections ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/voxel_residency.rs (target/debug/deps/voxel_residency-0487c557df05a700)
+
+running 15 tests
+test multi_chunk_operation_bounds_reject_before_any_admission ... ok
+test first_admission_publishes_one_coherent_revision ... ok
+test negative_chunk_coordinates_and_world_bounds_are_exact ... ok
+test eviction_removes_authority_collision_and_retained_mesh_together ... ok
+test leases_block_replace_and_evict_with_typed_evidence ... ok
+test preparation_and_commit_are_fail_atomic_and_guard_leases ... ok
+test empty_chunks_are_resident_without_mesh_payloads ... ok
+test replacement_requires_the_exact_local_chunk_hash ... ok
+test stale_duplicate_and_stale_chunk_preconditions_fail_atomically ... ok
+test mixed_retained_operations_are_reported_but_all_retained_is_no_change ... ok
+test residency_history_policy_rejects_or_resets_without_resurrection ... ok
+test streamed_sparse_boundary_hit_is_readable_and_clearable_at_the_same_revision ... ok
+test whole_chunk_dirty_halos_match_every_surface_mode ... ok
+test aggregate_resident_solids_are_bounded_before_projection_build ... ok
+test dimensions_material_and_payload_bounds_are_atomic ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+     Running tests/voxel_state.rs (target/debug/deps/voxel_state-be8b98509ec8b148)
+
+running 4 tests
+test residency_preserves_states_and_rejects_invalid_empty_cell_state ... ok
+test invalid_state_is_rejected_without_publication ... ok
+test differing_states_do_not_greedily_merge_and_rotation_selects_local_face ... ok
+test state_only_edit_changes_hash_mesh_and_round_trips_history ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/world_origin.rs (target/debug/deps/world_origin-fcb0589f449566ef)
+
+running 4 tests
+test moving_support_carry_continues_after_far_origin_rebase ... ok
+test failed_prepare_and_stale_commit_publish_nothing_and_snapshots_are_typed ... ok
+test rebase_keeps_controller_support_voxel_nav_trigger_and_static_mesh_continuous ... ok
+test repeated_positive_and_negative_rebases_do_not_accumulate_or_alias ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests engine_spatial
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,102 @@
+{
+  "pool": {
+    "active_count": 0,
+    "capacity": 10,
+    "observed_at": "2026-09-28T07:17:14.381845296Z",
+    "queued_starts": 0,
+    "slots": [
+      {
+        "occupied": false,
+        "slot_id": "slot-1"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-2"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-3"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-4"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-5"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-6"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-7"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-8"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-9"
+      },
+      {
+        "occupied": false,
+        "slot_id": "slot-10"
+      }
+    ]
+  },
+  "slots": [
+    {
+      "session": null,
+      "slot_id": "slot-1",
+      "target": {}
+    },
+    {
+      "session": null,
+      "slot_id": "slot-2",
+      "target": {}
+    },
+    {
+      "session": null,
+      "slot_id": "slot-3",
+      "target": {}
+    },
+    {
+      "session": null,
+      "slot_id": "slot-4",
+      "target": {}
+    },
+    {
+      "session": null,
+      "slot_id": "slot-5",
+      "target": {}
+    },
+    {
+      "session": null,
+      "slot_id": "slot-6",
+      "target": {}
+    },
+    {
+      "session": null,
+      "slot_id": "slot-7",
+      "target": {}
+    },
+    {
+      "session": null,
+      "slot_id": "slot-8",
+      "target": {}
+    },
+    {
+      "session": null,
+      "slot_id": "slot-9",
+      "target": {}
+    },
+    {
+      "session": null,
+      "slot_id": "slot-10",
+      "target": {}
+    }
+  ]
+}

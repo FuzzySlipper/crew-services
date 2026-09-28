@@ -1,0 +1,57 @@
+   Compiling bitflags v2.13.1
+   Compiling voxel-asset v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/voxel-asset)
+   Compiling entity-state v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/entity-state)
+   Compiling render-model v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/render-model)
+   Compiling asset-catalog v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/asset-catalog)
+   Compiling rustix v1.1.4
+   Compiling dynasm v5.1.0
+   Compiling runtime-lifecycle v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/runtime-lifecycle)
+   Compiling linux-raw-sys v0.12.1
+   Compiling gltf-json v1.4.1
+   Compiling once_cell v1.21.4
+   Compiling fastrand v2.5.0
+   Compiling runtime-diagnostics v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/runtime-diagnostics)
+   Compiling csharp-engine-abi v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/csharp-engine-abi)
+   Compiling parry3d-f64 v0.29.0
+   Compiling runtime-ui v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/runtime-ui)
+   Compiling runtime-input v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/runtime-input)
+   Compiling voxel-annotation v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/voxel-annotation)
+   Compiling voxel-object-runtime v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/voxel-object-runtime)
+   Compiling tempfile v3.27.0
+   Compiling authored-scene v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/authored-scene)
+   Compiling gltf v1.4.1
+   Compiling voxel-convert v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/voxel-convert)
+   Compiling rapier3d-f64 v0.34.0
+   Compiling content-store v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/content-store)
+   Compiling render-presentation v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/render-presentation)
+   Compiling render-host-contracts v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/render-host-contracts)
+   Compiling content-store-host v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/content-store-host)
+   Compiling svc-collision v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/svc-collision)
+   Compiling asset-import v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/asset-import)
+   Compiling engine-spatial v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/engine-spatial)
+   Compiling dynasmrt v5.1.0
+   Compiling fidget-jit v0.5.0
+   Compiling fidget v0.5.0
+   Compiling svc-implicit v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/svc-implicit)
+   Compiling render-projection v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/render-projection)
+   Compiling csharp-engine-services v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/csharp-engine-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 24.50s
+     Running unittests src/lib.rs (target/debug/deps/csharp_engine_services-6525f02fe550484d)
+
+running 1 test
+
+thread 'spatial::tests::capsule_queries_ignore_disabled_and_trigger_colliders' (1960858) panicked at rust/crates/csharp-engine-services/src/spatial.rs:6016:13:
+assertion `left == right` failed: cast enabled=false trigger=false
+  left: true
+ right: false
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test spatial::tests::capsule_queries_ignore_disabled_and_trigger_colliders ... FAILED
+
+failures:
+
+failures:
+    spatial::tests::capsule_queries_ignore_disabled_and_trigger_colliders
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 184 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p csharp-engine-services --lib`

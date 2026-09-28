@@ -1,0 +1,29 @@
+   Compiling csharp-engine-services v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/csharp-engine-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.14s
+     Running unittests src/lib.rs (target/debug/deps/csharp_engine_services-6525f02fe550484d)
+
+running 21 tests
+test spatial::tests::character_step_rejects_malformed_and_invalid_obstacles_with_diagnostics ... ok
+test spatial::tests::character_validation_uses_proposal_rules_without_mutating_session_state ... ok
+test spatial::tests::capsule_queries_ignore_disabled_and_trigger_colliders ... ok
+test spatial::tests::character_step_accepts_empty_borrowed_obstacle_span ... ok
+test spatial::tests::character_mesh_admission_rejects_invalid_identity_without_advancing_generation ... ok
+test spatial::tests::evaluate_navigation_step_returns_typed_facts_without_retained_state_mutation ... ok
+test spatial::tests::evaluate_navigation_step_retains_a_path_sentinel_for_unreachable_and_missing_projection ... ok
+test spatial::tests::propose_navigation_step_still_updates_the_retained_path ... ok
+test spatial::tests::character_step_borrows_moving_obstacle_for_support_and_next_call_carry ... ok
+test spatial::tests::trigger_callbacks_retain_copyable_diagnostics_and_release_spatial_leases ... ok
+test spatial::tests::collision_navigation_connects_an_offset_quarter_meter_step_with_character_edges ... ok
+test spatial::tests::trigger_lifecycle_and_restore_are_fail_atomic_and_session_owned ... ok
+test spatial::tests::mesh_resource_collision_is_copied_before_graphics_release ... ok
+test spatial::tests::collision_navigation_uses_retained_static_mesh_support_and_wall_clearance ... ok
+test spatial::tests::character_continuation_checkpoint_restores_grounded_support_motion ... ok
+test spatial::tests::collision_navigation_projects_retained_collision_and_evaluation_reuses_overlay ... ok
+test spatial::tests::spatial_session_surface_mode_selects_only_the_derived_mesh_posture ... ok
+test spatial::tests::volumetric_weighted_navigation_bridge_retains_overlay_and_source_identity ... ok
+test spatial::tests::embedded_character_failure_has_a_retained_native_reason ... ok
+test spatial::tests::character_continuation_checkpoint_restores_airborne_motion_and_rejects_drift ... ok
+test spatial::tests::native_voxel_pick_returns_the_editable_hit_cell_from_the_same_session_revision ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 164 filtered out; finished in 0.01s
+

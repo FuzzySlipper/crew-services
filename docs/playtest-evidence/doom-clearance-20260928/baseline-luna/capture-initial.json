@@ -1,0 +1,225 @@
+{
+  "application_renderer": "unavailable",
+  "capture_id": "9920f344-3357-4b00-a32c-3f7d277c2d82",
+  "engine_presentation": {
+    "available": false,
+    "reason": "not requested; set engine_presentation or profile presentation_observations"
+  },
+  "engine_presentation_state": "unavailable",
+  "engine_readiness": "unavailable",
+  "frame_correlation": "unavailable",
+  "gpu_completion": "unavailable",
+  "hardware_acceleration": "unavailable",
+  "label": "",
+  "metadata_path": "/home/agent/.local/state/crew-playtest-local/capture-9920f344-3357-4b00-a32c-3f7d277c2d82.json",
+  "observation": {
+    "artifact_id": "23d54dc3-19dd-437c-a1be-d2c2256a16b8",
+    "canvases": [
+      {
+        "backing": {
+          "height": 720,
+          "width": 1280
+        },
+        "css": {
+          "height": 720,
+          "width": 1280,
+          "x": 0,
+          "y": 0
+        }
+      }
+    ],
+    "capture_ended_at": "2026-09-28T06:46:05.502448507Z",
+    "capture_ended_at_ns": 1790577965502448507,
+    "capture_started_at": "2026-09-28T06:46:05.431661549Z",
+    "capture_started_at_ns": 1790577965431661549,
+    "console": [
+      {
+        "location": {
+          "column": 0,
+          "columnNumber": 0,
+          "line": 0,
+          "lineNumber": 0,
+          "url": "http://127.0.0.1:4495/"
+        },
+        "text": "[.WebGL-0x1054001a2200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+        "truncated": false,
+        "type": "warning"
+      },
+      {
+        "location": {
+          "column": 0,
+          "columnNumber": 0,
+          "line": 0,
+          "lineNumber": 0,
+          "url": "http://127.0.0.1:4495/"
+        },
+        "text": "[.WebGL-0x1054001a2200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+        "truncated": false,
+        "type": "warning"
+      },
+      {
+        "location": {
+          "column": 0,
+          "columnNumber": 0,
+          "line": 0,
+          "lineNumber": 0,
+          "url": "http://127.0.0.1:4495/"
+        },
+        "text": "[.WebGL-0x105401af7e00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+        "truncated": false,
+        "type": "warning"
+      },
+      {
+        "location": {
+          "column": 0,
+          "columnNumber": 0,
+          "line": 0,
+          "lineNumber": 0,
+          "url": "http://127.0.0.1:4495/"
+        },
+        "text": "[.WebGL-0x105401af7e00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)",
+        "truncated": false,
+        "type": "warning"
+      }
+    ],
+    "cursor": {
+      "x": 0,
+      "y": 0
+    },
+    "dom_assistance": [],
+    "event": "observation",
+    "events_path": "/home/agent/.local/state/crew-playtest-local/browser/22c7d7ec-b210-4733-9458-0c565662bd58/events.jsonl",
+    "frame_freshness": "not measured",
+    "game_readiness": "unknown",
+    "height": 720,
+    "lease_id": "22c7d7ec-b210-4733-9458-0c565662bd58",
+    "metadata_path": "/home/agent/.local/state/crew-playtest-local/browser/22c7d7ec-b210-4733-9458-0c565662bd58/23d54dc3-19dd-437c-a1be-d2c2256a16b8.json",
+    "page_errors": [],
+    "path": "/home/agent/.local/state/crew-playtest-local/browser/22c7d7ec-b210-4733-9458-0c565662bd58/23d54dc3-19dd-437c-a1be-d2c2256a16b8.png",
+    "pointer_lock": false,
+    "renderer": "unknown",
+    "source": "headless Chromium screenshot through the private Playwright context",
+    "title": "Loading Bay — Doom E1M1",
+    "url": "http://127.0.0.1:4495/",
+    "viewport": {
+      "device_pixel_ratio": 1,
+      "height": 720,
+      "width": 1280
+    },
+    "width": 1280
+  },
+  "overlay_policy": "preserve",
+  "path": "/home/agent/.local/state/crew-playtest-local/browser/22c7d7ec-b210-4733-9458-0c565662bd58/23d54dc3-19dd-437c-a1be-d2c2256a16b8.png",
+  "pool_activity": {
+    "after": {
+      "active_count": 1,
+      "capacity": 10,
+      "observed_at": "2026-09-28T06:46:05.521394054Z",
+      "queued_starts": 0,
+      "slots": [
+        {
+          "game": "doom-clearance",
+          "occupied": true,
+          "phase": "connected",
+          "session_id": "22c7d7ec-b210-4733-9458-0c565662bd58",
+          "slot_id": "slot-1"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-2"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-3"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-4"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-5"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-6"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-7"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-8"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-9"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-10"
+        }
+      ]
+    },
+    "before": {
+      "active_count": 1,
+      "capacity": 10,
+      "observed_at": "2026-09-28T06:46:05.431658014Z",
+      "queued_starts": 0,
+      "slots": [
+        {
+          "game": "doom-clearance",
+          "occupied": true,
+          "phase": "connected",
+          "session_id": "22c7d7ec-b210-4733-9458-0c565662bd58",
+          "slot_id": "slot-1"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-2"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-3"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-4"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-5"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-6"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-7"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-8"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-9"
+        },
+        {
+          "occupied": false,
+          "slot_id": "slot-10"
+        }
+      ]
+    },
+    "performance_isolated": false,
+    "slot_id": "slot-1"
+  },
+  "recorded_at": "2026-09-28T06:46:05.521323004Z",
+  "session_id": "22c7d7ec-b210-4733-9458-0c565662bd58",
+  "slot_id": "slot-1",
+  "supplied_assistance": null,
+  "supplied_metadata_source": "caller; not independently verified",
+  "supplied_viewpoint": null
+}

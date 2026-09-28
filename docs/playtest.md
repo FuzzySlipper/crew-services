@@ -59,6 +59,7 @@ playtest interaction SESSION
 playtest assist SESSION --json '{"op":"interaction"}'
 playtest assist SESSION --json '{"op":"grid","radius":4,"verticalRadius":4,"cellSize":0.25}'
 playtest assist SESSION --json '{"op":"probe","distance":2}'
+playtest assist SESSION --json '{"op":"clearance","x":2,"y":0,"z":-3}'
 playtest assist SESSION --json '{"op":"jump-plan","x":2,"y":0,"z":-3}'
 playtest assist SESSION --json '{"op":"jump","x":2,"y":0,"z":-3}'
 ```
@@ -76,6 +77,14 @@ rays. They help explain bumps, without proving capsule clearance. Detailed
 interaction facts include signed yaw/pitch adjustments to each candidate point,
 as well as reach, occlusion and focus refusal. Looking toward a point does not
 bypass those constraints.
+
+`clearance` takes world XYZ target feet within eight units. It uses the current
+body size to report current overlap, direct capsule sweep contact, target overlap
+and support below the target. A contact at the start needs interpretation: check its normal/source,
+since ordinary floor contact can be reported there. The query does not
+automatically slide or step around it. A clear straight sweep or
+suitable support normal alone does not guarantee walking or landing there.
+Like grid/probe, this query leaves time held.
 
 `jump-plan` queries current product controller tuning and grounded state.
 `jump` requires held time, turns toward target feet, pulses jump, holds forward

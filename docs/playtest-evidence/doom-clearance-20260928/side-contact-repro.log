@@ -1,0 +1,21 @@
+   Compiling engine-spatial v0.1.0 (/home/agent/dev/rusty-engine/rust/crates/engine-spatial)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.79s
+     Running unittests src/lib.rs (target/debug/deps/engine_spatial-dd3f34a4ed868887)
+
+running 1 test
+
+thread 'character_controller::tests::multiple_side_contacts_preserve_vertical_escape' (1946747) panicked at rust/crates/engine-spatial/src/character_controller.rs:2755:9:
+assertion `left == right` failed: a third side contact must not cancel the free vertical direction
+  left: Vec3 { x: 0.0, y: 0.0, z: 0.0 }
+ right: Vec3 { x: 0.0, y: -0.5, z: 0.0 }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test character_controller::tests::multiple_side_contacts_preserve_vertical_escape ... FAILED
+
+failures:
+
+failures:
+    character_controller::tests::multiple_side_contacts_preserve_vertical_escape
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p engine-spatial --lib`

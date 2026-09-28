@@ -1,0 +1,75 @@
+{
+  "bodyHeight": 1.8,
+  "center": [
+    15.169422,
+    0.91549015,
+    -31.631292
+  ],
+  "contactSkin": 0.02,
+  "currentOverlap": {
+    "present": false
+  },
+  "maximumStepHeight": 0.3,
+  "meaning": "read-only capsule overlap and straight sweep; no stepping, jumping, route search or guaranteed landing",
+  "radius": 0.25,
+  "slot_id": "slot-2",
+  "sources": "retained static collision plus product-supplied dynamic colliders",
+  "supportBelowTarget": {
+    "converged": false,
+    "entity": "0",
+    "instance": "10035",
+    "kind": "StaticMesh",
+    "normal": [
+      -3.2793048e-12,
+      1,
+      0
+    ],
+    "penetrationDepth": 0,
+    "point": [
+      8.25,
+      -0.0000010579824,
+      -32
+    ],
+    "present": true,
+    "startSolid": true,
+    "timeOfImpact": 0.0000026444903684404496
+  },
+  "supportCaution": "A suitable normal is one support fact, not proof that the body can reach or stand at the target.",
+  "supportNormalWithinSlopeLimit": true,
+  "supportProbeDistance": 0.4,
+  "sweep": {
+    "converged": false,
+    "entity": "0",
+    "instance": "10042",
+    "kind": "StaticMesh",
+    "normal": [
+      -4.625763e-9,
+      1,
+      -2.2133728e-9
+    ],
+    "penetrationDepth": 0,
+    "point": [
+      15.169423,
+      -2.704494e-7,
+      -31.631292
+    ],
+    "present": true,
+    "startSolid": true,
+    "timeOfImpact": 0
+  },
+  "targetFeet": [
+    8.25,
+    0,
+    -32
+  ],
+  "targetOverlap": {
+    "present": false
+  },
+  "targetStatus": "no-overlap",
+  "translation": [
+    -6.919422,
+    -0.015490174,
+    -0.36870766
+  ],
+  "translationStatus": "contact-at-start"
+}

@@ -1,0 +1,16 @@
+{
+  "accepted": false,
+  "capture": "/home/agent/.local/state/crew-playtest-local/browser/22c7d7ec-b210-4733-9458-0c565662bd58/action-26350edb-db1a-40f9-b956-74121e762187.png",
+  "plan": {
+    "available": false,
+    "durationMs": 0,
+    "equipment": null,
+    "heldKeys": null,
+    "hold": false,
+    "id": "wait",
+    "key": "",
+    "reason": "unknown-action"
+  },
+  "reason": "unknown-action",
+  "slot_id": "slot-1"
+}

@@ -1,0 +1,21 @@
+{
+  "action": {
+    "available": true,
+    "durationMs": 543.0487826099251,
+    "equipment": null,
+    "heldKeys": [
+      "KeyW"
+    ],
+    "hold": false,
+    "id": "jump-toward",
+    "key": "Space",
+    "reason": null
+  },
+  "available": true,
+  "meaning": "bounded ordinary jump toward target feet; estimate excludes collision and acceleration; inspect actual landing, never teleport or assume arrival",
+  "moveMs": 543.0487826099251,
+  "reason": null,
+  "settleMs": 110.76592178025089,
+  "slot_id": "slot-1",
+  "yawDeltaDegrees": -65.47527420800064
+}

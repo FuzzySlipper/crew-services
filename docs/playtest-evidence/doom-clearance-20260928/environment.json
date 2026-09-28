@@ -1,0 +1,16 @@
+{
+  "engine_commit": "61f9f6ebea2e968f42d2182dcd381ef5fbba02e6",
+  "sdk": "0.1.0-dev.playtest-20260928c",
+  "baseline_runtime": "playtest-runtime-20260928i",
+  "final_runtime": "playtest-runtime-20260928k",
+  "baseline_url": "http://127.0.0.1:4495/",
+  "final_url": "http://127.0.0.1:4496/",
+  "tester_model": "gpt-5.6-luna",
+  "tester_reasoning": "max",
+  "bounds": "20 minutes or 200 actions per run; clear enemies or death if reached",
+  "warning_delta": "Not captured by Engine standalone-browser script: required exercises used crew-services managed sessions. No compatible baseline and no clean warning delta claimed.",
+  "doom_commit": "0a881b278bfe36960be4f9c92ab90600e3d17460",
+  "default_profile": "rusty-doom",
+  "default_url": "http://127.0.0.1:4394/",
+  "default_runtime": "playtest-development-20260928k"
+}

@@ -1,0 +1,444 @@
+{
+  "axes": {
+    "floorY": 0.005726993,
+    "forward": {
+      "x": -0.70587164,
+      "y": 0,
+      "z": 0.70833975
+    },
+    "right": {
+      "x": -0.70833975,
+      "y": 0,
+      "z": -0.70587164
+    },
+    "up": "Y",
+    "yaw": "positive right"
+  },
+  "controls": {
+    "aimPitchErrorDegrees": "positive means aim up",
+    "bearingDegrees": "positive right",
+    "fire": "ControlLeft",
+    "gamepad": {
+      "aimAssist": "right-stick, RT, or X selects mode; neutral stick retains focus without tracking",
+      "fire": "RT",
+      "look": "right-stick",
+      "use": "X"
+    },
+    "move": "WASD",
+    "pitch": {
+      "degreesPerSecond": 120,
+      "down": "K",
+      "positive": "up",
+      "up": "I"
+    },
+    "precisionLook": {
+      "degreesPerSecond": 24,
+      "key": "ShiftLeft",
+      "multiplier": 0.2
+    },
+    "useKey": "E",
+    "yaw": {
+      "degreesPerSecond": 120,
+      "left": "J",
+      "positive": "right",
+      "right": "L"
+    }
+  },
+  "doors": [
+    {
+      "id": 20000,
+      "label": "north wing door",
+      "position": {
+        "x": 8.25,
+        "y": 1.125,
+        "z": -32
+      },
+      "raised": 0,
+      "state": "closed"
+    },
+    {
+      "id": 20001,
+      "label": "southern study door",
+      "position": {
+        "x": 54,
+        "y": 0.375,
+        "z": 15.75
+      },
+      "raised": 0,
+      "state": "closed"
+    },
+    {
+      "id": 20002,
+      "label": "terminal study door",
+      "position": {
+        "x": 54,
+        "y": 0.375,
+        "z": 35
+      },
+      "raised": 0,
+      "state": "closed"
+    },
+    {
+      "id": 20003,
+      "label": "lower passage east door",
+      "position": {
+        "x": 51.25,
+        "y": 0.375,
+        "z": 10
+      },
+      "raised": 0,
+      "state": "closed"
+    }
+  ],
+  "enemies": [
+    {
+      "aimPitchErrorDegrees": -4.176866,
+      "alive": false,
+      "awake": true,
+      "bearingDegrees": 91.39216,
+      "distance": 13.739546,
+      "health": 0,
+      "hostile": false,
+      "id": 31002,
+      "kind": "trooper",
+      "lineOfSight": false,
+      "position": {
+        "x": -26.79986,
+        "y": -0.25,
+        "z": -9.175266
+      }
+    },
+    {
+      "aimPitchErrorDegrees": -1.4232305,
+      "alive": true,
+      "awake": true,
+      "bearingDegrees": 169.52156,
+      "distance": 30.18526,
+      "health": 30,
+      "hostile": true,
+      "id": 31001,
+      "kind": "trooper",
+      "lineOfSight": false,
+      "position": {
+        "x": -0.27352116,
+        "y": 0.0010003448,
+        "z": -24.161865
+      }
+    },
+    {
+      "aimPitchErrorDegrees": -3.2141347,
+      "alive": true,
+      "awake": false,
+      "bearingDegrees": -121.56668,
+      "distance": 44.60182,
+      "health": 30,
+      "hostile": true,
+      "id": 31011,
+      "kind": "trooper",
+      "lineOfSight": false,
+      "position": {
+        "x": 26,
+        "y": -1.75,
+        "z": 11
+      }
+    },
+    {
+      "aimPitchErrorDegrees": -0.8405625,
+      "alive": true,
+      "awake": false,
+      "bearingDegrees": -174.66618,
+      "distance": 51.17409,
+      "health": 30,
+      "hostile": true,
+      "id": 31003,
+      "kind": "trooper",
+      "lineOfSight": false,
+      "position": {
+        "x": 22,
+        "y": 0,
+        "z": -32
+      }
+    },
+    {
+      "aimPitchErrorDegrees": -2.5081851,
+      "alive": true,
+      "awake": false,
+      "bearingDegrees": -125.55533,
+      "distance": 57.143654,
+      "health": 60,
+      "hostile": true,
+      "id": 31012,
+      "kind": "imp",
+      "lineOfSight": false,
+      "position": {
+        "x": 39,
+        "y": -1.75,
+        "z": 10
+      }
+    },
+    {
+      "aimPitchErrorDegrees": -0.0007203933,
+      "alive": true,
+      "awake": false,
+      "bearingDegrees": -168.18556,
+      "distance": 57.816322,
+      "health": 30,
+      "hostile": true,
+      "id": 31004,
+      "kind": "trooper",
+      "lineOfSight": false,
+      "position": {
+        "x": 31,
+        "y": 0.75,
+        "z": -31
+      }
+    }
+  ],
+  "interaction": {
+    "reason": "OutsideQuery",
+    "selected": null,
+    "stamp": "generation:1;step:2941;gameplay:11",
+    "targetedUseEnabled": true
+  },
+  "pickups": [
+    {
+      "collected": true,
+      "distance": 10.724309,
+      "id": 30001,
+      "kind": "Bullets",
+      "position": {
+        "x": -7,
+        "y": 0,
+        "z": -2
+      }
+    },
+    {
+      "collected": false,
+      "distance": 14.261511,
+      "id": 30002,
+      "kind": "Armor",
+      "position": {
+        "x": -7,
+        "y": -0.5,
+        "z": -9
+      }
+    },
+    {
+      "collected": false,
+      "distance": 13.765827,
+      "id": 30003,
+      "kind": "Shotgun",
+      "position": {
+        "x": -27,
+        "y": -0.25,
+        "z": -9
+      }
+    },
+    {
+      "collected": false,
+      "distance": 12.442798,
+      "id": 30004,
+      "kind": "Shells",
+      "position": {
+        "x": -25,
+        "y": -0.25,
+        "z": -9
+      }
+    },
+    {
+      "collected": false,
+      "distance": 16.91621,
+      "id": 30005,
+      "kind": "Stimpack",
+      "position": {
+        "x": -15,
+        "y": 0,
+        "z": -16
+      }
+    },
+    {
+      "collected": false,
+      "distance": 31.036154,
+      "id": 30006,
+      "kind": "Bullets",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": -25
+      }
+    },
+    {
+      "collected": false,
+      "distance": 46.72332,
+      "id": 30007,
+      "kind": "Shotgun",
+      "position": {
+        "x": 16,
+        "y": 0,
+        "z": -32
+      }
+    },
+    {
+      "collected": false,
+      "distance": 49.00264,
+      "id": 30008,
+      "kind": "Medikit",
+      "position": {
+        "x": 20,
+        "y": 0,
+        "z": -31
+      }
+    },
+    {
+      "collected": false,
+      "distance": 58.371326,
+      "id": 30009,
+      "kind": "Shells",
+      "position": {
+        "x": 31,
+        "y": 0.75,
+        "z": -32
+      }
+    },
+    {
+      "collected": false,
+      "distance": 44.017082,
+      "id": 30015,
+      "kind": "Shells",
+      "position": {
+        "x": 26,
+        "y": -1.75,
+        "z": 8
+      }
+    },
+    {
+      "collected": false,
+      "distance": 56.165237,
+      "id": 30016,
+      "kind": "Bullets",
+      "position": {
+        "x": 38,
+        "y": -1.75,
+        "z": 10
+      }
+    }
+  ],
+  "player": {
+    "aimAssist": {
+      "active": false,
+      "appliedLookScale": {
+        "x": 1,
+        "y": 1
+      },
+      "correctionRadians": {
+        "x": 0,
+        "y": 0
+      },
+      "shot": {
+        "assisted": false,
+        "assistedDirection": {
+          "x": -0.70587164,
+          "y": 0,
+          "z": 0.70833975
+        },
+        "assistedHit": {
+          "distance": 0.3807521668832754,
+          "entity": 0,
+          "kind": "StaticMesh",
+          "present": true
+        },
+        "correctionRadians": 0,
+        "rawDirection": {
+          "x": -0.70587164,
+          "y": 0,
+          "z": 0.70833975
+        },
+        "rawHit": {
+          "distance": 0.3807521668832754,
+          "entity": 0,
+          "kind": "StaticMesh",
+          "present": true
+        },
+        "target": null
+      },
+      "slowdownScale": 1,
+      "target": null
+    },
+    "aimHit": {
+      "distance": 0.3807521668832754,
+      "entity": 0,
+      "kind": "StaticMesh",
+      "present": true,
+      "range": 70
+    },
+    "ammo": {
+      "bullets": 68,
+      "shells": 0
+    },
+    "attackUnavailableReason": null,
+    "dead": false,
+    "health": 95,
+    "kills": 1,
+    "lastDamage": {
+      "armorLost": 0,
+      "healthLost": 5,
+      "message": "Under fire!",
+      "simulationSeconds": 46.666669100522995,
+      "source": "enemy-hitscan"
+    },
+    "movement": {
+      "body": {
+        "height": 1.8,
+        "maximumStepHeight": 0.3,
+        "radius": 0.25
+      },
+      "grounded": true,
+      "lastStep": {
+        "blockFlags": "Wall",
+        "contact": {
+          "entity": "0",
+          "kind": "Ground",
+          "normal": [
+            0.041970905,
+            0.9990421,
+            0.012380979
+          ],
+          "present": true,
+          "source": "StaticMesh"
+        },
+        "displacement": [
+          -0.13635063,
+          0.005728245,
+          0
+        ],
+        "floorProbePresent": false,
+        "groundPresent": true,
+        "sequence": 2942,
+        "stepAccepted": false,
+        "stepAttempted": true,
+        "stepRise": 0
+      },
+      "velocity": [
+        -8.160026,
+        0,
+        5.626383e-7
+      ]
+    },
+    "pitchDegrees": 0,
+    "position": {
+      "x": -17.331308,
+      "y": 0.90572697,
+      "z": 0.73029715
+    },
+    "weapon": "Pistol",
+    "weaponCooldownMs": 0,
+    "weaponReady": true,
+    "yawDegrees": -135.09999
+  },
+  "readiness": "playing",
+  "slot_id": "slot-1",
+  "stamp": {
+    "generation": 1,
+    "step": 2941
+  }
+}

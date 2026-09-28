@@ -1,0 +1,163 @@
+{
+  "command": "interaction.inspect",
+  "completed_at": "2026-09-28T06:49:53.408134245Z",
+  "evidence_path": "/home/agent/.local/state/crew-playtest-local/interaction-2fa47a75-ac7f-4054-be90-f33e1eac3f18.json",
+  "facts": {
+    "action": "use",
+    "assistance": "observation-only",
+    "candidates": [
+      {
+        "angleRadians": 2.458579,
+        "availability": "Available",
+        "distance": 88.87319,
+        "focusReason": "OutsideQuery",
+        "id": 33000,
+        "label": "hangar-exit",
+        "lookConvention": "relative degrees; positive yaw right, positive pitch up; aim guidance does not establish reach or visibility",
+        "pitchDeltaDegrees": -0.8960725034843338,
+        "point": {
+          "x": 54,
+          "y": 0.25,
+          "z": 40
+        },
+        "reachDistance": 2.5,
+        "revision": 2,
+        "route": "Unknown",
+        "selected": false,
+        "targetedUseReason": "OutsideQuery",
+        "useCommand": "interaction.use 33000 2",
+        "visibility": "Occluded",
+        "yawDeltaDegrees": -140.87481107847486
+      },
+      {
+        "angleRadians": 2.4993007,
+        "availability": "Available",
+        "distance": 84.853874,
+        "focusReason": "OutsideQuery",
+        "id": 20002,
+        "label": "terminal study door",
+        "lookConvention": "relative degrees; positive yaw right, positive pitch up; aim guidance does not establish reach or visibility",
+        "pitchDeltaDegrees": -0.09453325807472614,
+        "point": {
+          "x": 53,
+          "y": 1.5,
+          "z": 34.75
+        },
+        "reachDistance": 2.5,
+        "revision": 2,
+        "route": "Unknown",
+        "selected": false,
+        "targetedUseReason": "OutsideQuery",
+        "useCommand": "interaction.use 20002 2",
+        "visibility": "Occluded",
+        "yawDeltaDegrees": -143.19948462227748
+      },
+      {
+        "angleRadians": 2.59814,
+        "availability": "Available",
+        "distance": 26.931372,
+        "focusReason": "OutsideQuery",
+        "id": 20000,
+        "label": "north wing door",
+        "lookConvention": "relative degrees; positive yaw right, positive pitch up; aim guidance does not establish reach or visibility",
+        "pitchDeltaDegrees": 0,
+        "point": {
+          "x": 8.1,
+          "y": 1.6399987,
+          "z": -30
+        },
+        "reachDistance": 2.5,
+        "revision": 2,
+        "route": "Unknown",
+        "selected": false,
+        "targetedUseReason": "OutsideQuery",
+        "useCommand": "interaction.use 20000 2",
+        "visibility": "Occluded",
+        "yawDeltaDegrees": 148.86245019820737
+      },
+      {
+        "angleRadians": 2.699593,
+        "availability": "Available",
+        "distance": 74.0626,
+        "focusReason": "OutsideQuery",
+        "id": 20001,
+        "label": "southern study door",
+        "lookConvention": "relative degrees; positive yaw right, positive pitch up; aim guidance does not establish reach or visibility",
+        "pitchDeltaDegrees": -0.10830797323386974,
+        "point": {
+          "x": 52,
+          "y": 1.5,
+          "z": 15.6
+        },
+        "reachDistance": 2.5,
+        "revision": 2,
+        "route": "Unknown",
+        "selected": false,
+        "targetedUseReason": "OutsideQuery",
+        "useCommand": "interaction.use 20001 2",
+        "visibility": "Occluded",
+        "yawDeltaDegrees": -154.67549457978186
+      },
+      {
+        "angleRadians": 2.791971,
+        "availability": "Available",
+        "distance": 70.29809,
+        "focusReason": "OutsideQuery",
+        "id": 20003,
+        "label": "lower passage east door",
+        "lookConvention": "relative degrees; positive yaw right, positive pitch up; aim guidance does not establish reach or visibility",
+        "pitchDeltaDegrees": -0.1141083087328411,
+        "point": {
+          "x": 51.1,
+          "y": 1.5,
+          "z": 8
+        },
+        "reachDistance": 2.5,
+        "revision": 2,
+        "route": "Unknown",
+        "selected": false,
+        "targetedUseReason": "OutsideQuery",
+        "useCommand": "interaction.use 20003 2",
+        "visibility": "Occluded",
+        "yawDeltaDegrees": -159.96846393249658
+      }
+    ],
+    "focusReason": "OutsideQuery",
+    "help": "interaction.help",
+    "query": {
+      "acquireAngleRadians": 0.32,
+      "direction": {
+        "x": -1,
+        "y": 0,
+        "z": -4.3312576E-07
+      },
+      "distanceOrigin": {
+        "x": -14.943092,
+        "y": 0.9199987,
+        "z": -16.078926
+      },
+      "maximumDistance": 2.5,
+      "origin": {
+        "x": -14.943092,
+        "y": 1.6399987,
+        "z": -16.078926
+      },
+      "releaseAngleRadians": 0.48,
+      "releaseDistance": 2.5
+    },
+    "selected": null,
+    "stamp": "generation:1;step:3757;gameplay:17",
+    "targetedUseEnabled": true,
+    "totalCandidates": 5,
+    "truncated": false
+  },
+  "frame_correlation": "unavailable",
+  "http_status": 200,
+  "origin": "http://127.0.0.1:4495",
+  "query_id": "2fa47a75-ac7f-4054-be90-f33e1eac3f18",
+  "raw_result": "{\"stamp\":\"generation:1;step:3757;gameplay:17\",\"action\":\"use\",\"assistance\":\"observation-only\",\"targetedUseEnabled\":true,\"help\":\"interaction.help\",\"focusReason\":\"OutsideQuery\",\"selected\":null,\"query\":{\"origin\":{\"x\":-14.943092,\"y\":1.6399987,\"z\":-16.078926},\"direction\":{\"x\":-1,\"y\":0,\"z\":-4.3312576E-07},\"acquireAngleRadians\":0.32,\"releaseAngleRadians\":0.48,\"maximumDistance\":2.5,\"releaseDistance\":2.5,\"distanceOrigin\":{\"x\":-14.943092,\"y\":0.9199987,\"z\":-16.078926}},\"totalCandidates\":5,\"truncated\":false,\"candidates\":[{\"id\":33000,\"revision\":2,\"label\":\"hangar-exit\",\"point\":{\"x\":54,\"y\":0.25,\"z\":40},\"distance\":88.87319,\"reachDistance\":2.5,\"angleRadians\":2.458579,\"selected\":false,\"yawDeltaDegrees\":-140.87481107847486,\"pitchDeltaDegrees\":-0.8960725034843338,\"lookConvention\":\"relative degrees; positive yaw right, positive pitch up; aim guidance does not establish reach or visibility\",\"visibility\":\"Occluded\",\"availability\":\"Available\",\"route\":\"Unknown\",\"focusReason\":\"OutsideQuery\",\"targetedUseReason\":\"OutsideQuery\",\"useCommand\":\"interaction.use 33000 2\"},{\"id\":20002,\"revision\":2,\"label\":\"terminal study door\",\"point\":{\"x\":53,\"y\":1.5,\"z\":34.75},\"distance\":84.853874,\"reachDistance\":2.5,\"angleRadians\":2.4993007,\"selected\":false,\"yawDeltaDegrees\":-143.19948462227748,\"pitchDeltaDegrees\":-0.09453325807472614,\"lookConvention\":\"relative degrees; positive yaw right, positive pitch up; aim guidance does not establish reach or visibility\",\"visibility\":\"Occluded\",\"availability\":\"Available\",\"route\":\"Unknown\",\"focusReason\":\"OutsideQuery\",\"targetedUseReason\":\"OutsideQuery\",\"useCommand\":\"interaction.use 20002 2\"},{\"id\":20000,\"revision\":2,\"label\":\"north wing door\",\"point\":{\"x\":8.1,\"y\":1.6399987,\"z\":-30},\"distance\":26.931372,\"reachDistance\":2.5,\"angleRadians\":2.59814,\"selected\":false,\"yawDeltaDegrees\":148.86245019820737,\"pitchDeltaDegrees\":0,\"lookConvention\":\"relative degrees; positive yaw right, positive pitch up; aim guidance does not establish reach or visibility\",\"visibility\":\"Occluded\",\"availability\":\"Available\",\"route\":\"Unknown\",\"focusReason\":\"OutsideQuery\",\"targetedUseReason\":\"OutsideQuery\",\"useCommand\":\"interaction.use 20000 2\"},{\"id\":20001,\"revision\":2,\"label\":\"southern study door\",\"point\":{\"x\":52,\"y\":1.5,\"z\":15.6},\"distance\":74.0626,\"reachDistance\":2.5,\"angleRadians\":2.699593,\"selected\":false,\"yawDeltaDegrees\":-154.67549457978186,\"pitchDeltaDegrees\":-0.10830797323386974,\"lookConvention\":\"relative degrees; positive yaw right, positive pitch up; aim guidance does not establish reach or visibility\",\"visibility\":\"Occluded\",\"availability\":\"Available\",\"route\":\"Unknown\",\"focusReason\":\"OutsideQuery\",\"targetedUseReason\":\"OutsideQuery\",\"useCommand\":\"interaction.use 20001 2\"},{\"id\":20003,\"revision\":2,\"label\":\"lower passage east door\",\"point\":{\"x\":51.1,\"y\":1.5,\"z\":8},\"distance\":70.29809,\"reachDistance\":2.5,\"angleRadians\":2.791971,\"selected\":false,\"yawDeltaDegrees\":-159.96846393249658,\"pitchDeltaDegrees\":-0.1141083087328411,\"lookConvention\":\"relative degrees; positive yaw right, positive pitch up; aim guidance does not establish reach or visibility\",\"visibility\":\"Occluded\",\"availability\":\"Available\",\"route\":\"Unknown\",\"focusReason\":\"OutsideQuery\",\"targetedUseReason\":\"OutsideQuery\",\"useCommand\":\"interaction.use 20003 2\"}]}",
+  "requested_at": "2026-09-28T06:49:53.391623829Z",
+  "session_id": "22c7d7ec-b210-4733-9458-0c565662bd58",
+  "slot_id": "slot-1",
+  "source": "product live-debug query; semantic assistance"
+}
