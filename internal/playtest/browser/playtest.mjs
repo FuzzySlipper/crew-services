@@ -42,6 +42,14 @@ async function act(page, request, afterAdvance, chunkMs = 2000, resolvedPlan) {
   // Focus the Engine canvas without synthesizing a gameplay click/shot.
   if (page.locator) await page.locator('canvas').first().focus()
   const key = /^Key[A-Z]$/.test(plan.key) ? plan.key.slice(3).toLowerCase() : /^Digit[0-9]$/.test(plan.key) ? plan.key.slice(5) : plan.key === 'ControlLeft' ? 'Control' : plan.key
+  const pointerButton = { Primary: 'left', Secondary: 'right', Auxiliary: 'middle' }[plan.key]
+  if (pointerButton) {
+    const bounds = await page.locator('canvas').first().boundingBox()
+    if (!bounds) throw new Error('Engine canvas is unavailable for pointer input')
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+  }
+  const press = () => pointerButton ? page.mouse.down({ button: pointerButton }) : page.keyboard.down(key)
+  const release = () => pointerButton ? page.mouse.up({ button: pointerButton }) : page.keyboard.up(key)
   const heldKeys = plan.heldKeys ?? []
   if (!Array.isArray(heldKeys) || heldKeys.length > 4 || heldKeys.some(k => typeof k !== 'string')) throw new Error('invalid product held controls')
   const additional = heldKeys.filter(k => k !== plan.key).map(k => /^Key[A-Z]$/.test(k) ? k.slice(3).toLowerCase() : k)
@@ -51,10 +59,10 @@ async function act(page, request, afterAdvance, chunkMs = 2000, resolvedPlan) {
   let failure, releaseError
   try {
     for (const held of additional) await page.keyboard.down(held)
-    await page.keyboard.down(key)
+    await press()
     await engineCall(page, { op: 'flush' })
     if (time.mode === 'realtime') {
-      if (!plan.hold) { await page.keyboard.up(key); released = true; await engineCall(page, { op: 'flush' }) }
+      if (!plan.hold) { await release(); released = true; await engineCall(page, { op: 'flush' }) }
       await delay(ms)
     } else {
       // Consume a pressed edge once; animation time is not a held attack key.
@@ -62,7 +70,7 @@ async function act(page, request, afterAdvance, chunkMs = 2000, resolvedPlan) {
       const result = await engineCall(page, { op: 'advance', ms: first })
       advancedMs += result.advancedMs
       if (afterAdvance) await afterAdvance(advancedMs)
-      if (!plan.hold) { await page.keyboard.up(key); released = true; await engineCall(page, { op: 'flush' }) }
+      if (!plan.hold) { await release(); released = true; await engineCall(page, { op: 'flush' }) }
       while (ms > advancedMs + 0.001) {
         const rest = await engineCall(page, { op: 'advance', ms: Math.min(chunkMs, ms - advancedMs) })
         advancedMs += rest.advancedMs
@@ -73,7 +81,7 @@ async function act(page, request, afterAdvance, chunkMs = 2000, resolvedPlan) {
   finally {
     const releaseErrors = []
     for (const control of [...additional, ...(!released ? [key] : [])]) {
-      try { await page.keyboard.up(control) } catch (error) { releaseErrors.push(String(error)) }
+      try { if (control === key) await release(); else await page.keyboard.up(control) } catch (error) { releaseErrors.push(String(error)) }
     }
     try { await engineCall(page, { op: 'flush' }) } catch (error) { releaseErrors.push(String(error)) }
     released = releaseErrors.length === 0
@@ -85,7 +93,7 @@ async function act(page, request, afterAdvance, chunkMs = 2000, resolvedPlan) {
   const delta = differences(before, observation)
   let focus
   try { focus = await engineCall(page, { op: 'focus' }) } catch { focus = { available: false } }
-  return { accepted: !failure && !releaseError, error: failure, releaseError, observationError, delivery: failure ? 'uncertain; reobserve without replay' : 'submitted', productAcceptance: 'unavailable; inspect observed effect', delta, focus, inputPath: 'physical-keyboard', key: plan.key, plan, requestedMs: ms, advancedMs,
+  return { accepted: !failure && !releaseError, error: failure, releaseError, observationError, delivery: failure ? 'uncertain; reobserve without replay' : 'submitted', productAcceptance: 'unavailable; inspect observed effect', delta, focus, inputPath: pointerButton ? 'physical-pointer' : 'physical-keyboard', key: plan.key, plan, requestedMs: ms, advancedMs,
     inputReleased: released, observation, handback: observation.player?.dead ? 'player-dead' : plan.hold && delta.distanceMoved === 0 ? 'no-observed-movement; inspect collision or input focus' : null }
 }
 

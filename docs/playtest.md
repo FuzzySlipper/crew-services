@@ -34,7 +34,7 @@ these are live samples, not exact screenshot correlation.
 
 - `time`: read, or set `mode` to `realtime`, `manual`, or `action-driven`.
 - `act`: query the current product action plan, focus the Engine canvas without a
-  gameplay click, press its ordinary physical key, release it, and return fresh
+  gameplay click, press its ordinary physical key or pointer button, release it, and return fresh
   observations/deltas. `ms` overrides the live duration; range `(0,2000]`.
   Both held modes advance automatically for this bounded convenience action.
   Tap actions release after their first step; movement holds for the window.

@@ -72,3 +72,42 @@ test('composed action attempts every release even when one key release fails', a
   assert.deepEqual(f.events.filter(e => e[0] === 'up').map(e => e[1]), ['w', 'Space'])
   assert.equal(f.events.filter(e => e[0] === 'advance').length, 1)
 })
+
+test('pointer action uses current binding, releases before recovery, and never clicks to focus', async () => {
+  const f = fixture()
+  f.page.locator = () => ({ first: () => ({ focus: async () => {}, boundingBox: async () => ({ x: 0, y: 0, width: 100, height: 80 }) }) })
+  f.page.mouse = {
+    move: async (x, y) => f.events.push(['move', x, y]),
+    down: async options => f.events.push(['pointer-down', options.button]),
+    up: async options => f.events.push(['pointer-up', options.button]),
+  }
+  const evaluate = f.page.evaluate
+  let key = 'Primary'
+  f.page.evaluate = async (fn, request) => request.op === 'action'
+    ? { available: true, key, durationMs: 300, hold: false }
+    : evaluate(fn, request)
+  const mouse = await playtest(f.page, '/unused', { op: 'act', id: 'attack' })
+  assert.equal(mouse.inputPath, 'physical-pointer')
+  assert.equal(mouse.inputReleased, true)
+  assert.ok(f.events.findIndex(e => e[0] === 'pointer-up') < f.events.findIndex(e => e[0] === 'advance' && e[1] === 280))
+  assert.equal(f.events.filter(e => e[0] === 'pointer-down').length, 1)
+  key = 'KeyQ'
+  const keyboard = await playtest(f.page, '/unused', { op: 'act', id: 'attack' })
+  assert.equal(keyboard.inputPath, 'physical-keyboard')
+  assert.ok(f.events.some(e => e[0] === 'down' && e[1] === 'q'))
+})
+
+test('uncertain pointer action attempts release without replay', async () => {
+  const f = fixture({ fail: true })
+  f.page.locator = () => ({ first: () => ({ focus: async () => {}, boundingBox: async () => ({ x: 0, y: 0, width: 100, height: 80 }) }) })
+  f.page.mouse = { move: async () => {}, down: async () => f.events.push(['pointer-down']), up: async () => f.events.push(['pointer-up']) }
+  const evaluate = f.page.evaluate
+  f.page.evaluate = async (fn, request) => request.op === 'action'
+    ? { available: true, key: 'Primary', durationMs: 300, hold: false }
+    : evaluate(fn, request)
+  const result = await playtest(f.page, '/unused', { op: 'act', id: 'attack' })
+  assert.equal(result.accepted, false)
+  assert.equal(result.inputReleased, true)
+  assert.equal(f.events.filter(e => e[0] === 'pointer-down').length, 1)
+  assert.equal(f.events.filter(e => e[0] === 'pointer-up').length, 1)
+})
