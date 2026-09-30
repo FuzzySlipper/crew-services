@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -214,22 +213,31 @@ func (s *Service) Start(ctx context.Context, game, previous string) (any, error)
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 		defer cancel()
 		receipt, cleanupErr := s.backend.Release(cleanupCtx, id)
-		hostReceipt, hostErr := s.releaseHost(cleanupCtx, id, p)
+		// A host the launcher started is recorded before its release, so a
+		// failed release stays owned by this session and Stop can retry it.
+		host := launchedHost(launched)
+		hostReceipt, hostErr := s.releaseHost(cleanupCtx, id, p, host)
 		s.mu.Lock()
 		st.Phase = "failed"
 		st.LastError = err.Error()
 		st.Launch = map[string]any{"failure_observation": failureFrame}
+		if host != nil {
+			st.Launch["host"] = host
+		}
 		if hostReceipt != nil {
 			st.Launch["host_release"] = hostReceipt
 		}
-		if hostErr != nil {
-			st.LastError += "; host stop unresolved: " + hostErr.Error()
-		}
-		if cleanupErr == nil && receipt["released"] == true {
+		browserReleased := cleanupErr == nil && receipt["released"] == true
+		if browserReleased && hostErr == nil {
 			s.current = ""
 		} else {
 			st.Phase = "degraded"
-			st.LastError += fmt.Sprintf("; cleanup unresolved: %v %v", cleanupErr, receipt)
+			if !browserReleased {
+				st.LastError += fmt.Sprintf("; cleanup unresolved: %v %v", cleanupErr, receipt)
+			}
+			if hostErr != nil {
+				st.LastError += "; product host stop unresolved (stop again to retry): " + hostErr.Error()
+			}
 		}
 		_ = s.saveSession(st)
 		result := clone(st)
@@ -407,20 +415,28 @@ func (s *Service) Stop(ctx context.Context, id string) (any, error) {
 	}
 	s.mu.Lock()
 	profile, profileErr := s.sessionProfile(st)
+	host := launchedHost(st.Launch)
 	s.mu.Unlock()
 	var hostErr error
 	if profileErr == nil {
 		var hostReceipt map[string]any
-		if hostReceipt, hostErr = s.releaseHost(ctx, id, profile); hostReceipt != nil {
+		if hostReceipt, hostErr = s.releaseHost(ctx, id, profile, host); hostReceipt != nil {
 			result["host"] = hostReceipt
 		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if hostErr != nil {
+		// The session still owns a running host: keep it (and its slot) until
+		// a later Stop releases it, and fail so Recover does not continue.
 		result["host_error"] = hostErr.Error()
-	}
-	if result["released"] == true {
+		st.Phase = "degraded"
+		st.LastError = "product host stop unresolved (stop again to retry): " + hostErr.Error()
+		if result["released"] != true {
+			st.LastError += fmt.Sprintf("; browser cleanup unresolved: %v %v", err, result)
+		}
+		err = errors.New(st.LastError)
+	} else if result["released"] == true {
 		st.Phase = "stopped"
 		if s.current == id {
 			s.current = ""
@@ -433,9 +449,6 @@ func (s *Service) Stop(ctx context.Context, id string) (any, error) {
 			st.LastError = "cleanup completed; evidence incomplete: " + evidenceErr
 		} else {
 			st.LastError = ""
-		}
-		if hostErr != nil {
-			st.LastError = strings.TrimPrefix(st.LastError+"; product host stop unresolved: "+hostErr.Error(), "; ")
 		}
 	} else {
 		st.Phase = "degraded"
@@ -464,14 +477,21 @@ func (s *Service) Stop(ctx context.Context, id string) (any, error) {
 // hostedStartTimeout bounds building, staging and starting a session-owned host.
 const hostedStartTimeout = 5 * time.Minute
 
-// releaseHost stops a session-owned product host. Profiles without a host, and
-// launchers that do not own hosts, have nothing to release.
-func (s *Service) releaseHost(ctx context.Context, id string, p Profile) (map[string]any, error) {
+// releaseHost stops a session-owned product host from the identity recorded
+// at launch. Profiles without a host, and launchers that do not own hosts,
+// have nothing to release.
+func (s *Service) releaseHost(ctx context.Context, id string, p Profile, host map[string]any) (map[string]any, error) {
 	releaser, ok := s.launcher.(HostReleaser)
 	if !ok || p.Host == nil {
 		return nil, nil
 	}
-	return releaser.ReleaseHost(ctx, id, p)
+	return releaser.ReleaseHost(ctx, id, p, host)
+}
+
+// launchedHost is the host identity a launcher reported, if any.
+func launchedHost(launched map[string]any) map[string]any {
+	host, _ := launched["host"].(map[string]any)
+	return host
 }
 
 func (s *Service) Close(ctx context.Context) error {

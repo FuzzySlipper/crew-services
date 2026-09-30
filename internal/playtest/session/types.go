@@ -40,9 +40,12 @@ type HostSpec struct {
 	Path string `json:"path,omitempty"`
 }
 
-// HostReleaser stops a session-owned product host after the backend is released.
+// HostReleaser stops a session-owned product host after the backend is
+// released. host is the identity the launcher reported in launch["host"]; it
+// is authoritative even if the repository's manifest has since changed. A nil
+// host means none was started.
 type HostReleaser interface {
-	ReleaseHost(ctx context.Context, sessionID string, p Profile) (map[string]any, error)
+	ReleaseHost(ctx context.Context, sessionID string, p Profile, host map[string]any) (map[string]any, error)
 }
 
 // ProfileBackend selects an execution environment without changing session ownership.

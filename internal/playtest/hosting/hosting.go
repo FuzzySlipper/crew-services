@@ -5,7 +5,6 @@ package hosting
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -84,8 +83,12 @@ func (l *Launcher) Launch(ctx context.Context, id string, p session.Profile) (ma
 	up, err := l.Hosts.Up(ctx, devserver.UpOptions{Project: project, RepoRoot: p.Host.Repo, ManifestPath: p.Host.Manifest, Instance: id})
 	lock.Unlock()
 	if err != nil {
+		if up.Session.PID <= 0 {
+			return nil, fmt.Errorf("host_start_failed: %w", err)
+		}
+		// The broker started a process: report it so the session releases it.
 		facts := hostFacts(up.Session)
-		return nil, fmt.Errorf("host_start_failed: %w (logs: %v, %v)", err, facts["stdout_log"], facts["stderr_log"])
+		return map[string]any{"host": facts}, fmt.Errorf("host_start_failed: %w (logs: %v, %v)", err, facts["stdout_log"], facts["stderr_log"])
 	}
 	path := p.Host.Path
 	if path == "" {
@@ -101,21 +104,24 @@ func (l *Launcher) Launch(ctx context.Context, id string, p session.Profile) (ma
 	return launched, err
 }
 
-// ReleaseHost stops the session's host. A host that already exited is released.
-func (l *Launcher) ReleaseHost(ctx context.Context, id string, p session.Profile) (map[string]any, error) {
-	if p.Host == nil {
-		return nil, nil
-	}
-	project, err := l.Manifest(p.Host.Repo, p.Host.Manifest)
-	if err != nil {
-		return nil, err
-	}
-	stopped, err := l.Hosts.Stop(ctx, devserver.StopOptions{Project: project, RepoRoot: p.Host.Repo, Instance: id})
-	if errors.Is(err, devserver.ErrSessionNotFound) {
+// ReleaseHost stops the host recorded at launch. It never rereads the
+// repository manifest: an edited or removed manifest must not redirect or
+// block cleanup. A host that already exited is released.
+func (l *Launcher) ReleaseHost(ctx context.Context, id string, p session.Profile, host map[string]any) (map[string]any, error) {
+	if p.Host == nil || host == nil {
 		return map[string]any{"stopped": false, "message": "no host was started for this session"}, nil
 	}
+	project, _ := host["project"].(string)
+	repo, _ := host["repo_root"].(string)
+	instance, _ := host["instance"].(string)
+	if project == "" || repo == "" || instance == "" {
+		return nil, fmt.Errorf("recorded host identity is incomplete: project %q, repo %q, instance %q", project, repo, instance)
+	}
+	stopped, err := l.Hosts.Stop(ctx, devserver.StopOptions{Project: project, RepoRoot: repo, Instance: instance})
 	if err != nil {
-		return nil, err
+		// Includes ErrSessionNotFound: a recorded host without its state is
+		// not known to be gone, so it stays the session's to resolve.
+		return nil, fmt.Errorf("stopping recorded host %s · %s: %w", project, instance, err)
 	}
 	receipt := hostFacts(stopped.Session)
 	receipt["stopped"] = stopped.Stopped

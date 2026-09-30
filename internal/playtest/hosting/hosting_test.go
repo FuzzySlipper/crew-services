@@ -18,6 +18,8 @@ type fakeHosts struct {
 	ups     []devserver.UpOptions
 	stops   []devserver.StopOptions
 	stopErr error
+	upErr   error
+	upPID   int
 }
 
 func (f *fakeHosts) Up(_ context.Context, o devserver.UpOptions) (devserver.UpResult, error) {
@@ -30,7 +32,12 @@ func (f *fakeHosts) Up(_ context.Context, o devserver.UpOptions) (devserver.UpRe
 	f.mu.Lock()
 	f.active--
 	f.mu.Unlock()
-	return devserver.UpResult{Started: true, Session: devserver.SessionState{Project: o.Project, Instance: o.Instance, LocalURL: "http://127.0.0.1:37301/", Port: 37301}}, nil
+	session := devserver.SessionState{Project: o.Project, RepoRoot: o.RepoRoot, Instance: o.Instance, LocalURL: "http://127.0.0.1:37301/", Port: 37301, PID: 4242}
+	if f.upErr != nil {
+		session.PID = f.upPID
+		return devserver.UpResult{Session: session}, f.upErr
+	}
+	return devserver.UpResult{Started: true, Session: session}, nil
 }
 
 func (f *fakeHosts) Stop(_ context.Context, o devserver.StopOptions) (devserver.StopResult, error) {
@@ -69,9 +76,46 @@ func TestHostedLaunchStartsInstanceAndOpensItsURL(t *testing.T) {
 	if launched["session_url"] != "http://127.0.0.1:37301/play" || launched["backend"] != "fake" || launched["host"] == nil {
 		t.Fatalf("launch facts: %v", launched)
 	}
-	receipt, err := l.ReleaseHost(context.Background(), "session-1", p)
+	receipt, err := l.ReleaseHost(context.Background(), "session-1", p, launched["host"].(map[string]any))
 	if err != nil || receipt["stopped"] != true || hosts.stops[0].Instance != "session-1" {
 		t.Fatalf("release: %v %v %+v", receipt, err, hosts.stops)
+	}
+}
+
+func TestReleaseTargetsTheLaunchedHostAfterManifestChanges(t *testing.T) {
+	hosts, inner := &fakeHosts{}, &recordingLauncher{}
+	l := testLauncher(hosts, inner)
+	p := session.Profile{ID: "doom", Host: &session.HostSpec{Repo: "/repo/doom"}}
+	launched, err := l.Launch(context.Background(), "s1", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, manifest := range []ManifestReader{
+		func(string, string) (string, error) { return "renamed-project", nil },
+		func(string, string) (string, error) { return "", errors.New("manifest removed") },
+	} {
+		l.Manifest = manifest
+		if _, err := l.ReleaseHost(context.Background(), "s1", p, launched["host"].(map[string]any)); err != nil {
+			t.Fatal(err)
+		}
+		last := hosts.stops[len(hosts.stops)-1]
+		if last.Project != "doom" || last.RepoRoot != "/repo/doom" || last.Instance != "s1" {
+			t.Fatalf("release followed the current manifest: %+v", last)
+		}
+	}
+}
+
+func TestFailedStartReportsAStartedHostForRelease(t *testing.T) {
+	hosts := &fakeHosts{upErr: errors.New("health timeout"), upPID: 4242}
+	l := testLauncher(hosts, &recordingLauncher{})
+	p := session.Profile{ID: "doom", Host: &session.HostSpec{Repo: "/repo/doom"}}
+	launched, err := l.Launch(context.Background(), "s1", p)
+	if err == nil || launched["host"] == nil {
+		t.Fatalf("started host not reported: %v %v", launched, err)
+	}
+	hosts.upPID = 0
+	if launched, err = l.Launch(context.Background(), "s2", p); err == nil || launched != nil {
+		t.Fatalf("unstarted host reported: %v %v", launched, err)
 	}
 }
 
@@ -82,7 +126,7 @@ func TestUnhostedProfilesPassThrough(t *testing.T) {
 	if _, err := l.Launch(context.Background(), "s", p); err != nil {
 		t.Fatal(err)
 	}
-	if receipt, err := l.ReleaseHost(context.Background(), "s", p); receipt != nil || err != nil || len(hosts.ups)+len(hosts.stops) != 0 {
+	if receipt, err := l.ReleaseHost(context.Background(), "s", p, nil); receipt["stopped"] != false || err != nil || len(hosts.ups)+len(hosts.stops) != 0 {
 		t.Fatalf("unhosted profile touched hosts: %v %v %+v", receipt, err, hosts)
 	}
 	if inner.urls[0] != p.URL {
@@ -105,15 +149,21 @@ func TestSameCheckoutStartsSerially(t *testing.T) {
 	}
 }
 
-func TestMissingHostSessionIsAlreadyReleased(t *testing.T) {
-	hosts := &fakeHosts{stopErr: devserver.ErrSessionNotFound}
+func TestReleaseFailuresStayVisible(t *testing.T) {
+	hosts := &fakeHosts{}
 	l := testLauncher(hosts, &recordingLauncher{})
-	receipt, err := l.ReleaseHost(context.Background(), "s", session.Profile{Host: &session.HostSpec{Repo: "/r"}})
-	if err != nil || receipt["stopped"] != false {
-		t.Fatalf("%v %v", receipt, err)
+	p := session.Profile{Host: &session.HostSpec{Repo: "/r"}}
+	if receipt, err := l.ReleaseHost(context.Background(), "s", p, nil); err != nil || receipt["stopped"] != false || len(hosts.stops) != 0 {
+		t.Fatalf("no recorded host: %v %v", receipt, err)
 	}
-	hosts.stopErr = errors.New("kill failed")
-	if _, err := l.ReleaseHost(context.Background(), "s", session.Profile{Host: &session.HostSpec{Repo: "/r"}}); err == nil {
-		t.Fatal("stop failure hidden")
+	recorded := map[string]any{"project": "doom", "repo_root": "/r", "instance": "s"}
+	for _, stopErr := range []error{devserver.ErrSessionNotFound, errors.New("kill failed")} {
+		hosts.stopErr = stopErr
+		if _, err := l.ReleaseHost(context.Background(), "s", p, recorded); !errors.Is(err, stopErr) {
+			t.Fatalf("stop failure hidden: %v", err)
+		}
+	}
+	if _, err := l.ReleaseHost(context.Background(), "s", p, map[string]any{"project": "doom"}); err == nil {
+		t.Fatal("incomplete identity accepted")
 	}
 }

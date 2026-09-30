@@ -251,6 +251,9 @@ func (m *Manager) Up(ctx context.Context, options UpOptions) (UpResult, error) {
 		return UpResult{}, err
 	}
 	if err := store.WriteCurrent(session); err != nil {
+		// Without its state record the host could not be found to stop later.
+		_ = StopProcessGroup(process.PID, m.cfg.Timeouts.ShutdownTimeout)
+		_ = registry.Save(removeLease(leases, session.SessionKey))
 		return UpResult{}, err
 	}
 	return UpResult{Session: session, Started: true, Restarted: restartSource != ""}, nil
