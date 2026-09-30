@@ -1,0 +1,24 @@
+# den-serve local configuration.
+# This tool is LAN-first local-run infrastructure for human inspection.
+# It is not registered as a den-srv systemd deployment service.
+
+state_dir: "~/.cache/den-serve/state"          # Lease registry and broker lock files.
+session_root: "~/.cache/den-serve/sessions"    # Durable session packets and stdout/stderr logs.
+bind_host: "0.0.0.0"                            # LAN-facing bind passed to dev-server commands.
+probe_host: "127.0.0.1"                         # Local health checks probe loopback.
+public_host: "auto"                             # Auto-detect LAN IP; override with --public-host when needed.
+
+status_page:
+  bind_host: "0.0.0.0"                          # LAN-facing status page listener.
+  port: 37299                                    # Kept outside the managed project port range below.
+
+port_range:
+  start: 30300                                  # First broker-managed fallback port; below the ephemeral range.
+  end: 30450                                    # Last broker-managed fallback port.
+
+timeouts:
+  lock_timeout: "10s"                           # How long another broker command may hold the lease lock.
+  startup_timeout: "45s"                        # Default time to wait for a started dev server to pass health checks.
+  health_timeout: "2s"                          # Per-request health check timeout.
+  health_interval: "250ms"                      # Poll interval while waiting for a server to become healthy.
+  shutdown_timeout: "5s"                        # Grace period before killing a broker-owned process group.
