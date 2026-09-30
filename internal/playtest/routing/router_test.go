@@ -18,13 +18,19 @@ func (f *fake) Acquire(context.Context, int, int, int, int) (map[string]any, err
 	return map[string]any{"lease_id": f.name}, nil
 }
 func TestProfileRoutingDoesNotFallback(t *testing.T) {
-	w, b := &fake{name: "wolf"}, &fake{name: "browser"}
-	r := &Router{Entries: map[string]Entry{"wolf": {w, w}, "browser": {b, b}}}
-	if err := r.SelectProfile(session.Profile{ID: "legacy"}); err != nil {
+	e, b := &fake{name: "engine"}, &fake{name: "browser"}
+	r := &Router{Entries: map[string]Entry{"engine": {e, e}, "browser": {b, b}}}
+	if err := r.SelectProfile(session.Profile{ID: "unspecified"}); err != nil {
 		t.Fatal(err)
 	}
 	a, err := r.Acquire(context.Background(), 1, 1, 1, 1)
-	if err != nil || a["lease_id"] != "wolf" {
+	if err != nil || a["lease_id"] != "browser" {
+		t.Fatal(a, err)
+	}
+	if err = r.SelectProfile(session.Profile{Backend: "engine"}); err != nil {
+		t.Fatal(err)
+	}
+	if a, err = r.Acquire(context.Background(), 1, 1, 1, 1); err != nil || a["lease_id"] != "engine" {
 		t.Fatal(a, err)
 	}
 	if err = r.SelectProfile(session.Profile{Backend: "browser", Environment: "service"}); err != nil {

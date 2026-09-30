@@ -13,17 +13,76 @@ export async function engineCall(page, request) {
   }, request)
 }
 
+// The Engine's streamed canvas names the runtime frame it shows. Reading it on
+// both sides of a screenshot ties the composite image to a simulation step when
+// the frame did not change in between (always the case while time is held).
+export async function frameFacts(page) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector('canvas[data-rusty-application-renderer="engine-owned"]')
+    if (!canvas) return null
+    const d = canvas.dataset
+    return { sequence: Number(d.rustyFrameSequence ?? 0), step: Number(d.rustyFrameStep ?? 0), held: d.rustyFrameHeld === 'true', video: d.rustyFrameVideo === 'true',
+      width: canvas.width, height: canvas.height, cssWidth: Math.max(1, Math.round(canvas.clientWidth)) }
+  })
+}
+
+export async function correlatedScreenshot(page, path) {
+  const before = await frameFacts(page).catch(() => null)
+  await page.screenshot({ path, type: 'png' })
+  const after = before ? await frameFacts(page).catch(() => null) : null
+  if (!before || !after || before.sequence === 0) return { path, frame: null, frameCorrelation: before ? 'no frame shown yet' : 'not an Engine stream page' }
+  if (before.sequence !== after.sequence) return { path, frame: null, frameCorrelation: `uncertain: frame ${before.sequence} became ${after.sequence} during capture` }
+  const { sequence, step, held, video } = after
+  return { path, frame: { sequence, step, held, video }, frameCorrelation: 'frame-sequence' }
+}
+
+// RSF1 header: magic, header length, sequence, step, width, height, format
+// (1 JPEG, 2 RGBA8), flags (1 held, 2 video). Later fields extend the header.
+export function parseFrame(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  if (bytes.byteLength < 40 || String.fromCharCode(...bytes.subarray(0, 4)) !== 'RSF1') throw new Error('not an RSF1 frame')
+  const headerLength = view.getUint32(4, true), payloadLength = view.getUint32(36, true)
+  if (headerLength < 40 || headerLength + payloadLength > bytes.byteLength) throw new Error('truncated RSF1 frame')
+  const flags = view.getUint8(33)
+  return { sequence: Number(view.getBigUint64(8, true)), step: Number(view.getBigUint64(16, true)), width: view.getUint32(24, true), height: view.getUint32(28, true),
+    format: view.getUint8(32) === 1 ? 'jpeg' : view.getUint8(32) === 2 ? 'rgba8' : 'unknown', held: (flags & 1) !== 0, video: (flags & 2) !== 0,
+    payload: bytes.subarray(headerLength, headerLength + payloadLength) }
+}
+
+// The runtime's own world frame (no page UI), requested at the page's current
+// frame size so the renderer is not resized. RGBA8 payloads are saved raw.
+export async function worldFrame(page, directory) {
+  const facts = await frameFacts(page)
+  if (!facts) throw new Error('capability_unavailable: not an Engine stream page')
+  const origin = new URL(page.url()).origin
+  const url = `${origin}/__rusty/product/runtime/frames?after=${Math.max(0, facts.sequence - 1)}&width=${facts.width}&height=${facts.height}&cssWidth=${facts.cssWidth}`
+  const response = await fetch(url, { cache: 'no-store' })
+  if (response.status === 204) throw new Error('no frame arrived within the runtime wait')
+  if (!response.ok) throw new Error(`frame request refused: HTTP ${response.status}`)
+  const frame = parseFrame(new Uint8Array(await response.arrayBuffer()))
+  const path = join(directory, `world-${frame.sequence}-step-${frame.step}.${frame.format === 'jpeg' ? 'jpg' : 'rgba'}`)
+  await writeFile(path, frame.payload)
+  const { payload, ...facts2 } = frame
+  return { path, ...facts2, source: 'runtime frame stream; world only, no page UI' }
+}
+
 export async function playtest(page, directory, request) {
   const { op = 'discover' } = request
   if (op === 'act' || op === 'jump') {
     const result = op === 'jump' ? await jump(page, request) : await act(page, request)
     if (request.capture) {
       const path = join(directory, `action-${randomUUID()}.png`)
-      try { await engineCall(page, { op: 'frame' }); await page.screenshot({ path, type: 'png' }); result.capture = path } catch (error) { result.captureError = String(error) }
+      try {
+        await engineCall(page, { op: 'frame' })
+        const shot = await correlatedScreenshot(page, path)
+        result.capture = path; result.captureFrame = shot.frame; result.frameCorrelation = shot.frameCorrelation
+        if (request.world) result.worldFrame = await worldFrame(page, directory)
+      } catch (error) { result.captureError = String(error) }
     }
     return result
   }
   if (op === 'survey') return survey(page, directory, request)
+  if (op === 'world-frame') return worldFrame(page, directory)
   if (op === 'record') return record(page, directory, request)
   if (op === 'observe') {
     const facts = await engineCall(page, request)
@@ -135,8 +194,8 @@ async function survey(page, root, request) {
       const camera = { ...initial.camera, yawDegrees: initial.camera.yawDegrees + i * 360 / count }
       await engineCall(page, { op: 'camera', camera })
       const path = join(directory, `${i}.png`)
-      await page.screenshot({ path, type: 'png' })
-      frames.push({ path, relativeYawDegrees: i * 360 / count, camera })
+      const shot = await correlatedScreenshot(page, path)
+      frames.push({ path, relativeYawDegrees: i * 360 / count, camera, frame: shot.frame, frameCorrelation: shot.frameCorrelation })
     }
   } catch (error) { failure = String(error) }
   finally {
@@ -163,7 +222,9 @@ async function record(page, root, request) {
   let advancedMs = 0
   const capture = async () => {
     const path = join(directory, `${String(frames.length).padStart(5, '0')}.png`)
-    await engineCall(page, { op: 'frame' }); await page.screenshot({ path, type: 'png' }); frames.push({ path, capturedAt: new Date().toISOString(), ...(time.mode === 'realtime' ? {} : { advancedMs }) })
+    await engineCall(page, { op: 'frame' })
+    const shot = await correlatedScreenshot(page, path)
+    frames.push({ path, capturedAt: new Date().toISOString(), frame: shot.frame, frameCorrelation: shot.frameCorrelation, ...(time.mode === 'realtime' ? {} : { advancedMs }) })
   }
   await capture() // Arm before the action.
   let actionResult, failure

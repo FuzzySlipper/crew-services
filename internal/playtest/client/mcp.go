@@ -251,6 +251,14 @@ func toolResult(name string, result json.RawMessage) map[string]any {
 			return response
 		}
 		imageLabel = "observe image unavailable: "
+	case "assist":
+		var ok bool
+		// An act/jump with capture, or world-frame, returns its image with the facts.
+		path, ok = assistImagePath(result)
+		if !ok {
+			return response
+		}
+		imageLabel = "assist image unavailable: "
 	case "script":
 		var ok bool
 		path, ok = checkpointImagePath(result)
@@ -290,6 +298,25 @@ func observePath(result json.RawMessage) (string, bool) {
 		return "", false
 	}
 	return value.Path, true
+}
+
+func assistImagePath(result json.RawMessage) (string, bool) {
+	var value struct {
+		Capture    string `json:"capture"`
+		Path       string `json:"path"`
+		WorldFrame struct {
+			Path string `json:"path"`
+		} `json:"worldFrame"`
+	}
+	if err := json.Unmarshal(result, &value); err != nil {
+		return "", false
+	}
+	for _, path := range []string{value.Capture, value.WorldFrame.Path, value.Path} {
+		if strings.TrimSpace(path) != "" {
+			return path, true
+		}
+	}
+	return "", false
 }
 
 func checkpointImagePath(result json.RawMessage) (string, bool) {
@@ -478,7 +505,7 @@ func optionalInt(values map[string]json.RawMessage, name string) (int, bool, err
 
 func mcpTools() []map[string]any {
 	return []map[string]any{
-		tool("assist", "Engine playtesting: discover, observe, targets, route {id}, action {id} timing query, act {id,ms?}, time {mode?:realtime|manual|action-driven}, advance {ms}, look {yaw,pitch}, drawing {mode:continuous|on-demand}, camera {camera?}, frame, survey {count:4|8}, record {ms,fps?,id?,gif?}. Missing providers are unavailable. Actions use live product timing and ordinary keyboard or pointer-button controls; look never advances time. Select held time for surveys.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Operation object; defaults to discover.")}, "session_id")),
+		tool("assist", "Engine playtesting: discover, observe, targets, route {id}, action {id} timing query, act {id,ms?,capture?,world?} (capture returns the resulting image inline, named by its runtime frame/step when known; world adds the runtime's own world frame without page UI), world-frame, time {mode?:realtime|manual|action-driven}, advance {ms}, look {yaw,pitch}, drawing {mode:continuous|on-demand}, camera {camera?}, frame, survey {count:4|8}, record {ms,fps?,id?,gif?}. Missing providers are unavailable. Actions use live product timing and ordinary keyboard or pointer-button controls; look never advances time. Select held time for surveys.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Operation object; defaults to discover.")}, "session_id")),
 		tool("browser", "Browser-only operations: inspect {selector?}, click {selector} or {x,y}, fill {selector,value}, press {key}, near {x,y,max_distance}, select {token,action?:move|click}. data.op selects the operation. Unsupported on native game sessions; actions are never silently translated to synthetic page events.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Browser operation object, including op.")}, "session_id", "data")),
 		tool("capture", "Capture original image plus comparison metadata. Optional data: label, compare_to (prior capture_id), viewpoint (caller supplied), assistance (caller supplied string array), overlay_policy (preserve only), engine_presentation (boolean override of profile presentation_observations; records separate Engine submitted camera/viewport facts). Does not establish frame freshness or visual acceptance.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Optional capture metadata and comparison options.")}, "session_id")),
 		tool("games", "List games the local playtest service can start.", properties(map[string]any{})),

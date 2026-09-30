@@ -71,9 +71,8 @@ func New(baseURL string, httpClient *http.Client) (*Client, error) {
 		return nil, errors.New("PLAYTEST_URL must use a loopback host")
 	}
 	if httpClient == nil {
-		// Game launch is bounded by the service at 90 seconds. Keep a small
-		// client margin while request contexts can still cancel immediately.
-		httpClient = &http.Client{Timeout: 120 * time.Second}
+		// Each call gets a deadline from commandTimeout instead.
+		httpClient = &http.Client{}
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + "/command"
 	u.RawPath = ""
@@ -88,6 +87,16 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// commandTimeout keeps a margin over the service's own bounds. A start or
+// recover may build and start a session-owned product host (five minutes),
+// and a disconnecting client cancels the start it requested.
+func commandTimeout(op string) time.Duration {
+	if op == "start" || op == "recover" {
+		return 6 * time.Minute
+	}
+	return 120 * time.Second
+}
+
 // Call sends one command and preserves the service response envelope.
 func (c *Client) Call(ctx context.Context, command Request) (Response, error) {
 	if c == nil || c.http == nil || c.commandURL == "" {
@@ -99,6 +108,11 @@ func (c *Client) Call(ctx context.Context, command Request) (Response, error) {
 	body, err := json.Marshal(command)
 	if err != nil {
 		return Response{}, fmt.Errorf("encode playtest command: %w", err)
+	}
+	if _, bounded := ctx.Deadline(); !bounded {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, commandTimeout(command.Op))
+		defer cancel()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.commandURL, bytes.NewReader(body))
 	if err != nil {

@@ -24,9 +24,9 @@ type Router struct {
 func (r *Router) SelectProfile(p session.Profile) error {
 	name := p.Backend
 	if name == "" {
-		name = "wolf"
+		name = "browser"
 	}
-	if p.Environment != "" && p.Environment != "service" && !(name == "wolf" && p.Environment == "wolf-target") {
+	if p.Environment != "" && p.Environment != "service" {
 		return fmt.Errorf("unsupported environment %q for backend %q; configure a service on that execution host", p.Environment, name)
 	}
 	r.mu.Lock()
@@ -47,10 +47,7 @@ func (r *Router) entry() (Entry, error) {
 	defer r.mu.RUnlock()
 	name := r.selected
 	if name == "" {
-		name = "wolf"
-		if _, ok := r.Entries[name]; !ok {
-			name = "browser"
-		}
+		name = "browser"
 	}
 	e, ok := r.Entries[name]
 	if !ok {

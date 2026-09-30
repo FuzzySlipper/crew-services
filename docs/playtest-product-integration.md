@@ -97,9 +97,11 @@ the product. Doom's current capsule/jump helpers are not a universal controller.
 1. Consume a matching SDK/runtime pair containing the modules and enable the
    ordinary live-debug option on the product host. Doom currently uses local
    development artifacts; don't copy its dated paths as a portable dependency.
-2. Register a local browser profile with controls and explicit reset/shared-host
-   semantics. Set `interaction_queries: true` when exposing those queries. Reload
-   profiles through `playtest reload`, preserving active sessions.
+2. Give the repository an ordinary `.den-serve.json` whose command enables live
+   debug, then register a hosted profile (`"host": {"repo": …}`) with controls,
+   so each session starts its own host and world. Set `interaction_queries: true`
+   when exposing those queries. Reload profiles through `playtest reload`,
+   preserving active sessions.
 3. Discover available operations and capture the ready game. Switch to
    action-driven time, look around, then execute one short ordinary movement.
 4. Confirm actual displacement; query a live equipment action and perform it.
@@ -111,7 +113,8 @@ the product. Doom's current capsule/jump helpers are not a universal controller.
    reads, and try one ordinary recovery. A successful query alone is not a
    successful traversal. Document missing collider coverage or query ambiguity.
 6. Capture the result and an exit interview. Record source/SDK/runtime identities
-   and separate product behavior from service readiness. Verify only the changed
+   (a hosted start records the host's launch fingerprint) and separate product
+   behavior from service readiness. Verify only the changed
    behavior; no exact-time certification or full scripted playthrough is needed.
 
 ## Source map

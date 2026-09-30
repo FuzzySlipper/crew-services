@@ -8,13 +8,14 @@ complete encounter script, Jev, and a fixed RNG seed are unnecessary.
 
 Before assigning a tester:
 
-- Start a ready product host and register its profile. Supply the profile, service
+- Prefer a hosted profile (`"host": {"repo": …}`): each tester's `start` builds
+  its own product host and world, and `stop` ends it. Supply the profile, service
   URL, repository, mission, ordinary controls, and evidence directory.
-- Give each simultaneous gameplay tester a separate native world/host. Browser
-  slots isolate browsers, but multiple browsers on one host can share the player,
-  time mode, enemies, and health. Reconnecting a browser does not reset that world.
-- State whether the tester owns a new browser or an existing session, and who
-  owns host reset/cleanup. Preserve unrelated sessions.
+- With a URL profile instead, give each simultaneous gameplay tester a separate
+  host yourself. Browser slots isolate browsers, but browsers on one host share
+  the player, time mode, enemies, and health; a reconnect does not reset it.
+- State whether the tester owns a new session or an existing one, and who owns
+  cleanup. Preserve unrelated sessions.
 - Set an explicit stop condition and budget. Choose enough time for the mission;
   the Doom 20-minute trials ended incomplete, not at death or level clear. Reserve
   time for the interview. Record actual elapsed time if a run exceeds its budget.
@@ -28,8 +29,8 @@ Replace the bracketed fields before sending:
 ```text
 Playtest [product/repository] through the installed crew-services playtest CLI
 or matching MCP tools. Profile: [profile]. Service: [URL]. Evidence: [directory].
-The product host is ready and owned by the parent. [Start your own browser / use
-session ID]. Other testers have separate native worlds.
+[Start your own session; it gets its own product host and world / use session
+ID; the parent owns the host]. Other testers have separate worlds.
 
 Mission: [e.g. explore until all enemies are defeated or the player dies].
 Stop also at [wall-clock deadline / action budget / unrecoverable blocker].
@@ -68,8 +69,8 @@ browser harness. Report missing capabilities or infrastructure errors. No debug
 teleport, forced damage, or direct state mutation unless this mission explicitly
 authorizes it; label any such assistance separately from ordinary gameplay.
 
-At the stop condition, save final state and an original screenshot. Stop only
-[your browser / specified cleanup policy]; leave the native host to the parent.
+At the stop condition, save final state and an original screenshot. Stop
+[your session, which ends its host / specified cleanup policy].
 Write EXIT_INTERVIEW.md before returning. Include the sections below, even if the
 run ends early. Report incomplete progress honestly; don't turn a time limit into
 a gameplay pass or failure.
@@ -88,8 +89,9 @@ Ask for concrete incidents and evidence rather than a general satisfaction score
    decision? Distinguish visual ambiguity, product mechanics and tool limitations.
 5. **Suggestions:** rank a few improvements separately for game, tools, and
    telemetry. Suggestions are observations for follow-up, not acceptance gates.
-6. **Evidence and cleanup:** original captures, relevant receipts, session/slot,
-   final held-time state and browser cleanup result. Mark uncertain diagnoses.
+6. **Evidence and cleanup:** original captures (with their frame/step where
+   known), relevant receipts, session/slot, final held-time state and cleanup
+   result. Mark uncertain diagnoses.
 
 The parent checks suggestions against the receipts. Preserve the interview as
 written, but annotate unsupported conclusions in the summary. In our Doom runs,

@@ -23,10 +23,26 @@ type Profile struct {
 	Environment              string            `json:"environment,omitempty"`
 	ID                       string            `json:"id"`
 	Description              string            `json:"description"`
-	URL                      string            `json:"url"`
+	URL                      string            `json:"url,omitempty"`
+	Host                     *HostSpec         `json:"host,omitempty"`
 	WindowTitle              string            `json:"window_title,omitempty"`
 	Controls                 map[string]string `json:"controls"`
 	Reset                    string            `json:"reset"`
+}
+
+// HostSpec asks the service to start a private product host for each session
+// from the repository's ordinary .den-serve.json manifest. Every session gets
+// its own world; stop and recover end that host. URL is then derived per session.
+type HostSpec struct {
+	Repo     string `json:"repo"`
+	Manifest string `json:"manifest,omitempty"`
+	// Path is appended to the host's loopback origin; default "/".
+	Path string `json:"path,omitempty"`
+}
+
+// HostReleaser stops a session-owned product host after the backend is released.
+type HostReleaser interface {
+	ReleaseHost(ctx context.Context, sessionID string, p Profile) (map[string]any, error)
 }
 
 // ProfileBackend selects an execution environment without changing session ownership.

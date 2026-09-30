@@ -74,6 +74,12 @@ func (s *Service) Capture(ctx context.Context, id string, data json.RawMessage) 
 	}
 	captureID := uuid.NewString()
 	r := map[string]any{"capture_id": captureID, "session_id": id, "recorded_at": time.Now().UTC(), "label": o.Label, "path": obs["path"], "observation": obs, "supplied_viewpoint": o.Viewpoint, "supplied_assistance": o.Assistance, "supplied_metadata_source": "caller; not independently verified", "overlay_policy": o.OverlayPolicy, "engine_readiness": "unavailable", "frame_correlation": "unavailable"}
+	// The browser reports the runtime frame shown during the screenshot, when
+	// the Engine stream page named the same frame before and after it.
+	if correlation, _ := obs["frame_correlation"].(string); correlation != "" {
+		r["frame_correlation"] = correlation
+		r["frame"] = obs["frame"]
+	}
 	if s.poolActivity != nil {
 		r["pool_activity"] = map[string]any{"slot_id": s.slotID, "before": poolBefore, "after": s.poolActivity(), "performance_isolated": false}
 	}

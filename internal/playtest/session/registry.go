@@ -25,8 +25,21 @@ func ValidateProfiles(profiles []Profile) error {
 	}
 	seen := make(map[string]bool, len(profiles))
 	for _, p := range profiles {
-		if strings.TrimSpace(p.ID) == "" || strings.TrimSpace(p.URL) == "" {
-			return errors.New("each game profile requires a nonempty id and url")
+		if strings.TrimSpace(p.ID) == "" {
+			return errors.New("each game profile requires a nonempty id")
+		}
+		if p.Host != nil {
+			if strings.TrimSpace(p.Host.Repo) == "" {
+				return fmt.Errorf("game profile %q host requires repo", p.ID)
+			}
+			if p.Host.Path != "" && !strings.HasPrefix(p.Host.Path, "/") {
+				return fmt.Errorf("game profile %q host path must begin with /", p.ID)
+			}
+			if strings.TrimSpace(p.URL) != "" {
+				return fmt.Errorf("game profile %q sets both url and host; a hosted session's URL is its own host", p.ID)
+			}
+		} else if strings.TrimSpace(p.URL) == "" {
+			return fmt.Errorf("game profile %q requires a url or a host", p.ID)
 		}
 		if seen[p.ID] {
 			return fmt.Errorf("duplicate game profile %q", p.ID)
@@ -73,7 +86,14 @@ func (s *Service) sessionProfile(st *Session) (Profile, error) {
 	return s.registry.Profile(st.Game)
 }
 
-func copyProfile(p Profile) Profile { p.Controls = maps.Clone(p.Controls); return p }
+func copyProfile(p Profile) Profile {
+	p.Controls = maps.Clone(p.Controls)
+	if p.Host != nil {
+		host := *p.Host
+		p.Host = &host
+	}
+	return p
+}
 func copyProfiles(profiles []Profile) []Profile {
 	result := make([]Profile, len(profiles))
 	for i, p := range profiles {

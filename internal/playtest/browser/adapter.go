@@ -168,7 +168,8 @@ func (a *Adapter) SelectProfile(profile session.Profile) error {
 	if profile.Environment != "" && profile.Environment != "service" {
 		return fmt.Errorf("capability_unavailable: browser adapter requires service environment, got %q", profile.Environment)
 	}
-	if strings.TrimSpace(profile.URL) == "" {
+	// A hosted profile's URL is the session's own host, known only at launch.
+	if strings.TrimSpace(profile.URL) == "" && profile.Host == nil {
 		return errors.New("browser profile URL is required")
 	}
 	a.mu.Lock()
@@ -276,8 +277,16 @@ func (a *Adapter) SelectLaunchProfile(leaseID string, profile session.Profile) e
 	if a.unavailable != "" {
 		return fmt.Errorf("browser lease unavailable: %s; stop or recover explicitly", a.unavailable)
 	}
-	if profile.ID != a.profile.ID || profile.URL != a.profile.URL {
+	sameHost := (a.profile.Host == nil) == (profile.Host == nil) && (a.profile.Host == nil || *a.profile.Host == *profile.Host)
+	hosted := sameHost && profile.Host != nil
+	if profile.ID != a.profile.ID || !sameHost || (profile.URL != a.profile.URL && !hosted) {
 		return errors.New("browser profile changed after acquisition")
+	}
+	if hosted {
+		if strings.TrimSpace(profile.URL) == "" {
+			return errors.New("hosted browser launch has no session host URL")
+		}
+		a.profile.URL = profile.URL
 	}
 	return nil
 }

@@ -1,0 +1,13 @@
+[
+  {
+    "id": "rusty-doom-hosted",
+    "backend": "browser",
+    "environment": "service",
+    "host": {"repo": "/home/agent/dev/rusty-doom"},
+    "description": "Doom Loading Bay. Each session starts its own live-debug host from the repo's .den-serve.json.",
+    "controls": {"W/A/S/D": "Walk and strafe", "E": "Use", "Mouse / Ctrl": "Fire", "1/2/3": "Fist / pistol / shotgun"},
+    "reset": "Every start and recover creates a fresh host and world; stop ends the host.",
+    "interaction_queries": true,
+    "presentation_observations": true
+  }
+]

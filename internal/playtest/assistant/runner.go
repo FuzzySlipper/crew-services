@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"crew-services/internal/playtest/target"
+	"crew-services/internal/playtest/input"
 )
 
 type Tactic struct {
@@ -108,7 +108,7 @@ func (p Policy) Validate() error {
 			return fmt.Errorf("invalid or duplicate tactic %q", t.ID)
 		}
 		ids[t.ID] = true
-		if err := target.ValidateBatch(t.Steps); err != nil {
+		if err := input.ValidateBatch(t.Steps); err != nil {
 			return fmt.Errorf("tactic %s: %w", t.ID, err)
 		}
 		raw, _ := json.Marshal(t.Steps)

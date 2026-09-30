@@ -281,3 +281,28 @@ func TestLaunchHTTPFailureAndAcquireFailureDoNotLeaveLeaseOwned(t *testing.T) {
 		t.Fatalf("failed acquire retained a private lease: %v", err)
 	}
 }
+
+func TestHostedProfileTakesItsSessionURLAtLaunch(t *testing.T) {
+	a := &Adapter{}
+	hosted := session.Profile{ID: "doom", Host: &session.HostSpec{Repo: "/repo/doom"}}
+	if err := a.SelectProfile(hosted); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SelectProfile(session.Profile{ID: "plain"}); err == nil {
+		t.Fatal("unhosted profile without URL accepted")
+	}
+	a.leaseID = "lease"
+	if err := a.SelectLaunchProfile("lease", hosted); err == nil {
+		t.Fatal("hosted launch without a session URL accepted")
+	}
+	launch := hosted
+	launch.URL = "http://127.0.0.1:37301/"
+	if err := a.SelectLaunchProfile("lease", launch); err != nil || a.profile.URL != launch.URL {
+		t.Fatalf("hosted launch: %v %q", err, a.profile.URL)
+	}
+	other := launch
+	other.Host = &session.HostSpec{Repo: "/repo/other"}
+	if err := a.SelectLaunchProfile("lease", other); err == nil {
+		t.Fatal("changed host accepted")
+	}
+}

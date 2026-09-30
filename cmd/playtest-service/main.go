@@ -12,23 +12,25 @@ import (
 	"syscall"
 	"time"
 
+	"crew-services/internal/devserver"
+	"crew-services/internal/playtest/hosting"
 	"crew-services/internal/playtest/pool"
 	"crew-services/internal/playtest/session"
+	"crew-services/internal/serve"
 )
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:48200", "loopback API address")
 	poolPath := flag.String("pool", "", "local pool configuration JSON; size and optional queue_wait_ms")
-	configPath := flag.String("config", "", "Wolf machine config JSON")
 	profilesPath := flag.String("games", "", "game profile JSON array")
 	state := flag.String("state", "", "durable session/script state directory")
 	worker := flag.String("worker", "", "Node script worker path")
-	forward := flag.String("forward", "", "Linux container forwarder binary path")
-	browserWorker := flag.String("browser-worker", "", "optional Playwright browser worker path")
+	browserWorker := flag.String("browser-worker", "", "Playwright browser worker path")
 	chromium := flag.String("chromium", "", "optional Chromium executable for browser backend")
+	serveConfig := flag.String("serve-config", "", "den-serve configuration for session-owned product hosts; default shares den-serve's state")
 	flag.Parse()
-	if *profilesPath == "" || *state == "" || *worker == "" || (*configPath == "" && *browserWorker == "") {
-		log.Fatal("--games, --state, --worker and at least one of --config (Wolf) or --browser-worker are required")
+	if *profilesPath == "" || *state == "" || *worker == "" || *browserWorker == "" {
+		log.Fatal("--games, --state, --worker and --browser-worker are required")
 	}
 	host, _, err := net.SplitHostPort(*listen)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
@@ -38,11 +40,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	paths := []string{*worker}
-	if *configPath != "" {
-		paths = append(paths, *forward)
-	}
-	for _, path := range paths {
+	for _, path := range []string{*worker, *browserWorker} {
 		if _, err = os.Stat(path); err != nil {
 			log.Fatal(err)
 		}
@@ -52,11 +50,19 @@ func main() {
 		log.Fatal(err)
 	}
 	registry := session.NewRegistry(profiles)
-	configs, err := loadWolfConfigs(*configPath, *poolPath)
+	hostConfig, err := serve.DefaultConfig()
+	if *serveConfig != "" {
+		hostConfig, err = serve.LoadConfigFromPath(*serveConfig)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
-	builder := slotBuilder{state: absoluteState, worker: *worker, browserWorker: *browserWorker, chromium: *chromium, forward: *forward, wolfEnabled: *configPath != "", wolfConfigs: configs, registry: registry}
+	hosts, err := devserver.NewManager(hostConfig.Manager)
+	if err != nil {
+		log.Fatal(err)
+	}
+	builder := slotBuilder{state: absoluteState, worker: *worker, browserWorker: *browserWorker, chromium: *chromium, registry: registry,
+		hosts: hosts, manifest: hosting.ManifestProject(hostConfig.Manager), locks: &hosting.RepoLocks{}}
 	var services []*session.Service
 	for index := 0; index < pc.Size; index++ {
 		slot, release, err := builder.create(index)

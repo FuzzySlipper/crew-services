@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { playtest } from './playtest.mjs'
+import { frameFacts, playtest } from './playtest.mjs'
 import { createInterface } from 'node:readline'
 import { chromium } from 'playwright'
 
@@ -458,7 +458,15 @@ async function dispatch(message) {
   switch (message.method) {
     case 'launch': return launch(message.params || {})
     case 'navigate': { const active = await currentPage(); const url = boundedString(message.params?.url, 'url', 4096); const response = await active.goto(url, { waitUntil: 'domcontentloaded', timeout: boundedTimeout(message.params?.timeout_ms) }); if (response && !response.ok()) throw new Error(`server returned HTTP ${response.status()} for ${url}`); return { url: active.url(), ...await pageMetadata(active), ...events() } }
-    case 'observe': { const active = await currentPage(); const metadata = await pageMetadata(active); const screenshot = await active.screenshot({ type: 'png' }); return { ...metadata, screenshot_base64: screenshot.toString('base64'), ...events() } }
+    case 'observe': {
+      const active = await currentPage(); const metadata = await pageMetadata(active)
+      const before = await frameFacts(active).catch(() => null)
+      const screenshot = await active.screenshot({ type: 'png' })
+      const after = before ? await frameFacts(active).catch(() => null) : null
+      const frame = before && after && before.sequence > 0 && before.sequence === after.sequence ? { sequence: after.sequence, step: after.step, held: after.held, video: after.video } : null
+      const frame_correlation = frame ? 'frame-sequence' : !before ? 'unavailable' : before.sequence === 0 ? 'no frame shown yet' : 'uncertain: frame changed during capture'
+      return { ...metadata, screenshot_base64: screenshot.toString('base64'), frame, frame_correlation, ...events() }
+    }
     case 'browser': return browser(message.params)
     case 'input': return input(message.params || {})
     case 'status': return context ? { lease_state: 'active', page_open: Boolean(page && !page.isClosed()), ...await pageMetadata(await currentPage()), ...events() } : { lease_state: 'inactive' }

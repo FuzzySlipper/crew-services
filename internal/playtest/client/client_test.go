@@ -299,19 +299,45 @@ func TestToolResultReturnsLatestCheckpointPNG(t *testing.T) {
 	}
 }
 
+func TestAssistActionReturnsItsCaptureInline(t *testing.T) {
+	path := t.TempDir() + "/action.png"
+	png, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLqGQAAAABJRU5ErkJggg==")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, png, 0600); err != nil {
+		t.Fatal(err)
+	}
+	result := toolResult("assist", json.RawMessage(`{"accepted":true,"capture":`+quote(path)+`,"captureFrame":{"sequence":9,"step":90}}`))
+	if content := result["content"].([]any); len(content) != 2 || content[1].(map[string]string)["type"] != "image" {
+		t.Fatalf("content = %#v", content)
+	}
+	plain := toolResult("assist", json.RawMessage(`{"accepted":true,"observation":{"player":{}}}`))
+	if got := len(plain["content"].([]any)); got != 1 {
+		t.Fatalf("uncaptured action added %d content blocks", got)
+	}
+	raw := toolResult("assist", json.RawMessage(`{"path":"/missing/world-1-step-2.rgba"}`))
+	if content := raw["content"].([]any); len(content) != 2 || content[1].(map[string]string)["type"] != "text" {
+		t.Fatalf("unreadable world frame should be reported as text: %#v", content)
+	}
+}
+
 func TestNewRejectsNonLoopbackURL(t *testing.T) {
 	if _, err := New("https://playtest.example", nil); err == nil {
 		t.Fatal("New accepted non-loopback HTTPS URL")
 	}
 }
 
-func TestNewUsesLaunchCompatibleDefaultTimeout(t *testing.T) {
+func TestCommandTimeoutsCoverHostedLaunch(t *testing.T) {
 	client, err := New(DefaultURL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.http.Timeout != 120*time.Second {
-		t.Fatalf("timeout = %s, want 120s", client.http.Timeout)
+	if client.http.Timeout != 0 {
+		t.Fatalf("client-wide timeout = %s; deadlines are per command", client.http.Timeout)
+	}
+	if commandTimeout("start") <= 5*time.Minute || commandTimeout("recover") <= 5*time.Minute || commandTimeout("observe") != 120*time.Second {
+		t.Fatalf("timeouts start=%s recover=%s observe=%s", commandTimeout("start"), commandTimeout("recover"), commandTimeout("observe"))
 	}
 }
 

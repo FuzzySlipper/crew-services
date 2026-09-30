@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"crew-services/internal/playtest/evidence"
-	"crew-services/internal/playtest/target"
+	"crew-services/internal/playtest/input"
 	"github.com/google/uuid"
 )
 
@@ -162,14 +163,19 @@ func (s *Service) Command(ctx context.Context, r Request) (any, error) {
 }
 
 func (s *Service) Start(ctx context.Context, game, previous string) (any, error) {
-	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	defer cancel()
-	s.opMu.Lock()
-	defer s.opMu.Unlock()
 	p, err := s.registry.Profile(game)
 	if err != nil {
 		return nil, err
 	}
+	timeout := 90 * time.Second
+	if p.Host != nil {
+		// Includes building and staging the product host.
+		timeout = hostedStartTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
 	s.mu.Lock()
 	busy := s.current != ""
 	s.mu.Unlock()
@@ -208,10 +214,17 @@ func (s *Service) Start(ctx context.Context, game, previous string) (any, error)
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 		defer cancel()
 		receipt, cleanupErr := s.backend.Release(cleanupCtx, id)
+		hostReceipt, hostErr := s.releaseHost(cleanupCtx, id, p)
 		s.mu.Lock()
 		st.Phase = "failed"
 		st.LastError = err.Error()
 		st.Launch = map[string]any{"failure_observation": failureFrame}
+		if hostReceipt != nil {
+			st.Launch["host_release"] = hostReceipt
+		}
+		if hostErr != nil {
+			st.LastError += "; host stop unresolved: " + hostErr.Error()
+		}
 		if cleanupErr == nil && receipt["released"] == true {
 			s.current = ""
 		} else {
@@ -224,6 +237,10 @@ func (s *Service) Start(ctx context.Context, game, previous string) (any, error)
 		return result, err
 	}
 	s.mu.Lock()
+	if hosted, _ := launched["session_url"].(string); hosted != "" {
+		p.URL = hosted
+		st.Profile = &p
+	}
 	st.Phase = "connected"
 	st.Launch = launched
 	err = s.saveSession(st)
@@ -311,7 +328,7 @@ func (s *Service) ManualInput(ctx context.Context, id string, steps []map[string
 }
 
 func (s *Service) deliver(ctx context.Context, id string, steps []map[string]any) (map[string]any, error) {
-	if err := target.ValidateBatch(steps); err != nil {
+	if err := input.ValidateBatch(steps); err != nil {
 		return nil, fmt.Errorf("invalid_input: %w", err)
 	}
 	result, err := s.backend.Input(ctx, id, steps)
@@ -389,7 +406,20 @@ func (s *Service) Stop(ctx context.Context, id string) (any, error) {
 		result = map[string]any{"released": false}
 	}
 	s.mu.Lock()
+	profile, profileErr := s.sessionProfile(st)
+	s.mu.Unlock()
+	var hostErr error
+	if profileErr == nil {
+		var hostReceipt map[string]any
+		if hostReceipt, hostErr = s.releaseHost(ctx, id, profile); hostReceipt != nil {
+			result["host"] = hostReceipt
+		}
+	}
+	s.mu.Lock()
 	defer s.mu.Unlock()
+	if hostErr != nil {
+		result["host_error"] = hostErr.Error()
+	}
 	if result["released"] == true {
 		st.Phase = "stopped"
 		if s.current == id {
@@ -403,6 +433,9 @@ func (s *Service) Stop(ctx context.Context, id string) (any, error) {
 			st.LastError = "cleanup completed; evidence incomplete: " + evidenceErr
 		} else {
 			st.LastError = ""
+		}
+		if hostErr != nil {
+			st.LastError = strings.TrimPrefix(st.LastError+"; product host stop unresolved: "+hostErr.Error(), "; ")
 		}
 	} else {
 		st.Phase = "degraded"
@@ -426,6 +459,19 @@ func (s *Service) Stop(ctx context.Context, id string) (any, error) {
 		}
 	}
 	return result, err
+}
+
+// hostedStartTimeout bounds building, staging and starting a session-owned host.
+const hostedStartTimeout = 5 * time.Minute
+
+// releaseHost stops a session-owned product host. Profiles without a host, and
+// launchers that do not own hosts, have nothing to release.
+func (s *Service) releaseHost(ctx context.Context, id string, p Profile) (map[string]any, error) {
+	releaser, ok := s.launcher.(HostReleaser)
+	if !ok || p.Host == nil {
+		return nil, nil
+	}
+	return releaser.ReleaseHost(ctx, id, p)
 }
 
 func (s *Service) Close(ctx context.Context) error {

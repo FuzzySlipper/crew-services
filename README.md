@@ -3,9 +3,10 @@
 For game and browser testing, see [Agent playtesting](docs/playtest.md),
 [tester prompts](docs/playtest-agent-prompts.md), and the
 [Engine product integration guide](docs/playtest-product-integration.md).
-The separate `playtest-service` and `playtest-target` Go processes own sessions
-and input; `playtest` provides CLI/MCP access and a supervised JavaScript worker
-composes actions. This does not depend on the messaging fabric.
+`playtest-service` owns sessions, their product hosts and input; `playtest`
+provides CLI/MCP access and a supervised JavaScript worker composes actions.
+[den-serve](docs/den-serve.md) runs local dev/demo servers for people and hosts
+for playtest sessions. These local tools do not depend on the messaging fabric.
 
 `crew-services` is an independent, runtime-neutral successor for selected local
 agent-service capabilities. Its implemented foundation includes a runtime-neutral
