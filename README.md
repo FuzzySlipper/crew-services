@@ -6,7 +6,9 @@ For game and browser testing, see [Agent playtesting](docs/playtest.md),
 `playtest-service` owns sessions, their product hosts and input; `playtest`
 provides CLI/MCP access and a supervised JavaScript worker composes actions.
 [den-serve](docs/den-serve.md) runs local dev/demo servers for people and hosts
-for playtest sessions. These local tools do not depend on the messaging fabric.
+for playtest sessions. These local tools do not depend on the messaging fabric;
+see [local-machine services](docs/local-services.md) for what runs on the agent
+box and how it came from den-services.
 
 `crew-services` is an independent, runtime-neutral successor for selected local
 agent-service capabilities. Its implemented foundation includes a runtime-neutral

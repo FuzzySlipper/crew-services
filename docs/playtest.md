@@ -199,6 +199,10 @@ not need it, since their page only paints frames. Default headless Chromium
 otherwise falls back to SwiftShader; see Chromium's
 [headless GPU guidance](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/gpu/using-gpu-hardware-in-headless-chrome.md).
 
+For Codex, `scripts/install-codex-playtester.sh` links the
+[product-playtest skill](../codex/skills/product-playtest/SKILL.md) and writes
+the `playtester` agent profile; both use this CLI.
+
 `playtest-service` requires `--games`, `--state`, `--worker`
 (scriptworker/worker.mjs) and `--browser-worker` (browser/worker.mjs);
 `--chromium` optionally names a browser executable and `--serve-config` a
