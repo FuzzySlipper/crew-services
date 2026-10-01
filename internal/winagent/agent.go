@@ -246,8 +246,11 @@ func (a *Agent) StartInstance(ctx context.Context, product, holder string) (*Ins
 		a.mu.Unlock()
 		return nil, err
 	}
-	a.next++
-	id := fmt.Sprintf("%s-%d-%d", product, port, a.next)
+	id := ""
+	for id == "" || a.instances[id] != nil {
+		a.next++
+		id = fmt.Sprintf("%s-%d-%d", product, port, a.next)
+	}
 	instance := &Instance{ID: id, Product: product, Port: port, Origin: fmt.Sprintf("http://%s:%d", a.config.BindHost, port),
 		Log: filepath.Join(a.config.Logs, id+".log"), StartedAt: a.now().UTC(), Holder: holder, Lane: lane}
 	a.instances[id] = instance // reserves the port and the lane
@@ -314,14 +317,14 @@ func (a *Agent) recordPath() string { return filepath.Join(a.config.Logs, "insta
 // the ones its previous run left behind.
 func (a *Agent) record() {
 	a.mu.Lock()
-	pids := map[string]int{}
+	started := map[string]Instance{}
 	for id, instance := range a.instances {
 		if instance.PID != 0 {
-			pids[id] = instance.PID
+			started[id] = *instance
 		}
 	}
 	a.mu.Unlock()
-	data, _ := json.Marshal(pids)
+	data, _ := json.Marshal(started)
 	_ = os.WriteFile(a.recordPath(), data, 0o644)
 }
 
@@ -333,18 +336,32 @@ func (a *Agent) ReapLeftovers() []string {
 	if err != nil {
 		return nil
 	}
-	var pids map[string]int
-	if json.Unmarshal(data, &pids) != nil {
-		return nil
+	recorded := map[string]Instance{}
+	if json.Unmarshal(data, &recorded) != nil {
+		// Records from before whole instances were kept hold process IDs.
+		var pids map[string]int
+		if json.Unmarshal(data, &pids) != nil {
+			return nil
+		}
+		for id, pid := range pids {
+			recorded[id] = Instance{ID: id, PID: pid}
+		}
 	}
 	var stopped []string
-	for id, pid := range pids {
+	for id, instance := range recorded {
+		// Later ids never repeat a recorded one.
+		if n, err := strconv.Atoi(id[strings.LastIndex(id, "-")+1:]); err == nil {
+			a.next = max(a.next, n)
+		}
+		pid := instance.PID
 		if a.desktop.Alive(pid) && strings.EqualFold(a.desktop.Image(pid), filepath.Base(a.config.Rusty)) {
 			if a.desktop.Stop(pid) == nil || !a.desktop.Alive(pid) {
 				stopped = append(stopped, id)
 			} else {
+				// Still running: it keeps its port and lane until stopped.
+				instance.ID = id
 				a.mu.Lock()
-				a.instances[id] = &Instance{ID: id, PID: pid}
+				a.instances[id] = &instance
 				a.mu.Unlock()
 			}
 		}

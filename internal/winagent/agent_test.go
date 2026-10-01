@@ -210,9 +210,19 @@ func TestAFailedStartThatWillNotStopStaysListed(t *testing.T) {
 	if stopped := restarted.ReapLeftovers(); len(stopped) != 0 || len(restarted.Instances()) != 1 {
 		t.Fatalf("reap: %v %v", stopped, restarted.Instances())
 	}
+	// It keeps its port and lane: the next start takes others and a new id.
+	restarted.probe = func(context.Context, string, func() bool) error { return nil }
+	restarted.prepare = agent.prepare
+	next, err := restarted.StartInstance(context.Background(), "doom", "s2")
+	if err != nil || next.ID == instance.ID || next.Port == instance.Port || next.Lane == instance.Lane || len(restarted.Instances()) != 2 {
+		t.Fatalf("next start: %+v %v; recovered %+v", next, err, instance)
+	}
 	desktop.mu.Lock()
 	desktop.stopErr = nil
 	desktop.mu.Unlock()
+	if err := restarted.StopInstance(next.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := restarted.StopInstance(instance.ID); err != nil || desktop.Alive(instance.PID) || len(restarted.Instances()) != 0 {
 		t.Fatalf("retry: %v alive %v", err, desktop.Alive(instance.PID))
 	}
