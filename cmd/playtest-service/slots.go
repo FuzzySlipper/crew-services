@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"crew-services/internal/playtest/browser"
+	"crew-services/internal/playtest/engine"
 	"crew-services/internal/playtest/hosting"
 	"crew-services/internal/playtest/routing"
 	"crew-services/internal/playtest/session"
@@ -41,6 +42,14 @@ func (b slotBuilder) create(index int) (*session.Service, func(), error) {
 		releases = append(releases, func() { backend.Close() })
 		router.Entries["browser"] = routing.Entry{Backend: backend, Launcher: backend}
 	}
+	// The engine backend drives a product host directly; it owns no process.
+	direct, err := engine.New(engine.Config{State: filepath.Join(state, "engine"), Label: fmt.Sprintf("crew-playtest-%d", index+1)})
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	releases = append(releases, func() { direct.Close() })
+	router.Entries["engine"] = routing.Entry{Backend: direct, Launcher: direct}
 	launcher := &hosting.Launcher{Inner: router, Hosts: b.hosts, Manifest: b.manifest, Locks: b.locks}
 	service, err := session.NewWithRegistry(router, launcher, b.registry, state, b.worker)
 	if err != nil {

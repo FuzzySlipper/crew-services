@@ -73,6 +73,12 @@ func WriteJSONFile(path string, value any) error {
 	if err != nil {
 		return fmt.Errorf("encode JSON state: %w", err)
 	}
+	return WriteFileAtomic(path, append(data, '\n'))
+}
+
+// WriteFileAtomic publishes data at path through a synced sibling, so a reader
+// sees either the old file or the complete new one.
+func WriteFileAtomic(path string, data []byte) error {
 	directory := filepath.Dir(path)
 	temporary, err := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -84,22 +90,22 @@ func WriteJSONFile(path string, value any) error {
 		_ = temporary.Close()
 		return err
 	}
-	writeErr := writeAll(temporary, append(data, '\n'))
+	writeErr := writeAll(temporary, data)
 	if writeErr == nil {
 		writeErr = temporary.Sync()
 	}
 	closeErr := temporary.Close()
 	if writeErr != nil {
-		return fmt.Errorf("write JSON state: %w", writeErr)
+		return fmt.Errorf("write %s: %w", filepath.Base(path), writeErr)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("close JSON state: %w", closeErr)
+		return fmt.Errorf("close %s: %w", filepath.Base(path), closeErr)
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
-		return fmt.Errorf("publish JSON state: %w", err)
+		return fmt.Errorf("publish %s: %w", filepath.Base(path), err)
 	}
 	if err := SyncDirectory(directory); err != nil {
-		return fmt.Errorf("sync JSON state directory: %w", err)
+		return fmt.Errorf("sync %s: %w", directory, err)
 	}
 	return nil
 }

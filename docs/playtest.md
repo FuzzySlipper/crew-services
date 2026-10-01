@@ -253,6 +253,48 @@ facts; a loaded page is not proof that a game finished loading or accepts input.
 After editing the profiles file, run `playtest reload`; existing sessions keep
 the profile they started with.
 
+### Engine backend: no browser
+
+`"backend": "engine"` drives the product host directly over its loopback HTTP
+surface; nothing runs Chromium. It answers the same `assist` operations by
+posting the product's live-debug commands, and adds:
+
+- **Input** through a harness claim (`control/claim`, Engine #8888). Each
+  session claims the runtime's input binding under its slot label
+  (`crew-playtest-N`) and posts ordinary input events with increasing
+  sequences. An attached page shows "Input held by crew-playtest-N" and sends
+  nothing while the claim holds, so window focus and page blur cannot clear
+  what the harness holds. The claim lapses five minutes after the last input,
+  and `stop` releases it.
+- **Captures** from `frames/capture` (Engine #8887): lossless world frames at
+  the output's size, named by the simulation step they show, with the drawn
+  cameras. A capture never resizes a page or window. Product UI and HUD are not
+  in them; attach a browser session to the same host for those.
+- **Receipts** keep queued, admitted and observed apart. `delivery: queued`
+  is the host's acknowledgement; `admission: admitted by the runtime` is the
+  runtime ingesting the events (in held time, with the next advance or debug
+  command); the product's effect is whatever the next observation shows. A
+  batch whose outcome is unknown is never replayed: the next input takes a
+  fresh claim, which clears anything left held.
+
+It exercises binding admission and the product's own mappings, not the page's
+input capture: DOM focus, text entry, menus and the pointer-lock shim need the
+browser backend. `input` steps work as in the browser lane except `point`
+(absolute positions need a page). `capture`, `act` with `capture`, `world-frame`,
+`survey` and `record` all write world frames; `record` needs held time, so each
+frame is taken at an exact step.
+
+```json
+{"id": "rusty-doom-engine", "backend": "engine", "environment": "service",
+ "host": {"repo": "/home/agent/dev/rusty-doom",
+          "manifest": "/home/agent/dev/rusty-doom/.den-serve-room-study.json"},
+ "description": "Doom room study without a browser", "controls": {},
+ "reset": "Every start and recover creates a fresh host and world; stop ends the host."}
+```
+
+The product must register Engine's `PlaytestDebugModule` for `observe`,
+`action` and `act`; Doom's Loading Bay does so only in its room-study build.
+
 ## Agent entry point
 
 ```sh
