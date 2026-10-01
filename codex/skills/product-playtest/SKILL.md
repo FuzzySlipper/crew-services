@@ -80,9 +80,13 @@ schemas rather than assuming a tool-name prefix or a fixed tool count.
   bindings, not the page's input capture (DOM focus, menus, text entry,
   pointer lock). Use a browser profile for those.
 - `environment: "windows-desktop"` runs that backend against a native Windows
-  build on the Windows box: `assist window` captures the window with its UI,
-  and `assist os-input` sends real keyboard/mouse input under the box's single
-  foreground lease (click first for pointer lock; `foreground_busy` means wait).
+  build on the Windows box (profile `rusty-doom-windows`): `assist window`
+  captures the window with its UI, and `assist os-input` sends real
+  keyboard/mouse input under the box's single foreground lease (click first
+  for pointer lock; `foreground_busy` means wait). A lane's first start builds
+  the product and can take minutes. The box, its agent and building Engine
+  there are in
+  [the Windows runbook](/home/agent/dev/crew-services/docs/playtest-windows.md).
 - Read returned capabilities and report unsupported operations explicitly.
   Do not substitute one input type and call the evidence equivalent.
 
