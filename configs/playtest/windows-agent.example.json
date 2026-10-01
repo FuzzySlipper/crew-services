@@ -3,8 +3,7 @@
   "bind_host": "192.168.1.12",
   "first_port": 48310,
   "last_port": 48339,
-  "rusty": "C:\\dev\\rusty-engine\\target\\runtime-pack\\win-x64\\bin\\rusty.exe",
-  "runtime": "C:\\dev\\rusty-engine\\target\\runtime-pack\\win-x64",
+  "rusty": "C:\\Users\\agent\\crew\\bin\\rusty.exe",
   "logs": "C:\\Users\\agent\\crew\\agent-logs",
   "env": {
     "MSBUILDDISABLENODEREUSE": "1",
@@ -13,9 +12,15 @@
     "NX_DAEMON": "false"
   },
   "products": {
+    "rusty-rifles": {
+      "repo": "C:\\dev\\rusty-rifles",
+      "project": "src\\Rifles.Game\\Rifles.Game.csproj",
+      "lanes": 2
+    },
     "rusty-doom-room-study": {
       "repo": "C:\\dev\\rusty-doom",
       "project": "csharp\\LoadingBay.RoomStudy\\LoadingBay.RoomStudy.csproj",
+      "runtime": "C:\\Users\\agent\\crew\\runtimes\\rusty-doom-2dbff6a3cc70",
       "lanes": 3
     }
   }

@@ -23,6 +23,7 @@ type fakeDesktop struct {
 	starting int
 	overlap  bool
 	stopErr  error
+	args     [][]string
 }
 
 func (f *fakeDesktop) Start(_ string, args []string, _ string, _ []string, _ string) (int, error) {
@@ -30,6 +31,7 @@ func (f *fakeDesktop) Start(_ string, args []string, _ string, _ []string, _ str
 	defer f.mu.Unlock()
 	f.nextPID++
 	f.alive[f.nextPID] = true
+	f.args = append(f.args, args)
 	return f.nextPID, nil
 }
 func (f *fakeDesktop) Stop(pid int) error {
@@ -65,6 +67,7 @@ func testAgent(t *testing.T) (*Agent, *fakeDesktop) {
 	var active, peak int
 	var mu sync.Mutex
 	agent.prepare = func(context.Context, string, string, []string, string) error { return nil }
+	agent.install = func(context.Context, string, string, []string, string) error { return nil }
 	agent.probe = func(context.Context, string, func() bool) error {
 		mu.Lock()
 		active++
@@ -212,7 +215,7 @@ func TestAFailedStartThatWillNotStopStaysListed(t *testing.T) {
 	}
 	// It keeps its port and lane: the next start takes others and a new id.
 	restarted.probe = func(context.Context, string, func() bool) error { return nil }
-	restarted.prepare = agent.prepare
+	restarted.prepare, restarted.install = agent.prepare, agent.install
 	next, err := restarted.StartInstance(context.Background(), "doom", "s2")
 	if err != nil || next.ID == instance.ID || next.Port == instance.Port || next.Lane == instance.Lane || len(restarted.Instances()) != 2 {
 		t.Fatalf("next start: %+v %v; recovered %+v", next, err, instance)
@@ -225,5 +228,35 @@ func TestAFailedStartThatWillNotStopStaysListed(t *testing.T) {
 	}
 	if err := restarted.StopInstance(instance.ID); err != nil || desktop.Alive(instance.PID) || len(restarted.Instances()) != 0 {
 		t.Fatalf("retry: %v alive %v", err, desktop.Alive(instance.PID))
+	}
+}
+
+func TestProductsRunOnTheirPinnedPairUnlessTheyNameARuntime(t *testing.T) {
+	agent, desktop := testAgent(t)
+	agent.config.Product["rifles"] = Product{Repo: "C:/dev/rusty-rifles", Project: "game.csproj"}
+	agent.config.Product["study"] = Product{Repo: "C:/dev/rusty-study", Project: "game.csproj", Runtime: "C:/runtimes/study"}
+	var installed []string
+	agent.install = func(_ context.Context, _ string, lane string, _ []string, _ string) error {
+		installed = append(installed, lane)
+		return nil
+	}
+	for _, product := range []string{"rifles", "study"} {
+		if _, err := agent.StartInstance(context.Background(), product, "s"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime := func(args []string) string {
+		for i, arg := range args {
+			if arg == "--runtime" {
+				return args[i+1]
+			}
+		}
+		return ""
+	}
+	if len(installed) != 1 || installed[0] != "C:/dev/rusty-rifles" || runtime(desktop.args[0]) != "" {
+		t.Fatalf("rifles: installed %v args %v", installed, desktop.args[0])
+	}
+	if runtime(desktop.args[1]) != "C:/runtimes/study" {
+		t.Fatalf("study args %v", desktop.args[1])
 	}
 }

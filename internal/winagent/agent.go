@@ -34,6 +34,10 @@ type Product struct {
 	Project string `json:"project"`
 	// Args are extra `rusty dev` arguments.
 	Args []string `json:"args,omitempty"`
+	// Runtime is a runtime pack to run instead of the Engine pair the
+	// product pins (--runtime). Without one, each start installs the pinned
+	// pair (`rusty install`, a no-op once cached) and runs on it.
+	Runtime string `json:"runtime,omitempty"`
 	// Lanes is how many instances may run at once (default 1). rusty dev
 	// stages the product inside its checkout, and Windows cannot replace
 	// files a running host has open, so each further lane is a git worktree
@@ -49,8 +53,10 @@ type Config struct {
 	// Ports instances are given, first..last inclusive.
 	FirstPort int `json:"first_port"`
 	LastPort  int `json:"last_port"`
-	// Rusty is rusty.exe; Runtime the runtime pack it runs (--runtime).
-	Rusty   string             `json:"rusty"`
+	// Rusty is rusty.exe. It delegates to each product's pinned pair.
+	Rusty string `json:"rusty"`
+	// Runtime is the runtime pack for products that name none; empty runs
+	// each product on its pinned pair.
 	Runtime string             `json:"runtime,omitempty"`
 	Logs    string             `json:"logs"`
 	Env     map[string]string  `json:"env,omitempty"`
@@ -118,6 +124,8 @@ type Agent struct {
 	probe   func(ctx context.Context, origin string, alive func() bool) error
 	// prepare makes a lane checkout current before rusty dev runs in it.
 	prepare func(ctx context.Context, repo, lane string, env []string, log string) error
+	// install installs a lane's pinned Engine pair, for products run on it.
+	install func(ctx context.Context, rusty, lane string, env []string, log string) error
 
 	mu        sync.Mutex
 	instances map[string]*Instance
@@ -130,7 +138,7 @@ type Agent struct {
 }
 
 func New(config Config, desktop Desktop) *Agent {
-	return &Agent{config: config, desktop: desktop, now: time.Now, probe: probeHost, prepare: prepareLane, instances: map[string]*Instance{}, starting: map[string]*sync.Mutex{}}
+	return &Agent{config: config, desktop: desktop, now: time.Now, probe: probeHost, prepare: prepareLane, install: installPair, instances: map[string]*Instance{}, starting: map[string]*sync.Mutex{}}
 }
 
 // probeHost waits for a product host's live-debug catalog to answer, or for
@@ -188,6 +196,22 @@ func prepareLane(ctx context.Context, repo, lane string, env []string, log strin
 	}
 	if _, err := os.Stat(filepath.Join(lane, "pnpm-lock.yaml")); err == nil {
 		return run(lane, "pnpm", "install", "--frozen-lockfile", "--prefer-offline", "--reporter=append-only")
+	}
+	return nil
+}
+
+// installPair installs the Engine pair the checkout pins; rusty skips one
+// already in its cache.
+func installPair(ctx context.Context, rusty, lane string, env []string, log string) error {
+	file, err := os.OpenFile(log, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	cmd := exec.CommandContext(ctx, rusty, "install")
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = lane, env, file, file
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("rusty install: %w (log %s)", err, log)
 	}
 	return nil
 }
@@ -267,14 +291,25 @@ func (a *Agent) StartInstance(ctx context.Context, product, holder string) (*Ins
 	for key, value := range a.config.Env {
 		env = append(env, key+"="+value)
 	}
-	if err := a.prepare(ctx, p.Repo, lane, env, filepath.Join(a.config.Logs, id+".prepare.log")); err != nil {
+	runtime := p.Runtime
+	if runtime == "" {
+		runtime = a.config.Runtime
+	}
+	prepareLog := filepath.Join(a.config.Logs, id+".prepare.log")
+	if err := a.prepare(ctx, p.Repo, lane, env, prepareLog); err != nil {
 		a.forget(id)
 		return nil, fmt.Errorf("prepare lane %s: %w", lane, err)
 	}
+	if runtime == "" {
+		if err := a.install(ctx, a.config.Rusty, lane, env, prepareLog); err != nil {
+			a.forget(id)
+			return nil, fmt.Errorf("install the Engine pair %s pins: %w", product, err)
+		}
+	}
 	args := []string{"dev", "--project", filepath.Join(lane, p.Project), "--output", "window", "--bind-host", a.config.BindHost,
 		"--port", strconv.Itoa(port), "--live-debug", "--diagnostics-log", filepath.Join(a.config.Logs, id+".ndjson")}
-	if a.config.Runtime != "" {
-		args = append(args, "--runtime", a.config.Runtime)
+	if runtime != "" {
+		args = append(args, "--runtime", runtime)
 	}
 	args = append(args, p.Args...)
 	pid, err := a.desktop.Start(a.config.Rusty, args, lane, env, instance.Log)
