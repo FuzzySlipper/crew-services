@@ -256,9 +256,10 @@ func (s *Service) execute(ctx context.Context, a *activeScript, source string) {
 		s.mu.Lock()
 		a.state.Calls++
 		calls := a.state.Calls
+		limit := scriptCallLimit(s.sessions[a.state.SessionID])
 		s.mu.Unlock()
-		if calls > 512 {
-			failure = errors.New("script exceeded 512 API calls")
+		if calls > limit {
+			failure = fmt.Errorf("script exceeded %d API calls", limit)
 			return
 		}
 		if err = record("call", call); err != nil {
@@ -286,6 +287,14 @@ func (s *Service) execute(ctx context.Context, a *activeScript, source string) {
 }
 
 func (s *Service) scriptCall(ctx context.Context, a *activeScript, call workerCall) (any, error) {
+	if call.Method == "assist" {
+		// assist(request) is browser({op:"playtest", request}).
+		wrapped, err := json.Marshal(map[string]any{"op": "playtest", "request": json.RawMessage(call.Args)})
+		if err != nil {
+			return nil, err
+		}
+		call.Method, call.Args = "browser", wrapped
+	}
 	if call.Method == "browser" {
 		s.mu.Lock()
 		st := s.sessions[a.state.SessionID]
@@ -375,6 +384,16 @@ func (s *Service) scriptCall(ctx context.Context, a *activeScript, call workerCa
 	default:
 		return nil, fmt.Errorf("unknown script method %q", call.Method)
 	}
+}
+
+// scriptCallLimit bounds runaway loops. The browser limit was set for
+// realtime input, where calls cost wall time; an engine session in held time
+// spends milliseconds per act, so its program may make many more.
+func scriptCallLimit(st *Session) int {
+	if st != nil && st.Profile != nil && st.Profile.Backend == "engine" {
+		return 4096
+	}
+	return 512
 }
 
 func wait(ctx context.Context, d time.Duration) error {

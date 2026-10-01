@@ -22,6 +22,12 @@ playtest assist SESSION --json '{"op":"action","id":"attack"}'
 playtest assist SESSION --json '{"op":"act","id":"attack"}'
 ```
 
+Through MCP, `assist` answers are compact: objects nested more than three
+levels deep, lists past four entries and long strings are summarized. The
+service stores every assist result whole at the `receipt` path it returns, and
+`"detail":"full"` in the request returns it inline. The CLI prints the full
+result.
+
 Read observations and choose the next action. Routes/suggestions are read-only
 product guidance, refreshed on request. A route reaching its goal does not mean
 the player arrived; a required door action does not mean it is in reach.
@@ -332,8 +338,11 @@ This is a parked research track: ordinary adaptive testers do not need it.
 `run` submits source and returns immediately with a script ID. Poll `script` for
 phase, latest checkpoint, and evidence paths. Programs have a 60-second default
 wall-clock budget, configurable from 100 ms to 120 seconds, and at most 512 API
-calls. Waiting at a yield counts against that budget. Split longer evaluations
-into programs, inspecting observations between them.
+calls; engine-backend sessions may make 4096, because an `assist` act in held
+time costs milliseconds of wall time rather than the action's duration.
+Waiting at a yield counts against that budget. Split longer evaluations
+into programs, inspecting observations between them. In held time, `sleep`
+does not move the world; advance it with `assist({op: "advance", ms})`.
 
 ```js
 await controller.hold({ buttons: ["back"] }, 100);
@@ -352,6 +361,7 @@ return { finished: true };
 | `keyboard.hold(keys, ms)` | Named key chord; release afterward |
 | `input(steps)` | Same validated input batches as CLI/MCP |
 | `observe()` | Screenshot metadata/path, with frame correlation; no game-state injection |
+| `assist(request)` | Any assist operation, e.g. `assist({op: "act", id: "forward", ms: 300})`; same result as the CLI |
 | `interaction(options = {})` | Read optional product interaction facts at the reticle, or a normalized cursor point |
 | `checkpoint(label, data)` | Record progress without pausing |
 | `yieldToAgent(label, data)` | Pause until `resume SESSION --json VALUE` |

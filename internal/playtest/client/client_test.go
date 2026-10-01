@@ -391,3 +391,34 @@ func quote(value string) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
 }
+
+func TestAssistAnswersAreCompactUnlessFullDetailIsAsked(t *testing.T) {
+	arguments := map[string]json.RawMessage{"data": json.RawMessage(`{"op":"observe","detail":"full"}`)}
+	if !takeDetail(arguments) || string(arguments["data"]) != `{"op":"observe"}` {
+		t.Fatalf("detail not taken: %s", arguments["data"])
+	}
+	plain := map[string]json.RawMessage{"data": json.RawMessage(`{"op":"observe"}`)}
+	if takeDetail(plain) || string(plain["data"]) != `{"op":"observe"}` {
+		t.Fatalf("plain request changed: %s", plain["data"])
+	}
+	full := json.RawMessage(`{"accepted":true,"receipt":"/r.json","delta":{"distanceMoved":1.5},"observation":{"player":{"position":{"x":1,"y":2,"z":3}},"enemies":[1,2,3,4,5,6]},"note":"` + strings.Repeat("x", 300) + `"}`)
+	response := toolResult("assist", full)
+	compactResponse(response, full)
+	var compact map[string]any
+	if err := json.Unmarshal(response["structuredContent"].(json.RawMessage), &compact); err != nil {
+		t.Fatal(err)
+	}
+	observation := compact["observation"].(map[string]any)
+	if compact["accepted"] != true || compact["receipt"] != "/r.json" || compact["delta"].(map[string]any)["distanceMoved"] != 1.5 {
+		t.Fatalf("top-level facts lost: %v", compact)
+	}
+	if enemies := observation["enemies"].([]any); len(enemies) != 5 || enemies[4] != "+2 more" {
+		t.Fatalf("long list not summarized: %v", enemies)
+	}
+	if observation["player"].(map[string]any)["position"] != "{3 fields}" {
+		t.Fatalf("deep object not summarized: %v", observation["player"])
+	}
+	if len(compact["note"].(string)) > 250 || !strings.Contains(compact["detail"].(string), "receipt") {
+		t.Fatalf("string or detail note: %v", compact)
+	}
+}

@@ -216,6 +216,10 @@ func callMCPTool(ctx context.Context, raw json.RawMessage, service *Client) (any
 	if err := json.Unmarshal(raw, &call); err != nil {
 		return nil, &mcpError{Code: -32602, Message: "tools/call params must include name and arguments"}
 	}
+	full := false
+	if call.Name == "assist" {
+		full = takeDetail(call.Arguments)
+	}
 	command, err := mcpCommand(call.Name, call.Arguments)
 	if err != nil {
 		return nil, &mcpError{Code: -32602, Message: err.Error()}
@@ -224,7 +228,88 @@ func callMCPTool(ctx context.Context, raw json.RawMessage, service *Client) (any
 	if err != nil {
 		return toolFailure(err), nil
 	}
-	return toolResult(call.Name, result), nil
+	response := toolResult(call.Name, result)
+	if call.Name == "assist" && !full {
+		compactResponse(response, result)
+	}
+	return response, nil
+}
+
+// takeDetail removes assist's MCP-only "detail" option from the operation
+// and reports whether the full result was asked for.
+func takeDetail(arguments map[string]json.RawMessage) bool {
+	var data map[string]json.RawMessage
+	if json.Unmarshal(arguments["data"], &data) != nil || data == nil {
+		return false
+	}
+	detail, ok := data["detail"]
+	if !ok {
+		return false
+	}
+	delete(data, "detail")
+	if encoded, err := json.Marshal(data); err == nil {
+		arguments["data"] = encoded
+	}
+	return string(detail) == `"full"`
+}
+
+// compactResponse shortens an assist answer for a model: nested objects
+// beyond a few levels, long lists and long strings are summarized. The
+// service keeps the complete result at "receipt"; detail:"full" returns it.
+func compactResponse(response map[string]any, result json.RawMessage) {
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(result))
+	decoder.UseNumber()
+	if decoder.Decode(&value) != nil {
+		return
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return
+	}
+	compacted := compactValue(object, 3).(map[string]any)
+	if _, ok := object["receipt"]; ok {
+		compacted["detail"] = `compact; the full result is at receipt, or pass "detail":"full"`
+	}
+	encoded, err := json.Marshal(compacted)
+	if err != nil {
+		return
+	}
+	content := response["content"].([]any)
+	content[0] = map[string]string{"type": "text", "text": string(encoded)}
+	response["structuredContent"] = json.RawMessage(encoded)
+}
+
+func compactValue(value any, depth int) any {
+	switch v := value.(type) {
+	case map[string]any:
+		if depth == 0 {
+			return fmt.Sprintf("{%d fields}", len(v))
+		}
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			out[key] = compactValue(item, depth-1)
+		}
+		return out
+	case []any:
+		if depth == 0 {
+			return fmt.Sprintf("[%d items]", len(v))
+		}
+		limit := min(len(v), 4)
+		out := make([]any, 0, limit+1)
+		for _, item := range v[:limit] {
+			out = append(out, compactValue(item, depth-1))
+		}
+		if len(v) > limit {
+			out = append(out, fmt.Sprintf("+%d more", len(v)-limit))
+		}
+		return out
+	case string:
+		if len(v) > 240 {
+			return v[:240] + "…"
+		}
+	}
+	return value
 }
 
 func toolFailure(err error) map[string]any {
@@ -505,7 +590,7 @@ func optionalInt(values map[string]json.RawMessage, name string) (int, bool, err
 
 func mcpTools() []map[string]any {
 	return []map[string]any{
-		tool("assist", "Engine playtesting: discover, observe, targets, route {id}, action {id} timing query, act {id,ms?,capture?,world?} (capture returns the resulting image inline, named by its runtime frame/step when known; world adds the runtime's own world frame without page UI), world-frame, time {mode?:realtime|manual|action-driven}, advance {ms}, look {yaw,pitch}, drawing {mode:continuous|on-demand}, camera {camera?}, frame, survey {count:4|8}, record {ms,fps?,id?,gif?}. Missing providers are unavailable. Actions use live product timing and ordinary keyboard or pointer-button controls; look never advances time. Select held time for surveys.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Operation object; defaults to discover.")}, "session_id")),
+		tool("assist", "Engine playtesting: discover, observe, targets, route {id}, action {id} timing query, act {id,ms?,capture?,world?} (capture returns the resulting image inline, named by its runtime frame/step when known; world adds the runtime's own world frame without page UI), world-frame, time {mode?:realtime|manual|action-driven}, advance {ms}, look {yaw,pitch}, drawing {mode:continuous|on-demand}, camera {camera?}, frame, survey {count:4|8}, record {ms,fps?,id?,gif?}. Missing providers are unavailable. Actions use live product timing and ordinary keyboard or pointer-button controls; look never advances time. Select held time for surveys. Answers are compact (deep objects, long lists and strings summarized); every result is stored whole at its \"receipt\" path, and \"detail\":\"full\" in data returns it inline.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Operation object; defaults to discover.")}, "session_id")),
 		tool("browser", "Browser-only operations: inspect {selector?}, click {selector} or {x,y}, fill {selector,value}, press {key}, near {x,y,max_distance}, select {token,action?:move|click}. data.op selects the operation. Unsupported on native game sessions; actions are never silently translated to synthetic page events.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Browser operation object, including op.")}, "session_id", "data")),
 		tool("capture", "Capture original image plus comparison metadata. Optional data: label, compare_to (prior capture_id), viewpoint (caller supplied), assistance (caller supplied string array), overlay_policy (preserve only), engine_presentation (boolean override of profile presentation_observations; records separate Engine submitted camera/viewport facts). Does not establish frame freshness or visual acceptance.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Optional capture metadata and comparison options.")}, "session_id")),
 		tool("games", "List games the local playtest service can start.", properties(map[string]any{})),

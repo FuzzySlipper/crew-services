@@ -105,6 +105,7 @@ function api() {
     observe: () => call('observe', {}),
     interaction: (options = {}) => call('interaction', options),
     browser: options => call('browser', options),
+    assist: request => call('assist', request ?? { op: 'discover' }),
     capture: (options = {}) => call('capture', options),
     // Checkpoints are deliberately asynchronous notifications. They still
     // occupy the RPC queue and are flushed before the terminal record.
@@ -124,7 +125,7 @@ async function run(source) {
   try {
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
     const execute = new AsyncFunction(
-      'controller', 'keyboard', 'input', 'observe', 'interaction', 'checkpoint', 'sleep', 'yieldToAgent', 'console', 'browser', 'capture',
+      'controller', 'keyboard', 'input', 'observe', 'interaction', 'checkpoint', 'sleep', 'yieldToAgent', 'console', 'browser', 'capture', 'assist',
       source,
     )
     result = await execute(
@@ -139,6 +140,7 @@ async function run(source) {
       exposed.console,
       exposed.browser,
       exposed.capture,
+      exposed.assist,
     )
   } catch (error) {
     executionError = error
