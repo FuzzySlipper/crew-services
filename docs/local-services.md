@@ -16,6 +16,9 @@ lived in den-services only for discoverability.
 | Codex playtester skill and agent profile | `codex/skills/product-playtest`, `codex/agents/playtester.toml.template` | `scripts/install-codex-playtester.sh` links and writes them into `~/.codex` |
 | Messaging, review and Codex adapters | `cmd/crew-messaging`, `cmd/crew-review`, `cmd/crew-codex` | their own user units |
 
+Windows desktop builds are tested on a separate bare-metal box, `den-win11`
+([runbook](playtest-windows.md)); the playtest service will reach it from here.
+
 The playtest service starts a private product host per hosted session through
 den-serve's broker, so both share one port registry and one status page.
 
