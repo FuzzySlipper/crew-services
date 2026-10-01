@@ -286,7 +286,14 @@ func (a *Agent) StartInstance(ctx context.Context, product, holder string) (*Ins
 	ready, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	if err := a.probe(ready, instance.Origin, func() bool { return a.desktop.Alive(pid) }); err != nil {
-		_ = a.desktop.Stop(pid)
+		if stopErr := a.desktop.Stop(pid); stopErr != nil && a.desktop.Alive(pid) {
+			// Still running: keep it listed and recorded, and report it, so
+			// the caller can stop it again.
+			a.mu.Lock()
+			copy := *instance
+			a.mu.Unlock()
+			return &copy, fmt.Errorf("%w; log %s; stopping it failed, instance %s still running: %v", err, instance.Log, id, stopErr)
+		}
 		a.forget(id)
 		return nil, fmt.Errorf("%w; log %s", err, instance.Log)
 	}
@@ -319,7 +326,8 @@ func (a *Agent) record() {
 }
 
 // ReapLeftovers stops instances a previous agent run started and never
-// stopped. A recorded process ID now used by another program is left alone.
+// stopped. A recorded process ID now used by another program is left alone;
+// one that would not stop is kept as an instance, so it can be stopped again.
 func (a *Agent) ReapLeftovers() []string {
 	data, err := os.ReadFile(a.recordPath())
 	if err != nil {
@@ -332,12 +340,16 @@ func (a *Agent) ReapLeftovers() []string {
 	var stopped []string
 	for id, pid := range pids {
 		if a.desktop.Alive(pid) && strings.EqualFold(a.desktop.Image(pid), filepath.Base(a.config.Rusty)) {
-			if a.desktop.Stop(pid) == nil {
+			if a.desktop.Stop(pid) == nil || !a.desktop.Alive(pid) {
 				stopped = append(stopped, id)
+			} else {
+				a.mu.Lock()
+				a.instances[id] = &Instance{ID: id, PID: pid}
+				a.mu.Unlock()
 			}
 		}
 	}
-	_ = os.Remove(a.recordPath())
+	a.record()
 	return stopped
 }
 

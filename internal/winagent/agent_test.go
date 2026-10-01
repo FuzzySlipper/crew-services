@@ -22,6 +22,7 @@ type fakeDesktop struct {
 	sendErr  error
 	starting int
 	overlap  bool
+	stopErr  error
 }
 
 func (f *fakeDesktop) Start(_ string, args []string, _ string, _ []string, _ string) (int, error) {
@@ -34,6 +35,9 @@ func (f *fakeDesktop) Start(_ string, args []string, _ string, _ []string, _ str
 func (f *fakeDesktop) Stop(pid int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.stopErr != nil {
+		return f.stopErr
+	}
 	f.alive[pid] = false
 	return nil
 }
@@ -187,5 +191,29 @@ func TestARestartedAgentStopsWhatItsPreviousRunLeft(t *testing.T) {
 	}
 	if stopped := restarted.ReapLeftovers(); len(stopped) != 0 {
 		t.Fatalf("reaped twice: %v", stopped)
+	}
+}
+
+func TestAFailedStartThatWillNotStopStaysListed(t *testing.T) {
+	agent, desktop := testAgent(t)
+	agent.probe = func(context.Context, string, func() bool) error { return errors.New("host never answered") }
+	desktop.stopErr = errors.New("access denied")
+	instance, err := agent.StartInstance(context.Background(), "doom", "s1")
+	if err == nil || instance == nil || !strings.Contains(err.Error(), instance.ID) {
+		t.Fatalf("start: %v %v", instance, err)
+	}
+	if len(agent.Instances()) != 1 || !desktop.Alive(instance.PID) {
+		t.Fatalf("the running instance was forgotten: %v", agent.Instances())
+	}
+	// A restarted agent cannot stop it either, and keeps it.
+	restarted := New(agent.config, desktop)
+	if stopped := restarted.ReapLeftovers(); len(stopped) != 0 || len(restarted.Instances()) != 1 {
+		t.Fatalf("reap: %v %v", stopped, restarted.Instances())
+	}
+	desktop.mu.Lock()
+	desktop.stopErr = nil
+	desktop.mu.Unlock()
+	if err := restarted.StopInstance(instance.ID); err != nil || desktop.Alive(instance.PID) || len(restarted.Instances()) != 0 {
+		t.Fatalf("retry: %v alive %v", err, desktop.Alive(instance.PID))
 	}
 }

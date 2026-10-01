@@ -139,11 +139,16 @@ func (l *Launcher) Launch(ctx context.Context, id string, p session.Profile) (ma
 	}
 	agent := NewAgent(p.Windows.Agent)
 	instance, err := agent.Start(ctx, p.Windows.Product, id)
-	if err != nil {
-		return nil, fmt.Errorf("start %s on the Windows box: %w", p.Windows.Product, err)
-	}
 	host := map[string]any{"windows_agent": agent.Origin, "windows_instance": instance.ID, "port": instance.Port,
 		"origin": instance.Origin, "pid": instance.PID, "log": instance.Log}
+	if err != nil {
+		err = fmt.Errorf("start %s on the Windows box: %w", p.Windows.Product, err)
+		if instance.ID != "" {
+			// The agent could not stop what it started: the session owns it.
+			return map[string]any{"host": host}, err
+		}
+		return nil, err
+	}
 	windows := *p.Windows
 	windows.Instance = instance.ID
 	p.Windows, p.URL = &windows, instance.Origin+"/"

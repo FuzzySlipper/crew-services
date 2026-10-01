@@ -18,6 +18,8 @@ type fakeAgent struct {
 	stopped []string
 	leases  int
 	busy    bool
+	// stuck: the instance failed to start and the agent could not stop it.
+	stuck bool
 }
 
 func (f *fakeAgent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -28,8 +30,19 @@ func (f *fakeAgent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Product, Holder string }
 		json.NewDecoder(r.Body).Decode(&body)
 		f.started = append(f.started, body.Holder)
-		json.NewEncoder(w).Encode(Instance{ID: body.Product + "-1", Port: 48310, Origin: "http://192.168.1.12:48310", PID: 7})
+		instance := Instance{ID: body.Product + "-1", Port: 48310, Origin: "http://192.168.1.12:48310", PID: 7}
+		if f.stuck {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]any{"error": "host exited; stopping it failed", "result": instance})
+			return
+		}
+		json.NewEncoder(w).Encode(instance)
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/instances/"):
+		if f.stuck {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]any{"error": "taskkill: access denied", "result": map[string]bool{"stopped": false}})
+			return
+		}
 		f.stopped = append(f.stopped, strings.TrimPrefix(r.URL.Path, "/v1/instances/"))
 		json.NewEncoder(w).Encode(map[string]bool{"stopped": true})
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/lease":
@@ -77,6 +90,32 @@ func TestWindowsSessionsStartAndStopTheirOwnInstance(t *testing.T) {
 	receipt, err := l.ReleaseHost(context.Background(), "session-1", p, launched["host"].(map[string]any))
 	if err != nil || receipt["stopped"] != true || fake.stopped[0] != "doom-1" {
 		t.Fatalf("release: %v %v %v", receipt, err, fake.stopped)
+	}
+}
+
+func TestAFailedStartTheAgentCouldNotStopStaysTheSessions(t *testing.T) {
+	fake := &fakeAgent{stuck: true}
+	server := httptest.NewServer(fake)
+	defer server.Close()
+	inner := &recorder{}
+	l := &Launcher{Inner: inner}
+	p := session.Profile{ID: "doom-win", Backend: "engine", Environment: "windows-desktop", Windows: &session.WindowsSpec{Agent: server.URL, Product: "doom"}}
+	launched, err := l.Launch(context.Background(), "session-1", p)
+	if err == nil || inner.profile.ID != "" {
+		t.Fatalf("a failed start succeeded or connected: %v %+v", err, inner.profile)
+	}
+	host, _ := launched["host"].(map[string]any)
+	if host["windows_instance"] != "doom-1" {
+		t.Fatalf("the running instance was not reported: %v", launched)
+	}
+	if _, err := l.ReleaseHost(context.Background(), "session-1", p, host); err == nil {
+		t.Fatal("a failed stop was reported as stopped")
+	}
+	fake.mu.Lock()
+	fake.stuck = false
+	fake.mu.Unlock()
+	if receipt, err := l.ReleaseHost(context.Background(), "session-1", p, host); err != nil || receipt["stopped"] != true {
+		t.Fatalf("retry: %v %v", receipt, err)
 	}
 }
 
