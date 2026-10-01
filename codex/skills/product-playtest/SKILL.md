@@ -80,7 +80,8 @@ schemas rather than assuming a tool-name prefix or a fixed tool count.
   bindings, not the page's input capture (DOM focus, menus, text entry,
   pointer lock). Use a browser profile for those.
 - `environment: "windows-desktop"` runs that backend against a native Windows
-  build on the Windows box (profile `rusty-doom-windows`): `assist window`
+  build on the Windows box (profiles `rusty-rifles-windows`,
+  `rusty-doom-windows`): `assist window`
   captures the window with its UI, and `assist os-input` sends real
   keyboard/mouse input under the box's single foreground lease (click first
   for pointer lock; `foreground_busy` means wait). A lane's first start builds

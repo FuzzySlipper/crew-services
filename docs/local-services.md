@@ -17,7 +17,9 @@ lived in den-services only for discoverability.
 | Messaging, review and Codex adapters | `cmd/crew-messaging`, `cmd/crew-review`, `cmd/crew-codex` | their own user units |
 
 Windows desktop builds are tested on a separate bare-metal box, `den-win11`
-([runbook](playtest-windows.md)); the playtest service will reach it from here.
+([runbook](playtest-windows.md)); the playtest service reaches its agent from
+here. The `rusty-windows-pairs` user timer builds win-x64 archives on it for
+each new Latest Engine pair.
 
 The playtest API listens on `127.0.0.1:48200`, inside Linux's ephemeral port
 range. A client that polls another local service can be handed 48200 as its

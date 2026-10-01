@@ -135,9 +135,14 @@ for them.
 
 ## Profiles
 
+| Profile | Product on the box |
+| --- | --- |
+| `rusty-rifles-windows` | Rusty Rifles, on the Engine pair it pins; 2 at once |
+| `rusty-doom-windows` | Doom's room study, on a runtime pack built at its pin; 3 at once |
+
 ```json
-{"id": "rusty-doom-windows", "backend": "engine", "environment": "windows-desktop",
- "windows": {"agent": "http://192.168.1.12:48300", "product": "rusty-doom-room-study"},
+{"id": "rusty-rifles-windows", "backend": "engine", "environment": "windows-desktop",
+ "windows": {"agent": "http://192.168.1.12:48300", "product": "rusty-rifles"},
  "description": "...", "controls": {}, "reset": "Every start and recover starts a fresh instance."}
 ```
 
@@ -159,7 +164,17 @@ instance serves its product host on the box's LAN address from
   elevated. It keeps an existing `agent.json`, adds the tool paths instances
   need, opens the firewall and registers the `crew-playtest-agent` logon task.
 - **Products** in `agent.json` name a checkout and C# project; instances run
-  `rusty dev --output window` with the configured runtime pack.
+  `rusty dev --output window`.
+- **Engine versions.** A product runs on the Engine pair its
+  `Directory.Build.props` pins: each start runs `rusty install` in its lane
+  (a no-op once cached), and `rusty dev` downloads the pair's win-x64
+  desktop pack. That needs a pair with win-x64 archives (Engine
+  `docs/csharp-distribution.md`). A product's `runtime` instead names a
+  runtime pack to run; Doom's room study uses one built at its older pin,
+  kept under `C:\Users\agent\crew\runtimes`. `rusty` is
+  `C:\Users\agent\crew\bin\rusty.exe`, copied from a pair's runtime pack;
+  it hands each command to the product's pinned pair. Neither lives in the
+  Engine checkout, which publish builds rewrite.
 - **Lanes.** `rusty dev` stages the product into its checkout, and Windows
   cannot replace files a running host holds open, so two instances from one
   checkout collide. A product's `lanes` (3 for Doom) lets that many run at
@@ -172,6 +187,25 @@ instance serves its product host on the box's LAN address from
   `DELETE /v1/instances/{id}`, `GET /v1/instances/{id}/window.png`,
   `POST /v1/lease {holder, instance, ttl_ms}`, `POST /v1/lease/{id}/input
   {steps}`, `DELETE /v1/lease/{id}`.
+
+## Adding a game
+
+1. **Pin a pair with win-x64 archives.** `rusty status` in the product shows
+   its pin; the release's assets show whether it has
+   `...-win-x64.tar.gz`. Move an older pin with `rusty update` and run the
+   product's own checks on Linux first.
+2. **Clone it on the box** (public repositories over HTTPS) into `C:\dev`,
+   then run `rusty install` and, when it has `pnpm-lock.yaml`,
+   `pnpm install` in it.
+3. **Add the product** to `C:\Users\agent\crew\bin\agent.json` (`repo`,
+   `project`, `lanes`) and restart the agent:
+   `Stop-ScheduledTask crew-playtest-agent; Start-ScheduledTask crew-playtest-agent`.
+4. **Add a profile** to den-agents' `~/.config/crew-playtest/games.json` as
+   above, then reinstall or restart the playtest service.
+5. **Check it:** `playtest start PROFILE`, `assist discover`, an `act` and
+   `assist window`, then `stop`.
+
+A lane's first start builds the product, which takes a few minutes.
 
 ## Building Engine on the box
 
@@ -186,7 +220,11 @@ environment, with MSVC's directory ahead of Git's own `link` on `PATH`.
 - **Published pairs:** Engine's `scripts/publish-windows-pair-packs.sh --host
   den-win11 --checkout C:/dev/rusty-engine` builds a published pair's win-x64
   archives here and adds them to its release (Engine
-  `docs/csharp-distribution.md`).
+  `docs/csharp-distribution.md`). The `rusty-windows-pairs` user timer on
+  den-agents (`scripts/install-windows-pair-publisher.sh`) runs it with
+  `--if-missing` every 30 minutes, so each new Latest pair gets them within
+  the hour; `journalctl --user -u rusty-windows-pairs` shows its runs. A
+  build takes a few minutes of the box's CPU while sessions run.
 - **Gotchas:** PowerShell 5.1 reads BOM-less scripts as ANSI, so keep copied
   scripts ASCII. MSBuild reuse nodes and the Nx daemon outlive a build and keep
   its redirected log open; instances set `MSBUILDDISABLENODEREUSE=1` and
