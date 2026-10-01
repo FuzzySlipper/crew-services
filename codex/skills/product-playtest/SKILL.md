@@ -79,6 +79,10 @@ schemas rather than assuming a tool-name prefix or a fixed tool count.
   simulation step, without product UI or HUD; its input tests the product's
   bindings, not the page's input capture (DOM focus, menus, text entry,
   pointer lock). Use a browser profile for those.
+- `environment: "windows-desktop"` runs that backend against a native Windows
+  build on the Windows box: `assist window` captures the window with its UI,
+  and `assist os-input` sends real keyboard/mouse input under the box's single
+  foreground lease (click first for pointer lock; `foreground_busy` means wait).
 - Read returned capabilities and report unsupported operations explicitly.
   Do not substitute one input type and call the evidence equivalent.
 

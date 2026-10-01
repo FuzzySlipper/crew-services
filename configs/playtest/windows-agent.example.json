@@ -1,0 +1,22 @@
+{
+  "listen": "192.168.1.12:48300",
+  "bind_host": "192.168.1.12",
+  "first_port": 48310,
+  "last_port": 48339,
+  "rusty": "C:\\dev\\rusty-engine\\target\\runtime-pack\\win-x64\\bin\\rusty.exe",
+  "runtime": "C:\\dev\\rusty-engine\\target\\runtime-pack\\win-x64",
+  "logs": "C:\\Users\\agent\\crew\\agent-logs",
+  "env": {
+    "MSBUILDDISABLENODEREUSE": "1",
+    "DOTNET_CLI_USE_MSBUILD_SERVER": "0",
+    "UseSharedCompilation": "false",
+    "NX_DAEMON": "false"
+  },
+  "products": {
+    "rusty-doom-room-study": {
+      "repo": "C:\\dev\\rusty-doom",
+      "project": "csharp\\LoadingBay.RoomStudy\\LoadingBay.RoomStudy.csproj",
+      "lanes": 3
+    }
+  }
+}

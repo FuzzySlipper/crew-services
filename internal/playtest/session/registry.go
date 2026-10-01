@@ -28,7 +28,16 @@ func ValidateProfiles(profiles []Profile) error {
 		if strings.TrimSpace(p.ID) == "" {
 			return errors.New("each game profile requires a nonempty id")
 		}
-		if p.Host != nil {
+		if p.Windows != nil {
+			if p.Environment != "windows-desktop" || p.Backend != "engine" {
+				return fmt.Errorf("game profile %q windows needs backend engine and environment windows-desktop", p.ID)
+			}
+			if strings.TrimSpace(p.Windows.Agent) == "" || strings.TrimSpace(p.Windows.Product) == "" || p.Host != nil || strings.TrimSpace(p.URL) != "" {
+				return fmt.Errorf("game profile %q windows needs agent and product, and no url or host", p.ID)
+			}
+		} else if p.Environment == "windows-desktop" {
+			return fmt.Errorf("game profile %q environment windows-desktop needs a windows agent and product", p.ID)
+		} else if p.Host != nil {
 			if strings.TrimSpace(p.Host.Repo) == "" {
 				return fmt.Errorf("game profile %q host requires repo", p.ID)
 			}
@@ -91,6 +100,10 @@ func copyProfile(p Profile) Profile {
 	if p.Host != nil {
 		host := *p.Host
 		p.Host = &host
+	}
+	if p.Windows != nil {
+		windows := *p.Windows
+		p.Windows = &windows
 	}
 	return p
 }

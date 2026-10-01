@@ -301,6 +301,12 @@ frame is taken at an exact step.
 The product must register Engine's `PlaytestDebugModule` for `observe`,
 `action` and `act`; Doom's Loading Bay does so only in its room-study build.
 
+`"environment": "windows-desktop"` runs the same backend against a native
+Windows build on the Windows playtest box: each session's instance is its own
+window there, `assist window` captures it with the product UI, and `assist
+os-input` sends real keyboard and mouse input under the box's one foreground
+lease. See [Windows playtest box](playtest-windows.md#two-tiers-of-input).
+
 ## Agent entry point
 
 ```sh

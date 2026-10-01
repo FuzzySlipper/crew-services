@@ -1,8 +1,9 @@
 # Windows playtest box
 
 Agents test Windows desktop builds of Engine products on a bare-metal Windows
-machine (task #8884). This page is the machine runbook; the Windows agent and
-the playtest service's `windows-desktop` environment are described as they land.
+machine (task #8884): products run in native DX12 windows, the playtest
+service drives them over the LAN, and the box's one foreground is lent out for
+real keyboard and mouse input.
 
 ## The box
 
@@ -106,3 +107,88 @@ Start-ScheduledTask crew-job
 
 Give the action an absolute path. A failing script reports only an opaque
 `LastTaskResult`, so write a transcript from it.
+
+## Two tiers of input
+
+Windows has one foreground window, and OS input (`SendInput`) reaches only
+it. So sessions share the box in two tiers:
+
+- **Engine tier (concurrent).** Each session has its own product instance
+  and drives it like the `engine` backend does on Linux: live-debug, a
+  labelled input claim (`assist act`, `input`) and step-named world captures
+  (`world-frame`). None of it needs focus, so several sessions run side by
+  side. This tests the product's bindings and simulation, not Windows input.
+- **OS tier (one at a time).** `assist {"op":"os-input","steps":[...]}`
+  borrows the foreground: the agent leases it to the session, brings the
+  window to the front with the cursor over it, sends the steps through
+  `SendInput` (keys as scan codes, relative mouse motion, clicks), and ends the
+  lease, lifting anything still held. This tests Windows focus, the desktop
+  shell's input path, pointer lock and the page's input capture. Click first
+  to take a product's pointer lock. A busy foreground answers
+  `foreground_busy`; nothing was sent, so try again later.
+- `assist {"op":"window"}` captures the window as Windows composes it, world
+  and product UI together, without focus.
+
+Receipts carry `tier` and `input_layers`. Engine-tier sessions stay in held
+time, so another session holding the foreground for a while changes nothing
+for them.
+
+## Profiles
+
+```json
+{"id": "rusty-doom-windows", "backend": "engine", "environment": "windows-desktop",
+ "windows": {"agent": "http://192.168.1.12:48300", "product": "rusty-doom-room-study"},
+ "description": "...", "controls": {}, "reset": "Every start and recover starts a fresh instance."}
+```
+
+`start` asks the agent for a fresh instance (its own window, port and lane),
+`stop` and `recover` end it, and a failed start stops what it started. The
+session's `launch.host` names the instance and its log on the box.
+
+## The Windows agent
+
+`playtest-windows-agent` (`cmd/playtest-windows-agent`) runs at logon inside
+the console session; a session-0 service could not open windows, capture
+them or send input. It listens on the LAN (`192.168.1.12:48300`), and each
+instance serves its product host on the box's LAN address from
+48310–48339. The firewall admits both from the local subnet only.
+
+- **Install or update:** build `GOOS=windows go build ./cmd/playtest-windows-agent`,
+  copy it with `scripts/windows/install-agent.ps1` and
+  `configs/playtest/windows-agent.example.json` to the box, and run the script
+  elevated. It keeps an existing `agent.json`, adds the tool paths instances
+  need, opens the firewall and registers the `crew-playtest-agent` logon task.
+- **Products** in `agent.json` name a checkout and C# project; instances run
+  `rusty dev --output window` with the configured runtime pack.
+- **Lanes.** `rusty dev` stages the product into its checkout, and Windows
+  cannot replace files a running host holds open, so two instances from one
+  checkout collide. A product's `lanes` (3 for Doom) lets that many run at
+  once: lane 1 is the checkout, the others are worktrees beside it
+  (`C:\dev\rusty-doom-lane2`, ...), moved to the checkout's HEAD and given
+  `pnpm install` at each start. A lane's first start builds the product.
+- **Restarts.** The agent records its instances and stops leftovers from a
+  previous run at startup.
+- **API** (JSON): `GET /v1/status`, `POST /v1/instances {product, holder}`,
+  `DELETE /v1/instances/{id}`, `GET /v1/instances/{id}/window.png`,
+  `POST /v1/lease {holder, instance, ttl_ms}`, `POST /v1/lease/{id}/input
+  {steps}`, `DELETE /v1/lease/{id}`.
+
+## Building Engine on the box
+
+The box has the MSVC build tools, Git, Rust (MSVC), .NET 10, Node 22 with
+pnpm, cmake, ninja and jq, installed with winget. The Engine checkout is
+`C:\dev\rusty-engine`. Builds run in Git Bash inside `vcvars64.bat`'s
+environment, with MSVC's directory ahead of Git's own `link` on `PATH`.
+
+- **Runtime packs:** `scripts/build-runtime-pack.sh --desktop` builds
+  `target/runtime-pack/win-x64`. A product runs against a pack only when its
+  SDK pin is the pack's revision (`CSHARP_PRODUCT_ABI_MISMATCH` otherwise).
+- **Published pairs:** Engine's `scripts/publish-windows-pair-packs.sh --host
+  den-win11 --checkout C:/dev/rusty-engine` builds a published pair's win-x64
+  archives here and adds them to its release (Engine
+  `docs/csharp-distribution.md`).
+- **Gotchas:** PowerShell 5.1 reads BOM-less scripts as ANSI, so keep copied
+  scripts ASCII. MSBuild reuse nodes and the Nx daemon outlive a build and keep
+  its redirected log open; instances set `MSBUILDDISABLENODEREUSE=1` and
+  `NX_DAEMON=false`. `HOME` is set for the agent user, since products' pin
+  files find the pair cache under `$(HOME)/.cache/rusty-engine`.

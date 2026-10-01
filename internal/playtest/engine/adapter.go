@@ -13,6 +13,7 @@ import (
 
 	"crew-services/internal/playtest/evidence"
 	"crew-services/internal/playtest/session"
+	"crew-services/internal/playtest/windesk"
 	"github.com/google/uuid"
 )
 
@@ -52,6 +53,14 @@ type Adapter struct {
 	input       *claim
 	unavailable string
 	closed      bool
+	// windows is the session's instance on the Windows box, when it runs there.
+	windows *windowsInstance
+}
+
+type windowsInstance struct {
+	agent    *windesk.Agent
+	instance string
+	holder   string
 }
 
 func New(config Config) (*Adapter, error) {
@@ -68,8 +77,8 @@ func New(config Config) (*Adapter, error) {
 }
 
 func (a *Adapter) SelectProfile(profile session.Profile) error {
-	if profile.Host == nil && strings.TrimSpace(profile.URL) == "" {
-		return errors.New("engine profile needs a host or a url")
+	if profile.Host == nil && profile.Windows == nil && strings.TrimSpace(profile.URL) == "" {
+		return errors.New("engine profile needs a host, a windows instance or a url")
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -115,7 +124,10 @@ func (a *Adapter) Launch(ctx context.Context, leaseID string, profile session.Pr
 		return nil, errors.New("this adapter does not own that engine lease")
 	}
 	sameHost := (a.profile.Host == nil) == (profile.Host == nil) && (a.profile.Host == nil || *a.profile.Host == *profile.Host)
-	if profile.ID != a.profile.ID || !sameHost || (profile.Host == nil && profile.URL != a.profile.URL) {
+	sameWindows := (a.profile.Windows == nil) == (profile.Windows == nil) &&
+		(a.profile.Windows == nil || a.profile.Windows.Agent == profile.Windows.Agent && a.profile.Windows.Product == profile.Windows.Product)
+	ownHost := profile.Host != nil || profile.Windows != nil
+	if profile.ID != a.profile.ID || !sameHost || !sameWindows || (!ownHost && profile.URL != a.profile.URL) {
 		a.mu.Unlock()
 		return nil, errors.New("engine profile changed after acquisition")
 	}
@@ -124,7 +136,10 @@ func (a *Adapter) Launch(ctx context.Context, leaseID string, profile session.Pr
 		a.mu.Unlock()
 		return nil, err
 	}
-	a.profile.URL, a.host = profile.URL, host
+	a.profile.URL, a.host, a.windows = profile.URL, host, nil
+	if profile.Windows != nil {
+		a.windows = &windowsInstance{agent: windesk.NewAgent(profile.Windows.Agent), instance: profile.Windows.Instance, holder: a.config.Label}
+	}
 	a.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -229,7 +244,10 @@ func (a *Adapter) Browser(ctx context.Context, leaseID string, raw json.RawMessa
 	}
 	a.opMu.Lock()
 	defer a.opMu.Unlock()
-	return (&runner{host: host, directory: directory, input: a.claimFor(host)}).run(ctx, op)
+	a.mu.Lock()
+	windows := a.windows
+	a.mu.Unlock()
+	return (&runner{host: host, directory: directory, input: a.claimFor(host), windows: windows}).run(ctx, op)
 }
 
 // Input delivers raw hold/move/click/wait/gamepad steps under the harness's
@@ -315,7 +333,7 @@ func (a *Adapter) Release(ctx context.Context, leaseID string) (map[string]any, 
 	}
 	a.mu.Lock()
 	if a.leaseID == leaseID {
-		a.leaseID, a.directory, a.host, a.input, a.unavailable = "", "", nil, nil, ""
+		a.leaseID, a.directory, a.host, a.input, a.unavailable, a.windows = "", "", nil, nil, "", nil
 	}
 	a.mu.Unlock()
 	return receipt, nil

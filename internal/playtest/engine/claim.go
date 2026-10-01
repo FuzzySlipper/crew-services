@@ -352,10 +352,10 @@ func (c *claim) steps(ctx context.Context, steps []map[string]any) (map[string]a
 		case "move":
 			press = []fact{{"kind": "pointer-delta", "x": number(step["dx"]), "y": number(step["dy"])}}
 		case "click":
-			button, _ := step["button"].(string)
-			wire := map[string]string{"": "primary", "left": "primary", "right": "secondary", "middle": "middle"}[button]
+			// Batches number buttons 1 left, 2 middle, 3 right (default 1).
+			wire := map[int]string{0: "primary", 1: "primary", 2: "middle", 3: "secondary"}[number(step["button"])]
 			if wire == "" {
-				return fail(fmt.Errorf("click button %q is not left, right or middle", button))
+				return fail(fmt.Errorf("click button %v is not 1..3", step["button"]))
 			}
 			press = []fact{{"kind": "pointer-button", "button": wire, "edge": "pressed"}}
 		case "gamepad":

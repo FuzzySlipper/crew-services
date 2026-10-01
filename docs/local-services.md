@@ -19,6 +19,13 @@ lived in den-services only for discoverability.
 Windows desktop builds are tested on a separate bare-metal box, `den-win11`
 ([runbook](playtest-windows.md)); the playtest service will reach it from here.
 
+The playtest API listens on `127.0.0.1:48200`, inside Linux's ephemeral port
+range. A client that polls another local service can be handed 48200 as its
+source port, and its TIME-WAIT then blocks the playtest service from binding
+on restart. `/etc/sysctl.d/60-crew-services-ports.conf` reserves it
+(`net.ipv4.ip_local_reserved_ports = 48200`); den-serve's instance range
+(30300–30450) is below the ephemeral range.
+
 The playtest service starts a private product host per hosted session through
 den-serve's broker, so both share one port registry and one status page.
 

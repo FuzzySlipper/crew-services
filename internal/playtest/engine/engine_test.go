@@ -346,3 +346,17 @@ func TestParseFrame(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestRawClicksUseTheBatchButtonNumbers(t *testing.T) {
+	fake, host := startFake(t)
+	c := &claim{host: host, label: "crew-test"}
+	defer c.release(context.Background())
+	if _, err := c.steps(context.Background(), []map[string]any{{"kind": "click", "button": 3, "ms": 0}}); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if button := fake.events[0]["fact"].(map[string]any)["button"]; button != "secondary" {
+		t.Fatalf("button 3 sent as %v", button)
+	}
+}

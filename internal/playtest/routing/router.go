@@ -26,7 +26,12 @@ func (r *Router) SelectProfile(p session.Profile) error {
 	if name == "" {
 		name = "browser"
 	}
-	if p.Environment != "" && p.Environment != "service" {
+	// windows-desktop runs on the Windows box through its agent; the engine
+	// backend drives it over the LAN from this service.
+	if p.Environment == "windows-desktop" && name != "engine" {
+		return fmt.Errorf("environment windows-desktop needs backend engine, not %q", name)
+	}
+	if p.Environment != "" && p.Environment != "service" && p.Environment != "windows-desktop" {
 		return fmt.Errorf("unsupported environment %q for backend %q; configure a service on that execution host", p.Environment, name)
 	}
 	r.mu.Lock()

@@ -167,7 +167,7 @@ func (s *Service) Start(ctx context.Context, game, previous string) (any, error)
 		return nil, err
 	}
 	timeout := 90 * time.Second
-	if p.Host != nil {
+	if p.Host != nil || p.Windows != nil {
 		// Includes building and staging the product host.
 		timeout = hostedStartTimeout
 	}
@@ -482,7 +482,7 @@ const hostedStartTimeout = 5 * time.Minute
 // have nothing to release.
 func (s *Service) releaseHost(ctx context.Context, id string, p Profile, host map[string]any) (map[string]any, error) {
 	releaser, ok := s.launcher.(HostReleaser)
-	if !ok || p.Host == nil {
+	if !ok || (p.Host == nil && p.Windows == nil) {
 		return nil, nil
 	}
 	return releaser.ReleaseHost(ctx, id, p, host)

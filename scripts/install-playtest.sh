@@ -67,3 +67,9 @@ UNIT
 systemctl --user daemon-reload
 systemctl --user enable crew-playtest.service
 systemctl --user restart crew-playtest.service
+# The port sits in Linux's ephemeral range; a client handed it as a source
+# port blocks the service's bind (docs/local-services.md).
+port=${listen##*:}
+if ! tr ',' '\n' < /proc/sys/net/ipv4/ip_local_reserved_ports | grep -qx "$port"; then
+  echo "warning: port $port is not in net.ipv4.ip_local_reserved_ports; see docs/local-services.md" >&2
+fi

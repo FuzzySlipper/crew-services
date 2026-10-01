@@ -140,3 +140,40 @@ func TestHostProfilesAreValidated(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWindowsProfilesAreValidated(t *testing.T) {
+	ok := Profile{ID: "w", Backend: "engine", Environment: "windows-desktop", Windows: &WindowsSpec{Agent: "http://192.168.1.12:48300", Product: "doom"}}
+	if err := ValidateProfiles([]Profile{ok}); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []Profile{
+		{ID: "w", Backend: "browser", Environment: "windows-desktop", Windows: ok.Windows},
+		{ID: "w", Backend: "engine", Environment: "windows-desktop"},
+		{ID: "w", Backend: "engine", Environment: "windows-desktop", Windows: &WindowsSpec{Agent: "http://a"}},
+		{ID: "w", Backend: "engine", Environment: "windows-desktop", Windows: ok.Windows, URL: "http://x/"},
+	} {
+		if err := ValidateProfiles([]Profile{bad}); err == nil {
+			t.Fatalf("accepted %+v", bad)
+		}
+	}
+}
+
+func TestWindowsSessionsReleaseTheirInstanceOnStop(t *testing.T) {
+	launcher := &hostingLauncher{}
+	worker, err := filepath.Abs("../scriptworker/worker.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := []Profile{{ID: "win", Backend: "engine", Environment: "windows-desktop", Windows: &WindowsSpec{Agent: "http://192.168.1.12:48300", Product: "doom"}}}
+	s, err := New(&fakeBackend{}, launcher, profiles, t.TempDir(), worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := s.Start(context.Background(), "win", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Stop(context.Background(), value.(*Session).ID); err != nil || len(launcher.released) != 1 {
+		t.Fatalf("windows instance not released: %v %v", err, launcher.released)
+	}
+}

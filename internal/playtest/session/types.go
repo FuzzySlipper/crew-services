@@ -25,6 +25,7 @@ type Profile struct {
 	Description              string            `json:"description"`
 	URL                      string            `json:"url,omitempty"`
 	Host                     *HostSpec         `json:"host,omitempty"`
+	Windows                  *WindowsSpec      `json:"windows,omitempty"`
 	WindowTitle              string            `json:"window_title,omitempty"`
 	Controls                 map[string]string `json:"controls"`
 	Reset                    string            `json:"reset"`
@@ -38,6 +39,16 @@ type HostSpec struct {
 	Manifest string `json:"manifest,omitempty"`
 	// Path is appended to the host's loopback origin; default "/".
 	Path string `json:"path,omitempty"`
+}
+
+// WindowsSpec runs each session's product instance on the Windows playtest
+// box through its agent (environment "windows-desktop"). Agent is the agent's
+// origin and Product one of its configured products. Instance is set per
+// session when the agent starts it.
+type WindowsSpec struct {
+	Agent    string `json:"agent"`
+	Product  string `json:"product"`
+	Instance string `json:"instance,omitempty"`
 }
 
 // HostReleaser stops a session-owned product host after the backend is

@@ -9,6 +9,7 @@ import (
 	"crew-services/internal/playtest/hosting"
 	"crew-services/internal/playtest/routing"
 	"crew-services/internal/playtest/session"
+	"crew-services/internal/playtest/windesk"
 )
 
 // Immutable startup settings. Reload never opens machine configuration again.
@@ -50,7 +51,7 @@ func (b slotBuilder) create(index int) (*session.Service, func(), error) {
 	}
 	releases = append(releases, func() { direct.Close() })
 	router.Entries["engine"] = routing.Entry{Backend: direct, Launcher: direct}
-	launcher := &hosting.Launcher{Inner: router, Hosts: b.hosts, Manifest: b.manifest, Locks: b.locks}
+	launcher := &windesk.Launcher{Inner: &hosting.Launcher{Inner: router, Hosts: b.hosts, Manifest: b.manifest, Locks: b.locks}}
 	service, err := session.NewWithRegistry(router, launcher, b.registry, state, b.worker)
 	if err != nil {
 		cleanup()

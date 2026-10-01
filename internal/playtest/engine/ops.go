@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"crew-services/internal/playtest/evidence"
+	"crew-services/internal/playtest/input"
 	"github.com/google/uuid"
 )
 
@@ -45,12 +46,15 @@ type Request struct {
 	GIF     bool `json:"gif,omitempty"`
 	Width   int  `json:"width,omitempty"`
 	Height  int  `json:"height,omitempty"`
+	// Steps are OS-tier input for os-input (Windows instances).
+	Steps []map[string]any `json:"steps,omitempty"`
 }
 
 type runner struct {
 	host      *Host
 	directory string
 	input     *claim
+	windows   *windowsInstance
 }
 
 var identifier = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -142,12 +146,52 @@ func (r *runner) run(ctx context.Context, q Request) (map[string]any, error) {
 		return r.withCapture(ctx, q, func() (map[string]any, error) { return r.act(ctx, q.ID, q.MS, nil, nil, 2000) })
 	case "jump":
 		return r.withCapture(ctx, q, func() (map[string]any, error) { return r.jump(ctx, q) })
+	case "window":
+		return r.window(ctx)
+	case "os-input":
+		return r.osInput(ctx, q.Steps)
 	case "survey":
 		return r.survey(ctx, q)
 	case "record":
 		return r.record(ctx, q)
 	}
 	return nil, fmt.Errorf("unknown assist operation %q", q.Op)
+}
+
+// window captures the instance window on the Windows box as Windows composes
+// it: the world with the product UI and HUD over it.
+func (r *runner) window(ctx context.Context) (map[string]any, error) {
+	if r.windows == nil {
+		return nil, errors.New("capability_unavailable: window capture needs a windows-desktop session")
+	}
+	png, err := r.windows.agent.Window(ctx, r.windows.instance)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(r.directory, "window-"+uuid.NewString()[:8]+".png")
+	if err := evidence.WriteFileAtomic(path, png); err != nil {
+		return nil, err
+	}
+	return map[string]any{"path": path, "source": "Windows window capture: world and product UI as composed on the desktop",
+		"frameCorrelation": "not measured; capture world-frame for a step-named image"}, nil
+}
+
+// osInput sends OS input (SendInput) to the instance window under the box's
+// foreground lease: Windows focus, the desktop shell's input path, pointer
+// lock and the page's input capture, as a person's keyboard and mouse would.
+func (r *runner) osInput(ctx context.Context, steps []map[string]any) (map[string]any, error) {
+	if r.windows == nil {
+		return nil, errors.New("capability_unavailable: os-input needs a windows-desktop session")
+	}
+	if err := input.ValidateBatch(steps); err != nil {
+		return nil, err
+	}
+	receipt, err := r.windows.agent.OSInput(ctx, r.windows.holder, r.windows.instance, steps)
+	if receipt == nil {
+		receipt = map[string]any{}
+	}
+	receipt["productAcceptance"] = "unavailable; observe the effect"
+	return receipt, err
 }
 
 func (r *runner) discover(ctx context.Context) (map[string]any, error) {
@@ -167,6 +211,9 @@ func (r *runner) discover(ctx context.Context) (map[string]any, error) {
 	}
 	if has["playtest.jump-plan"] {
 		operations = append(operations, "jump")
+	}
+	if r.windows != nil {
+		operations = append(operations, "window", "os-input")
 	}
 	result := map[string]any{"backend": "engine", "commands": names, "nativeCommands": names, "operations": operations,
 		"commandNote": "nativeCommands are debug catalog names, not assist operations; act/jump/survey/record are harness compositions",
