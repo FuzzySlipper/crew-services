@@ -360,3 +360,34 @@ func TestRawClicksUseTheBatchButtonNumbers(t *testing.T) {
 		t.Fatalf("button 3 sent as %v", button)
 	}
 }
+
+func TestCancellingAGamepadStepLetsGoOfSticksTriggersAndButtons(t *testing.T) {
+	fake, host := startFake(t)
+	c := &claim{host: host, label: "crew-test"}
+	defer c.release(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	step := map[string]any{"kind": "gamepad", "buttons": []any{"a"}, "lx": 1.0, "rt": 0.5, "ms": 5000}
+	if _, err := c.steps(ctx, []map[string]any{step}); err == nil {
+		t.Fatal("a cancelled step reported success")
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	last := map[string]map[string]any{}
+	for _, event := range fake.events {
+		f := event["fact"].(map[string]any)
+		last[fmt.Sprint(f["kind"], f["axis"], f["button"])] = f
+	}
+	if f := last["controller-axisaxis-0<nil>"]; f == nil || real(f["value"]) != 0 {
+		t.Fatalf("left stick left at %v (%v)", f, fake.events)
+	}
+	if f := last["controller-button-value<nil>button-7"]; f == nil || real(f["value"]) != 0 {
+		t.Fatalf("right trigger left at %v (%v)", f, fake.events)
+	}
+	if f := last["controller-button<nil>button-0"]; f == nil || f["edge"] != "released" {
+		t.Fatalf("A left held: %v (%v)", f, fake.events)
+	}
+	if len(c.held) != 0 {
+		t.Fatalf("claim still holds %v", c.held)
+	}
+}

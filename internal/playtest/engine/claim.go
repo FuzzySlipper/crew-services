@@ -187,12 +187,7 @@ func (c *claim) releaseHeld(ctx context.Context) error {
 	}
 	var facts []fact
 	for _, f := range c.held {
-		released := fact{}
-		for k, v := range f {
-			released[k] = v
-		}
-		released["edge"] = "released"
-		facts = append(facts, released)
+		facts = append(facts, lifted(f))
 	}
 	_, err := c.send(ctx, facts)
 	return err
@@ -222,6 +217,8 @@ func (c *claim) release(ctx context.Context) (map[string]any, error) {
 	return map[string]any{"released": true, "binding": result.Binding}, nil
 }
 
+// heldID names a control a fact holds or lets go of. Sticks and triggers
+// count as held while their value is not zero.
 func heldID(f fact) (string, string) {
 	edge, _ := f["edge"].(string)
 	switch f["kind"] {
@@ -229,8 +226,30 @@ func heldID(f fact) (string, string) {
 		return "key:" + fmt.Sprint(f["code"]), edge
 	case "pointer-button", "controller-button":
 		return fmt.Sprint(f["kind"], ":", f["button"]), edge
+	case "controller-axis", "controller-button-value":
+		edge = "pressed"
+		if real(f["value"]) == 0 {
+			edge = "released"
+		}
+		control := f["axis"]
+		if control == nil {
+			control = f["button"]
+		}
+		return fmt.Sprint(f["kind"], ":", control), edge
 	}
 	return "", ""
+}
+
+// lifted is the fact that lets go of a held control: a released edge, or a
+// stick or trigger back at rest.
+func lifted(f fact) fact {
+	switch f["kind"] {
+	case "controller-axis":
+		return fact{"kind": "controller-axis", "axis": f["axis"], "value": 0}
+	case "controller-button-value":
+		return fact{"kind": "controller-button-value", "button": f["button"], "value": 0}
+	}
+	return released(f)
 }
 
 // keyCode turns a DOM KeyboardEvent.code ("KeyW", "Digit1", "ShiftLeft",
@@ -376,13 +395,8 @@ func (c *claim) steps(ctx context.Context, steps []map[string]any) (map[string]a
 		}
 		var lift []fact
 		for _, f := range press {
-			switch f["kind"] {
-			case "key", "pointer-button", "controller-button":
-				lift = append(lift, released(f))
-			case "controller-axis":
-				lift = append(lift, fact{"kind": "controller-axis", "axis": f["axis"], "value": 0})
-			case "controller-button-value":
-				lift = append(lift, fact{"kind": "controller-button-value", "button": f["button"], "value": 0})
+			if id, _ := heldID(f); id != "" {
+				lift = append(lift, lifted(f))
 			}
 		}
 		if len(lift) > 0 {
