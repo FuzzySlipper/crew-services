@@ -76,12 +76,33 @@ Products, window capture and `SendInput` need the `agent` desktop to be the
 
 ## Display persistence
 
-The KVM must keep the 3080's output attached and at a stable resolution while it
-is switched to another machine. Verify this after switching away:
+The KVM keeps the 3080's output attached while it is switched to another
+machine. Verified on 2026-10-01: with the KVM switched away, the console stayed
+unlocked at 1920x1080@60, and a screen capture from inside the session showed
+the live desktop. No dummy plug is needed. Recheck after changing the KVM,
+cabling or driver:
 
 ```bash
 ssh den-win11 'Get-CimInstance -Namespace root\wmi WmiMonitorConnectionParams | Select Active, VideoOutputTechnology; Get-CimInstance Win32_VideoController | Select Name, CurrentHorizontalResolution, CurrentVerticalResolution'
 ```
 
-If the monitor disappears or the resolution changes, use the HDMI dummy plug, or
-a virtual display driver.
+These WMI values can lag behind the real state, so the decisive check is a
+capture taken inside the console session. If the monitor disappears or the
+resolution changes, use the HDMI dummy plug, or a virtual display driver.
+
+## Running something on the desktop
+
+SSH sessions run outside the interactive desktop, so they cannot see windows,
+capture the screen or send input. The Windows agent avoids this by starting at
+logon inside the session. For one-off desktop work before it exists, register
+an interactive scheduled task and start it:
+
+```powershell
+$a = New-ScheduledTaskAction -Execute powershell.exe -Argument '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Users\agent\crew\job.ps1'
+$p = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\agent" -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -Force -TaskName crew-job -Action $a -Principal $p | Out-Null
+Start-ScheduledTask crew-job
+```
+
+Give the action an absolute path. A failing script reports only an opaque
+`LastTaskResult`, so write a transcript from it.
