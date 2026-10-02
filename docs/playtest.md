@@ -177,6 +177,46 @@ when the product runs with `RUSTY_RENDER_STREAM_FORMAT=rgba`. Over MCP, an `act`
 or `jump` with `capture`, and `world-frame`, return the image inline with the
 result.
 
+## Checking sound
+
+Models here cannot listen to audio. An agent checks sound by recording what
+the game played and reading measurements or a spectrogram image. That shows
+whether and when sounds played, how loud, and roughly what kind (a noisy
+burst or a tone). It cannot judge whether something sounds good.
+
+den-agents has no speakers. Products play to PipeWire's null output
+`auto_null`, which records exactly what they played:
+
+```bash
+parecord -d auto_null.monitor --file-format=wav sound.wav &   # start before acting
+# ... playtest assist actions ...
+kill %1
+```
+
+Times in the recording count from when it started. Every session and program
+on this machine plays into the same output, so a recording also holds other
+running games. Check `playtest status` first, or confirm a sound by repeating
+its action and seeing it repeat.
+
+- **Anything at all:** `ffmpeg -i sound.wav -af volumedetect -f null -`
+  prints mean and peak level; around −90 dB means silence.
+- **When things happened,** as loudness per 100 ms (`time:dB`), where a sound
+  shows as a jump:
+
+  ```bash
+  ffmpeg -nostats -i sound.wav -af "asetnsamples=4410,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level" -f null - 2>&1 |
+    awk -F'[ =:]+' '/pts_time/{t=$NF} /RMS_level/{printf "%.1f:%.0f ", t, $NF}'
+  ```
+
+- **What it was like:** `ffmpeg -i sound.wav -lavfi showspectrumpic=s=1000x300:legend=1 spectrogram.png`,
+  then look at the image. Gunshots and impacts are bright vertical bands
+  across many frequencies; music and tones are horizontal lines.
+- **What the product meant to play:** some products answer audio debug
+  commands (Rifles has `rifles.audio.read`; `assist discover` lists them).
+  That is the product's intent, not proof the device played it.
+
+Sound from the Windows box is not captured; record on den-agents.
+
 ## Local service
 
 The service runs on this machine (`den-agents`, RX 9070 XT) as the user unit

@@ -88,6 +88,11 @@ schemas rather than assuming a tool-name prefix or a fixed tool count.
   the product and can take minutes. The box, its agent and building Engine
   there are in
   [the Windows runbook](/home/agent/dev/crew-services/docs/playtest-windows.md).
+- Sound: you cannot listen, but you can check it. Record the null output
+  (`parecord -d auto_null.monitor`) around your actions, then read loudness
+  over time or a spectrogram image with ffmpeg
+  ([checking sound](/home/agent/dev/crew-services/docs/playtest.md#checking-sound)).
+  Say what was measured, not how it sounds.
 - Read returned capabilities and report unsupported operations explicitly.
   Do not substitute one input type and call the evidence equivalent.
 
