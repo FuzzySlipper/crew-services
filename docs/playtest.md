@@ -184,6 +184,14 @@ The service runs on this machine (`den-agents`, RX 9070 XT) as the user unit
 on the local GPU in their own runtime; the headless Chromium page only shows
 frames and hosts product UI.
 
+The GPU's board power is capped at 250 W (its default is 317 W), because
+den-agents shares a UPS with other machines. The cap is set at boot by
+`/etc/udev/rules.d/90-den-agents-rx9070xt-power.rules`, and the current value
+is in `/sys/class/drm/card0/device/hwmon/hwmon*/power1_cap` (microwatts).
+Ordinary playtesting doesn't reach it. If frame rates or GPU timings measured
+here seem low for the hardware, check the cap before suspecting the product,
+and don't compare them with uncapped numbers from another machine.
+
 - CLI: `~/.local/bin/playtest` (`playtest mcp` for MCP clients)
 - Programs: `~/.local/share/crew-playtest/`
 - Profiles: `~/.config/crew-playtest/games.json`

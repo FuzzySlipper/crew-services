@@ -16,6 +16,10 @@ lived in den-services only for discoverability.
 | Codex playtester skill and agent profile | `codex/skills/product-playtest`, `codex/agents/playtester.toml.template` | `scripts/install-codex-playtester.sh` links and writes them into `~/.codex` |
 | Messaging, review and Codex adapters | `cmd/crew-messaging`, `cmd/crew-review`, `cmd/crew-codex` | their own user units |
 
+The RX 9070 XT's power is capped at 250 W (default 317 W) by
+`/etc/udev/rules.d/90-den-agents-rx9070xt-power.rules`, since this machine
+shares a UPS; see [playtest](playtest.md#local-service).
+
 Windows desktop builds are tested on a separate bare-metal box, `den-win11`
 ([runbook](playtest-windows.md)); the playtest service reaches its agent from
 here. The `rusty-windows-pairs` user timer builds win-x64 archives on it for
