@@ -21,7 +21,8 @@ The RX 9070 XT's power is capped at 250 W (default 317 W) by
 shares a UPS; see [playtest](playtest.md#local-service).
 
 Windows desktop builds are tested on a separate bare-metal box, `den-win11`
-([runbook](playtest-windows.md)); the playtest service reaches its agent from
+([runbook](playtest-windows.md); agents find it through the `windows-box`
+skill, linked into `~/.codex/skills` and `~/.claude/skills`); the playtest service reaches its agent from
 here. The `rusty-windows-pairs` user timer builds win-x64 archives on it for
 each new Latest Engine pair.
 

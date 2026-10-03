@@ -35,6 +35,8 @@ fail() { echo "$*" >&2; exit 1; }
 check() {
   [[ -L $installed_skill && $(readlink -f "$installed_skill") == "$source_skill" ]] ||
     fail "skill is not linked to $source_skill: $installed_skill"
+  [[ $(readlink -f "$codex_root/skills/windows-box") == "$repo_root/codex/skills/windows-box" ]] ||
+    fail "windows-box skill is not linked: $codex_root/skills/windows-box"
   cmp -s "$agent_template" "$installed_agent" || fail "agent profile differs from $agent_template: $installed_agent"
   if grep -q '^\[mcp_servers\.den_playtest\]' "$codex_root/config.toml" 2>/dev/null; then
     fail "retired mcp_servers.den_playtest is still registered in $codex_root/config.toml"
@@ -63,6 +65,13 @@ elif [[ -e $installed_skill ]]; then
   fail "refusing to replace non-link skill: $installed_skill"
 fi
 ln -s "$source_skill" "$installed_skill"
+
+# The Windows test box guide sits beside it.
+windows_skill=$codex_root/skills/windows-box
+if [[ -e $windows_skill && ! -L $windows_skill ]]; then
+  fail "refusing to replace non-link skill: $windows_skill"
+fi
+ln -sfn "$repo_root/codex/skills/windows-box" "$windows_skill"
 
 if [[ -e $installed_agent ]] && ! head -n 1 "$installed_agent" | grep -Eq "$managed_markers"; then
   fail "refusing to replace unmanaged agent profile: $installed_agent"

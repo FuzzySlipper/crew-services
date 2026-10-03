@@ -256,10 +256,12 @@ otherwise falls back to SwiftShader; see Chromium's
 For Codex, `scripts/install-codex-playtester.sh` links the
 [product-playtest skill](../codex/skills/product-playtest/SKILL.md) and writes
 the `playtester` agent profile; both use this CLI. Claude Code agents use the
-same skill, linked into their skills directory:
+same skill, linked into their skills directory. The `windows-box` skill
+(`codex/skills/windows-box`) is the short guide to the Windows test box, for
+both; link it into `~/.codex/skills` and `~/.claude/skills` the same way:
 
 ```bash
-ln -sfn "$PWD/codex/skills/product-playtest" ~/.claude/skills/product-playtest
+for skill in product-playtest windows-box; do ln -sfn "$PWD/codex/skills/$skill" ~/.claude/skills/$skill; done
 ```
 
 `playtest-service` requires `--games`, `--state`, `--worker`
