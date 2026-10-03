@@ -89,9 +89,13 @@ type Desktop interface {
 	// Window finds the visible top-level window of pid's process tree.
 	Window(pid int) (uintptr, error)
 	CapturePNG(window uintptr) ([]byte, error)
+	// CaptureDesktopPNG captures the whole primary screen as shown.
+	CaptureDesktopPNG() ([]byte, error)
 	// Foreground brings window to the front and reports whether it is.
 	Foreground(window uintptr) (bool, error)
 	// Send delivers OS input; Release lifts every control Send left held.
+	// A point step lands at that position in window's capture, or in the
+	// desktop capture when window is 0.
 	Send(steps []map[string]any, window uintptr) (map[string]any, error)
 	Release() error
 	Facts() map[string]any
@@ -464,14 +468,22 @@ func (a *Agent) Capture(id string) ([]byte, error) {
 	return a.desktop.CapturePNG(window)
 }
 
+// CaptureDesktop captures the whole screen: every window, dialog and the
+// taskbar, as a person at the box would see them.
+func (a *Agent) CaptureDesktop() ([]byte, error) { return a.desktop.CaptureDesktopPNG() }
+
 // TakeLease grants the foreground to holder for ttl, or refuses while
-// another holder's lease is live. A holder renewing keeps its lease.
+// another holder's lease is live. A holder renewing keeps its lease. An
+// empty instance leases the desktop itself: input goes wherever it lands,
+// and no window is brought to the front.
 func (a *Agent) TakeLease(holder, instance string, ttl time.Duration) (*Lease, error) {
 	if holder == "" || ttl <= 0 || ttl > 10*time.Minute {
 		return nil, errors.New("a lease needs a holder and a ttl of up to 10 minutes")
 	}
-	if _, err := a.instance(instance); err != nil {
-		return nil, err
+	if instance != "" {
+		if _, err := a.instance(instance); err != nil {
+			return nil, err
+		}
 	}
 	a.expire()
 	a.mu.Lock()
@@ -533,19 +545,23 @@ func (a *Agent) LeaseInput(id string, steps []map[string]any) (map[string]any, e
 	}
 	instanceID := lease.Instance
 	a.mu.Unlock()
-	instance, err := a.instance(instanceID)
-	if err != nil {
-		return nil, err
-	}
-	window, err := a.desktop.Window(instance.PID)
-	if err != nil {
-		return nil, err
+	var window uintptr
+	if instanceID != "" {
+		instance, err := a.instance(instanceID)
+		if err != nil {
+			return nil, err
+		}
+		if window, err = a.desktop.Window(instance.PID); err != nil {
+			return nil, err
+		}
 	}
 	a.inputMu.Lock()
 	defer a.inputMu.Unlock()
-	front, err := a.desktop.Foreground(window)
-	if err != nil || !front {
-		return map[string]any{"delivery": "not-sent", "foreground": false}, fmt.Errorf("could not bring the instance to the foreground: %v", err)
+	if window != 0 {
+		front, err := a.desktop.Foreground(window)
+		if err != nil || !front {
+			return map[string]any{"delivery": "not-sent", "foreground": false}, fmt.Errorf("could not bring the instance to the foreground: %v", err)
+		}
 	}
 	receipt, err := a.desktop.Send(steps, window)
 	if receipt == nil {
@@ -553,6 +569,9 @@ func (a *Agent) LeaseInput(id string, steps []map[string]any) (map[string]any, e
 	}
 	receipt["tier"] = "os"
 	receipt["input_layers"] = "SendInput -> Windows focus -> winit window events -> desktop shell input path (pointer lock, page input capture)"
+	if window == 0 {
+		receipt["input_layers"] = "SendInput -> whatever window Windows has in front (desktop lease)"
+	}
 	if err != nil {
 		releaseErr := a.desktop.Release()
 		receipt["delivery"] = "uncertain; reobserve without replay"
@@ -642,6 +661,15 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/instances/{id}", func(w http.ResponseWriter, r *http.Request) {
 		err := a.StopInstance(r.PathValue("id"))
 		reply(w, map[string]any{"stopped": err == nil}, err)
+	})
+	mux.HandleFunc("GET /v1/desktop.png", func(w http.ResponseWriter, r *http.Request) {
+		png, err := a.CaptureDesktop()
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(png)
 	})
 	mux.HandleFunc("GET /v1/instances/{id}/window.png", func(w http.ResponseWriter, r *http.Request) {
 		png, err := a.Capture(r.PathValue("id"))

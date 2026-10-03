@@ -20,6 +20,8 @@ type fakeAgent struct {
 	busy    bool
 	// stuck: the instance failed to start and the agent could not stop it.
 	stuck bool
+	// leasedFor is the instance each lease named ("" for the desktop).
+	leasedFor []string
 }
 
 func (f *fakeAgent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +47,12 @@ func (f *fakeAgent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.stopped = append(f.stopped, strings.TrimPrefix(r.URL.Path, "/v1/instances/"))
 		json.NewEncoder(w).Encode(map[string]bool{"stopped": true})
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/desktop.png":
+		w.Write([]byte("desktop png"))
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/lease":
+		var body struct{ Instance string }
+		json.NewDecoder(r.Body).Decode(&body)
+		f.leasedFor = append(f.leasedFor, body.Instance)
 		if f.busy {
 			w.WriteHeader(http.StatusConflict)
 			json.NewEncoder(w).Encode(map[string]string{"error": "foreground_busy: held by other"})
@@ -145,5 +152,23 @@ func TestOSInputEndsItsLeaseAndReportsABusyForeground(t *testing.T) {
 	receipt, err = agent.OSInput(context.Background(), "crew-playtest-2", "doom-1", steps)
 	if err == nil || !strings.HasPrefix(err.Error(), "foreground_busy") || receipt["delivery"] != "not-sent" {
 		t.Fatalf("busy foreground: %v %v", receipt, err)
+	}
+}
+
+func TestTheDesktopCanBeCapturedAndLeased(t *testing.T) {
+	fake := &fakeAgent{}
+	server := httptest.NewServer(fake)
+	defer server.Close()
+	agent := NewAgent(server.URL)
+	png, err := agent.Desktop(context.Background())
+	if err != nil || string(png) != "desktop png" {
+		t.Fatalf("desktop: %q %v", png, err)
+	}
+	steps := []map[string]any{{"kind": "point", "x": 5, "y": 5, "width": 10, "height": 10}, {"kind": "click", "button": 1}}
+	if _, err := agent.OSInput(context.Background(), "crew-playtest-1", "", steps); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.leasedFor) != 1 || fake.leasedFor[0] != "" || fake.leases != 0 {
+		t.Fatalf("desktop lease: %v open %d", fake.leasedFor, fake.leases)
 	}
 }

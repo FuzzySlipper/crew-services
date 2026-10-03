@@ -50,6 +50,7 @@ var (
 	procDeleteObject            = gdi32.NewProc("DeleteObject")
 	procDeleteDC                = gdi32.NewProc("DeleteDC")
 	procGetDIBits               = gdi32.NewProc("GetDIBits")
+	procBitBlt                  = gdi32.NewProc("BitBlt")
 	procGetCurrentThreadID      = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetCurrentThreadId")
 	procWTSGetActiveConsoleSess = windows.NewLazySystemDLL("kernel32.dll").NewProc("WTSGetActiveConsoleSessionId")
 )
@@ -245,6 +246,40 @@ func (d *Windows) CapturePNG(window uintptr) ([]byte, error) {
 	if ok == 0 {
 		return nil, fmt.Errorf("PrintWindow: %v", err)
 	}
+	return bitmapPNG(memory, bitmap, width, height)
+}
+
+// CaptureDesktopPNG copies the primary screen as the desktop shows it.
+func (d *Windows) CaptureDesktopPNG() ([]byte, error) {
+	width, height := screenSize()
+	screen, _, _ := procGetDC.Call(0)
+	defer procReleaseDC.Call(0, screen)
+	memory, _, _ := procCreateCompatibleDC.Call(screen)
+	defer procDeleteDC.Call(memory)
+	bitmap, _, _ := procCreateCompatibleBitmap.Call(screen, uintptr(width), uintptr(height))
+	defer procDeleteObject.Call(bitmap)
+	previous, _, _ := procSelectObject.Call(memory, bitmap)
+	ok, _, err := procBitBlt.Call(memory, 0, 0, uintptr(width), uintptr(height), screen, 0, 0, srcCopy|captureBlt)
+	procSelectObject.Call(memory, previous)
+	if ok == 0 {
+		return nil, fmt.Errorf("BitBlt: %v", err)
+	}
+	return bitmapPNG(memory, bitmap, width, height)
+}
+
+const (
+	srcCopy    = 0x00CC0020
+	captureBlt = 0x40000000
+)
+
+func screenSize() (int, int) {
+	width, _, _ := procGetSystemMetrics.Call(0)  // SM_CXSCREEN
+	height, _, _ := procGetSystemMetrics.Call(1) // SM_CYSCREEN
+	return int(width), int(height)
+}
+
+// bitmapPNG encodes a captured bitmap as an opaque PNG.
+func bitmapPNG(memory, bitmap uintptr, width, height int) ([]byte, error) {
 	// BITMAPINFOHEADER for top-down 32-bit BGRA rows.
 	header := struct {
 		Size                         uint32
@@ -365,9 +400,9 @@ func (d *Windows) lift(id string) error {
 // Send delivers a validated batch: hold (virtual keys), move (relative
 // motion spread over ms), click, wait. Absolute points and gamepads are not
 // OS-tier input here.
-func (d *Windows) Send(steps []map[string]any, _ uintptr) (map[string]any, error) {
+func (d *Windows) Send(steps []map[string]any, window uintptr) (map[string]any, error) {
 	for _, step := range steps {
-		if kind := step["kind"]; kind == "point" || kind == "gamepad" {
+		if kind := step["kind"]; kind == "gamepad" {
 			return map[string]any{"completed_steps": 0}, fmt.Errorf("capability_unavailable: %v steps are not OS-tier input", kind)
 		}
 	}
@@ -376,6 +411,22 @@ func (d *Windows) Send(steps []map[string]any, _ uintptr) (map[string]any, error
 		ms := number(step["ms"])
 		switch step["kind"] {
 		case "wait":
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		case "point":
+			// x, y are a position in a width x height image of the window's
+			// capture, or of the desktop's.
+			var area rect
+			if window != 0 {
+				procGetWindowRect.Call(window, uintptr(unsafe.Pointer(&area)))
+			} else {
+				w, h := screenSize()
+				area = rect{Right: int32(w), Bottom: int32(h)}
+			}
+			x := int(area.Left) + number(step["x"])*int(area.Right-area.Left)/number(step["width"])
+			y := int(area.Top) + number(step["y"])*int(area.Bottom-area.Top)/number(step["height"])
+			if ok, _, err := procSetCursorPos.Call(uintptr(x), uintptr(y)); ok == 0 {
+				return map[string]any{"completed_steps": completed}, fmt.Errorf("SetCursorPos: %v", err)
+			}
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		case "hold":
 			keys := step["keys"].([]any)

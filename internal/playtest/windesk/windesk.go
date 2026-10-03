@@ -100,9 +100,17 @@ func (a *Agent) Window(ctx context.Context, instance string) ([]byte, error) {
 	return png, err
 }
 
+// Desktop is the whole screen as shown: every window, dialog and the taskbar.
+func (a *Agent) Desktop(ctx context.Context) ([]byte, error) {
+	var png []byte
+	err := a.call(ctx, http.MethodGet, "/v1/desktop.png", nil, &png)
+	return png, err
+}
+
 // OSInput takes the foreground lease for holder, sends the steps through
 // SendInput, and ends the lease, releasing anything still held. A busy
-// foreground is refused before anything is sent.
+// foreground is refused before anything is sent. An empty instance leases
+// the desktop: no window is raised, and input lands wherever it points.
 func (a *Agent) OSInput(ctx context.Context, holder, instance string, steps []map[string]any) (map[string]any, error) {
 	total := 0
 	for _, step := range steps {

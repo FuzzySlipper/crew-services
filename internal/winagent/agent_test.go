@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +25,8 @@ type fakeDesktop struct {
 	overlap  bool
 	stopErr  error
 	args     [][]string
+	windows  []uintptr
+	raised   int
 }
 
 func (f *fakeDesktop) Start(_ string, args []string, _ string, _ []string, _ string) (int, error) {
@@ -51,11 +54,13 @@ func (f *fakeDesktop) Alive(pid int) bool {
 func (f *fakeDesktop) Window(pid int) (uintptr, error)    { return uintptr(pid), nil }
 func (f *fakeDesktop) Image(int) string                   { return "rusty.exe" }
 func (f *fakeDesktop) CapturePNG(uintptr) ([]byte, error) { return []byte("png"), nil }
-func (f *fakeDesktop) Foreground(uintptr) (bool, error)   { return f.front, nil }
+func (f *fakeDesktop) CaptureDesktopPNG() ([]byte, error) { return []byte("desktop"), nil }
+func (f *fakeDesktop) Foreground(uintptr) (bool, error)   { f.raised++; return f.front, nil }
 func (f *fakeDesktop) Facts() map[string]any              { return map[string]any{} }
 func (f *fakeDesktop) Release() error                     { f.released++; return nil }
-func (f *fakeDesktop) Send(steps []map[string]any, _ uintptr) (map[string]any, error) {
+func (f *fakeDesktop) Send(steps []map[string]any, window uintptr) (map[string]any, error) {
 	f.sent = append(f.sent, steps)
+	f.windows = append(f.windows, window)
 	return map[string]any{"completed_steps": 0}, f.sendErr
 }
 
@@ -258,5 +263,36 @@ func TestProductsRunOnTheirPinnedPairUnlessTheyNameARuntime(t *testing.T) {
 	}
 	if runtime(desktop.args[1]) != "C:/runtimes/study" {
 		t.Fatalf("study args %v", desktop.args[1])
+	}
+}
+
+func TestADesktopLeaseSendsInputWithoutRaisingAWindow(t *testing.T) {
+	agent, desktop := testAgent(t)
+	if _, err := agent.StartInstance(context.Background(), "doom", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := agent.TakeLease("rescue", "", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// It is the one foreground lease: an instance lease waits for it.
+	if _, err := agent.TakeLease("other", agent.Instances()[0].ID, time.Minute); err == nil || !strings.HasPrefix(err.Error(), "foreground_busy") {
+		t.Fatalf("second lease: %v", err)
+	}
+	steps := []map[string]any{{"kind": "point", "x": 10, "y": 20, "width": 100, "height": 100}, {"kind": "click", "button": 1}}
+	receipt, err := agent.LeaseInput(lease.ID, steps)
+	if err != nil || receipt["delivery"] != "sent" || desktop.raised != 0 || desktop.windows[0] != 0 {
+		t.Fatalf("desktop input: %v %v raised %d windows %v", receipt, err, desktop.raised, desktop.windows)
+	}
+	server := httptest.NewServer(agent.Handler())
+	defer server.Close()
+	response, err := http.Get(server.URL + "/v1/desktop.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK || string(body) != "desktop" {
+		t.Fatalf("desktop.png: %d %q", response.StatusCode, body)
 	}
 }

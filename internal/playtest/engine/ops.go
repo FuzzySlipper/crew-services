@@ -48,6 +48,9 @@ type Request struct {
 	Height  int  `json:"height,omitempty"`
 	// Steps are OS-tier input for os-input (Windows instances).
 	Steps []map[string]any `json:"steps,omitempty"`
+	// Desktop points window and os-input at the whole Windows desktop
+	// instead of the session's instance window.
+	Desktop bool `json:"desktop,omitempty"`
 }
 
 type runner struct {
@@ -147,9 +150,9 @@ func (r *runner) run(ctx context.Context, q Request) (map[string]any, error) {
 	case "jump":
 		return r.withCapture(ctx, q, func() (map[string]any, error) { return r.jump(ctx, q) })
 	case "window":
-		return r.window(ctx)
+		return r.window(ctx, q.Desktop)
 	case "os-input":
-		return r.osInput(ctx, q.Steps)
+		return r.osInput(ctx, q.Steps, q.Desktop)
 	case "survey":
 		return r.survey(ctx, q)
 	case "record":
@@ -159,10 +162,23 @@ func (r *runner) run(ctx context.Context, q Request) (map[string]any, error) {
 }
 
 // window captures the instance window on the Windows box as Windows composes
-// it: the world with the product UI and HUD over it.
-func (r *runner) window(ctx context.Context) (map[string]any, error) {
+// it: the world with the product UI and HUD over it. With desktop it captures
+// the whole screen instead: other windows, dialogs and the taskbar.
+func (r *runner) window(ctx context.Context, desktop bool) (map[string]any, error) {
 	if r.windows == nil {
 		return nil, errors.New("capability_unavailable: window capture needs a windows-desktop session")
+	}
+	if desktop {
+		png, err := r.windows.agent.Desktop(ctx)
+		if err != nil {
+			return nil, err
+		}
+		path := filepath.Join(r.directory, "desktop-"+uuid.NewString()[:8]+".png")
+		if err := evidence.WriteFileAtomic(path, png); err != nil {
+			return nil, err
+		}
+		return map[string]any{"path": path, "source": "Windows desktop capture: the whole screen as shown",
+			"pointing": "os-input point steps with desktop:true take x/y in this image, with its width and height"}, nil
 	}
 	png, err := r.windows.agent.Window(ctx, r.windows.instance)
 	if err != nil {
@@ -179,14 +195,20 @@ func (r *runner) window(ctx context.Context) (map[string]any, error) {
 // osInput sends OS input (SendInput) to the instance window under the box's
 // foreground lease: Windows focus, the desktop shell's input path, pointer
 // lock and the page's input capture, as a person's keyboard and mouse would.
-func (r *runner) osInput(ctx context.Context, steps []map[string]any) (map[string]any, error) {
+// With desktop it leases the desktop instead and raises no window, for
+// dialogs and other windows; point steps then use desktop coordinates.
+func (r *runner) osInput(ctx context.Context, steps []map[string]any, desktop bool) (map[string]any, error) {
 	if r.windows == nil {
 		return nil, errors.New("capability_unavailable: os-input needs a windows-desktop session")
 	}
 	if err := input.ValidateBatch(steps); err != nil {
 		return nil, err
 	}
-	receipt, err := r.windows.agent.OSInput(ctx, r.windows.holder, r.windows.instance, steps)
+	instance := r.windows.instance
+	if desktop {
+		instance = ""
+	}
+	receipt, err := r.windows.agent.OSInput(ctx, r.windows.holder, instance, steps)
 	if receipt == nil {
 		receipt = map[string]any{}
 	}
