@@ -105,7 +105,9 @@ the command's exit code:
 ssh den-win11 'C:\Users\agent\crew\bin\run-on-desktop.ps1 -Command "Set-Location P:\dev\rusty-rifles; rusty status"'
 ```
 
-The command sees the PATH and drives a new PowerShell window would.
+The command sees the PATH and drives a new PowerShell window would. The
+`agent` user's script execution policy is `RemoteSigned`, so local scripts
+like this one run by path.
 `-TimeoutSec` bounds the wait (default 600). `-NoWait` starts something that
 keeps running, such as `rusty dev`, and prints its log path under
 `C:\Users\agent\crew\desktop-runs`; stop it by its own means or with
@@ -120,14 +122,14 @@ As on the owner's Windows desktop, `P:` maps den-agents' Samba share
 as the shared-checkout dev loop; playtest sessions use the box's own clones
 in `C:\dev`.
 
-- **Setting it up** needs a Samba login for the share. The box has its own,
-  `den-win11`, so it can be revoked without touching anyone else's: on
-  den-agents, `sudo useradd --system --no-create-home --shell
-  /usr/sbin/nologin den-win11` and `sudo smbpasswd -a den-win11`. Then in
-  the console session (`run-on-desktop.ps1`): `cmdkey
-  /add:192.168.1.10 /user:den-win11 /pass:<password>` and `net use P:
-  \\192.168.1.10\agent /persistent:yes`. Windows restores it at each logon.
-  Remove it with `sudo smbpasswd -x den-win11` on den-agents.
+- **Login.** The box has its own Samba login, `den-win11` (a no-login
+  system user on den-agents), so it can be revoked without touching anyone
+  else's: `sudo smbpasswd -x den-win11`. Its password is in den-agents'
+  `~/.config/crew-playtest/smb-den-win11.txt` and in the box console user's
+  Credential Manager. P: was mapped with `cmdkey /add:192.168.1.10
+  /user:den-win11 /pass:...` and `net use P: \\192.168.1.10\agent
+  /persistent:yes` in the console session, and Windows reconnects it at
+  each logon (checked across a reboot).
 - The mapping belongs to the console session: use it through
   `run-on-desktop.ps1`, not plain SSH.
 - `rusty` is `C:\Users\agent\.local\bin\rusty.exe`, on the user PATH
