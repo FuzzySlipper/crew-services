@@ -84,7 +84,10 @@ schemas rather than assuming a tool-name prefix or a fixed tool count.
   `rusty-doom-windows`): `assist window`
   captures the window with its UI, and `assist os-input` sends real
   keyboard/mouse input under the box's single foreground lease (click first
-  for pointer lock; `foreground_busy` means wait). A lane's first start builds
+  for pointer lock; `foreground_busy` means wait). Add `"desktop": true` to
+  either to see or click the whole screen (dialogs, other windows); when
+  that is not enough, the runbook lists further ways in. Never RDP into the
+  box. A lane's first start builds
   the product and can take minutes. The box, its agent and building Engine
   there are in
   [the Windows runbook](/home/agent/dev/crew-services/docs/playtest-windows.md).

@@ -358,7 +358,10 @@ The product must register Engine's `PlaytestDebugModule` for `observe`,
 Windows build on the Windows playtest box: each session's instance is its own
 window there, `assist window` captures it with the product UI, and `assist
 os-input` sends real keyboard and mouse input under the box's one foreground
-lease. See [Windows playtest box](playtest-windows.md#two-tiers-of-input).
+lease. With `"desktop": true` both work on the whole screen instead, for
+dialogs and other windows. See [Windows playtest box](playtest-windows.md#two-tiers-of-input),
+and [when something is in the way](playtest-windows.md#when-something-is-in-the-way)
+for the other ways onto the box.
 
 ## Agent entry point
 

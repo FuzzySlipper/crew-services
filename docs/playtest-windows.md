@@ -72,8 +72,8 @@ Products, window capture and `SendInput` need the `agent` desktop to be the
 
   It hands the session back to the console. A reboot also works: auto-logon
   signs `agent` in at the console.
-- For watching a test, use a viewer that mirrors the console instead of
-  replacing it, such as Sunshine and Moonlight. That isn't installed yet.
+- For watching a test, use Sunshine (below), which mirrors the console
+  instead of replacing it.
 
 ## Display persistence
 
@@ -128,10 +128,56 @@ it. So sessions share the box in two tiers:
   `foreground_busy`; nothing was sent, so try again later.
 - `assist {"op":"window"}` captures the window as Windows composes it, world
   and product UI together, without focus.
+- **Point at what you saw.** A `point` step's `x`/`y` are a position in the
+  image you captured, with its `width` and `height`: the window capture, or
+  the desktop capture with `desktop:true` (below).
 
 Receipts carry `tier` and `input_layers`. Engine-tier sessions stay in held
 time, so another session holding the foreground for a while changes nothing
 for them.
+
+## When something is in the way
+
+If a session's own window and input are not enough (a dialog, another
+window in front, a game that never opened its window, an instance stuck at
+startup), there are other ways in. Use them in this order.
+
+1. **The whole desktop, through your session.**
+   `assist {"op":"window","desktop":true}` captures the full screen: every
+   window, dialogs and the taskbar. `assist {"op":"os-input","desktop":true,
+   "steps":[...]}` takes the same foreground lease but raises no window, so
+   input lands wherever the desktop has it; aim with `point` steps in the
+   desktop image, then `click` or `hold` keys:
+
+   ```json
+   {"op": "os-input", "desktop": true, "steps": [
+     {"kind": "point", "x": 750, "y": 690, "width": 1920, "height": 1080, "ms": 100},
+     {"kind": "click", "button": 1, "ms": 80}]}
+   ```
+
+2. **The agent's API, without a session.** Anyone on the LAN can read
+   `GET http://192.168.1.12:48300/v1/status` (desktop facts, instances,
+   the current lease) and `/v1/desktop.png`, and take a desktop lease with
+   `POST /v1/lease {"holder": "...", "instance": "", "ttl_ms": 30000}`.
+   Stop a stuck instance with `DELETE /v1/instances/{id}`. Leases are shared
+   with sessions, so `foreground_busy` means someone else holds the screen.
+3. **SSH** (`ssh den-win11`) for anything else: logs under
+   `C:\Users\agent\crew\agent-logs`, processes, files, restarting the
+   agent (`Stop-ScheduledTask crew-playtest-agent; Start-ScheduledTask
+   crew-playtest-agent`) or the box (`Restart-Computer`; it signs back in by
+   itself). SSH cannot see or touch the desktop; to run something there, use
+   a scheduled task (above).
+4. **Sunshine**, for people. It streams the console to a Moonlight client
+   without taking it over. The web UI is `https://192.168.1.12:47990`; its
+   login is in den-agents' `~/.config/crew-playtest/sunshine-den-win11.txt`.
+   Pair a Moonlight client there with the PIN it shows. Its ports are open to
+   the local subnet only. Agents use 1 and 2 instead: they need still images
+   and discrete input, not a video stream.
+
+**Never RDP.** Windows 11 Pro has one interactive session. An RDP login takes
+it over, moves it from the 3080 to a virtual display, and leaves it locked
+when it disconnects, which breaks capture and input for every session until
+someone runs `tscon` or reboots (see the interactive session, above).
 
 ## Profiles
 
@@ -185,8 +231,9 @@ instance serves its product host on the box's LAN address from
   previous run at startup.
 - **API** (JSON): `GET /v1/status`, `POST /v1/instances {product, holder}`,
   `DELETE /v1/instances/{id}`, `GET /v1/instances/{id}/window.png`,
-  `POST /v1/lease {holder, instance, ttl_ms}`, `POST /v1/lease/{id}/input
-  {steps}`, `DELETE /v1/lease/{id}`.
+  `GET /v1/desktop.png`, `POST /v1/lease {holder, instance, ttl_ms}` (an
+  empty instance leases the desktop), `POST /v1/lease/{id}/input {steps}`,
+  `DELETE /v1/lease/{id}`.
 
 ## Adding a game
 
