@@ -93,20 +93,49 @@ resolution changes, use the HDMI dummy plug, or a virtual display driver.
 
 ## Running something on the desktop
 
-SSH sessions run outside the interactive desktop, so they cannot see windows,
-capture the screen or send input. The Windows agent avoids this by starting at
-logon inside the session. For one-off desktop work before it exists, register
-an interactive scheduled task and start it:
+SSH sessions run outside the interactive desktop. They cannot open or see
+windows, capture the screen or send input, and a key-based SSH logon has no
+saved network logins, so `P:` and the den-agents share are not there either.
+Run such work in the console session with `run-on-desktop.ps1` (installed in
+`C:\Users\agent\crew\bin`). It runs a PowerShell command there through a
+one-off interactive scheduled task, waits, prints the output and exits with
+the command's exit code:
 
-```powershell
-$a = New-ScheduledTaskAction -Execute powershell.exe -Argument '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Users\agent\crew\job.ps1'
-$p = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\agent" -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -Force -TaskName crew-job -Action $a -Principal $p | Out-Null
-Start-ScheduledTask crew-job
+```bash
+ssh den-win11 'C:\Users\agent\crew\bin\run-on-desktop.ps1 -Command "Set-Location P:\dev\rusty-rifles; rusty status"'
 ```
 
-Give the action an absolute path. A failing script reports only an opaque
-`LastTaskResult`, so write a transcript from it.
+The command sees the PATH and drives a new PowerShell window would.
+`-TimeoutSec` bounds the wait (default 600). `-NoWait` starts something that
+keeps running, such as `rusty dev`, and prints its log path under
+`C:\Users\agent\crew\desktop-runs`; stop it by its own means or with
+`Stop-Process`. The Windows agent avoids all this for playtest sessions by
+starting at logon inside the console session.
+
+## The shared checkout (P:)
+
+As on the owner's Windows desktop, `P:` maps den-agents' Samba share
+`\\192.168.1.10\agent` (den-agents' `/home/agent`, so repositories are under
+`P:\dev`). Use it for work that must run from the Linux checkout itself, such
+as the shared-checkout dev loop; playtest sessions use the box's own clones
+in `C:\dev`.
+
+- **Setting it up** needs a Samba login for the share. The box has its own,
+  `den-win11`, so it can be revoked without touching anyone else's: on
+  den-agents, `sudo useradd --system --no-create-home --shell
+  /usr/sbin/nologin den-win11` and `sudo smbpasswd -a den-win11`. Then in
+  the console session (`run-on-desktop.ps1`): `cmdkey
+  /add:192.168.1.10 /user:den-win11 /pass:<password>` and `net use P:
+  \\192.168.1.10\agent /persistent:yes`. Windows restores it at each logon.
+  Remove it with `sudo smbpasswd -x den-win11` on den-agents.
+- The mapping belongs to the console session: use it through
+  `run-on-desktop.ps1`, not plain SSH.
+- `rusty` is `C:\Users\agent\.local\bin\rusty.exe`, on the user PATH
+  (as `install-rusty.sh` puts it in `~/.local/bin` on Linux), and `HOME` is
+  `C:\Users\agent`. It hands each command to the product's pinned pair.
+- Files written through the share land as `agent` on den-agents (the share
+  forces that user), so Windows build output in a shared checkout is visible
+  to Linux. Keep Windows output local where the product's setup allows it.
 
 ## Two tiers of input
 
@@ -165,8 +194,8 @@ startup), there are other ways in. Use them in this order.
    `C:\Users\agent\crew\agent-logs`, processes, files, restarting the
    agent (`Stop-ScheduledTask crew-playtest-agent; Start-ScheduledTask
    crew-playtest-agent`) or the box (`Restart-Computer`; it signs back in by
-   itself). SSH cannot see or touch the desktop; to run something there, use
-   a scheduled task (above).
+   itself). SSH cannot see or touch the desktop or use `P:`; to run
+   something there, use `run-on-desktop.ps1` (above).
 4. **Sunshine**, for people. It streams the console to a Moonlight client
    without taking it over. The web UI is `https://192.168.1.12:47990`; its
    login is in den-agents' `~/.config/crew-playtest/sunshine-den-win11.txt`.

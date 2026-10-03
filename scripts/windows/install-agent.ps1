@@ -10,6 +10,7 @@ New-Item -Force -ItemType Directory $bin, "$home_\crew\agent-logs" | Out-Null
 Stop-ScheduledTask -TaskName crew-playtest-agent -ErrorAction SilentlyContinue
 Get-Process playtest-windows-agent -ErrorAction SilentlyContinue | Stop-Process -Force
 Copy-Item -Force "$PSScriptRoot\playtest-windows-agent.exe" "$bin\playtest-windows-agent.exe"
+Copy-Item -Force "$PSScriptRoot\run-on-desktop.ps1" "$bin\run-on-desktop.ps1"
 if (-not (Test-Path "$bin\agent.json")) {
   Copy-Item "$PSScriptRoot\windows-agent.example.json" "$bin\agent.json"
 }
