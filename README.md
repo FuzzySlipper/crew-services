@@ -114,6 +114,18 @@ and clears the failed attempt's finalization, receipt, and failure detail. It
 rejects missing, nonfailed, or busy-affinity jobs rather than replaying an
 admission or retrying automatically.
 
+`POST /v1/review-pool/check` probes the reviewer runtime on request; nothing
+runs it on a schedule. With the Codex backend it runs `codex sandbox -c
+sandbox_mode="read-only" git rev-parse HEAD` in the most recent review's
+checkout (or `true` in the home directory before any review), the same
+read-only sandbox reviewer turns use, and returns `ok`, the command, and its
+output. A broken sandbox fails every reviewer command while turns still
+complete, so reviewers end without `complete_review` or judge from the handoff
+alone; this check shows it directly. When a turn ends without
+`complete_review`, the job failure carries the turn's status, Codex's error,
+and the reviewer's last message. A Den finalization conflict means another
+reviewer finalized the round first, so the job ends `stale`.
+
 The managed submission boundary is `POST /v1/review-submissions`. The Den MCP
 facade routes its `submit_task_for_review` green path to this endpoint through
 the separately configured `crew-review` backend. A first call records the Den

@@ -23,6 +23,52 @@ type Service struct {
 	// commit before a reviewer job is admitted.
 	source      SourceChecker
 	sourceGrace time.Duration
+
+	// runtimeCheck, when set, probes the reviewer runtime on operator request.
+	runtimeCheck RuntimeChecker
+	// lastWorkspace is the checkout of the most recently started review, the
+	// most representative place to run that probe.
+	lastWorkspace string
+}
+
+// RuntimeChecker runs one read-only probe of the reviewer runtime, such as a
+// command in its sandbox, and reports whether reviewers could run commands in
+// workspace. It must not change the workspace. An empty workspace means none
+// is known yet.
+type RuntimeChecker interface {
+	CheckRuntime(ctx context.Context, workspace string) RuntimeCheck
+}
+
+// RuntimeCheck is the operator-facing result of a reviewer runtime probe.
+type RuntimeCheck struct {
+	OK        bool      `json:"ok"`
+	Backend   string    `json:"backend"`
+	Workspace string    `json:"workspace,omitempty"`
+	Command   string    `json:"command,omitempty"`
+	Detail    string    `json:"detail"`
+	CheckedAt time.Time `json:"checked_at"`
+}
+
+// WithRuntimeChecker enables POST /v1/review-pool/check for this backend.
+func WithRuntimeChecker(checker RuntimeChecker) Option {
+	return func(s *Service) { s.runtimeCheck = checker }
+}
+
+// CheckRuntime probes the reviewer runtime in the most recent review's
+// checkout. It is only run on request; nothing schedules it.
+func (s *Service) CheckRuntime(ctx context.Context) RuntimeCheck {
+	s.mu.Lock()
+	workspace := s.lastWorkspace
+	s.mu.Unlock()
+	var result RuntimeCheck
+	if s.runtimeCheck == nil {
+		result = RuntimeCheck{Detail: "the configured reviewer backend has no runtime check"}
+	} else {
+		result = s.runtimeCheck.CheckRuntime(ctx, workspace)
+	}
+	result.Backend = s.backend
+	result.CheckedAt = s.clock.Now()
+	return result
 }
 
 // SourceChecker answers, read-only, whether a local checkout's HEAD contains
@@ -179,6 +225,11 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 	}
 	if !c.ReviewableFor(j.Admission.Key) {
 		return s.terminal(ctx, j, Stale, "review round is no longer source_review_ready")
+	}
+	if c.Workspace != "" {
+		s.mu.Lock()
+		s.lastWorkspace = c.Workspace
+		s.mu.Unlock()
 	}
 	w, reused, e := s.workerFor(ctx, j.Admission.Key.Task(), c.Workspace)
 	if e != nil {

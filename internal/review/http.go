@@ -126,6 +126,9 @@ func NewHandler(s *Service) http.Handler {
 		}
 		write(w, 200, map[string]bool{"released": true})
 	})
+	m.HandleFunc("POST /v1/review-pool/check", func(w http.ResponseWriter, r *http.Request) {
+		write(w, 200, s.CheckRuntime(r.Context()))
+	})
 	m.HandleFunc("GET /v1/review-pool", func(w http.ResponseWriter, r *http.Request) {
 		n, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		v, e := s.Snapshot(r.Context(), n)

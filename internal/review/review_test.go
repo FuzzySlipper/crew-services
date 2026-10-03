@@ -1111,3 +1111,35 @@ func TestRetryFailedLeavesJobAndAffinityIntactWhenReleaseFails(t *testing.T) {
 		t.Fatalf("release failure lost affinity: snapshot=%+v err=%v", snapshot, err)
 	}
 }
+
+type fakeRuntimeChecker struct{ workspaces []string }
+
+func (f *fakeRuntimeChecker) CheckRuntime(_ context.Context, workspace string) RuntimeCheck {
+	f.workspaces = append(f.workspaces, workspace)
+	return RuntimeCheck{OK: true, Workspace: workspace, Detail: "ran"}
+}
+
+func TestCheckRuntimeUsesLatestReviewWorkspace(t *testing.T) {
+	svc, store, _, _, a := fixture(t, 1)
+	defer store.Close()
+	if got := svc.CheckRuntime(context.Background()); got.OK || got.Detail == "" {
+		t.Fatalf("check without a checker = %+v", got)
+	}
+	checker := &fakeRuntimeChecker{}
+	WithRuntimeChecker(checker)(svc)
+	WithBackend("codex")(svc)
+	first := svc.CheckRuntime(context.Background())
+	if _, _, e := svc.Admit(context.Background(), a); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := svc.RunOne(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	second := svc.CheckRuntime(context.Background())
+	if len(checker.workspaces) != 2 || checker.workspaces[0] != "" || checker.workspaces[1] != "/repo" {
+		t.Fatalf("probed workspaces = %q", checker.workspaces)
+	}
+	if !first.OK || second.Backend != "codex" || second.CheckedAt.IsZero() {
+		t.Fatalf("checks = %+v, %+v", first, second)
+	}
+}
