@@ -42,6 +42,15 @@ func (s *Service) SubmitTaskForReview(ctx context.Context, request SubmissionReq
 		return SubmissionReceipt{}, false, err
 	}
 	record, replayed, err := store.AdmitSubmission(ctx, normalized, idempotencyKey, materialHash)
+	if replayed || errors.Is(err, ErrConflict) {
+		retired, retireErr := s.retireAfterChangesRequested(ctx, store, idempotencyKey)
+		if retireErr != nil {
+			return SubmissionReceipt{}, false, retireErr
+		}
+		if retired {
+			record, replayed, err = store.AdmitSubmission(ctx, normalized, idempotencyKey, materialHash)
+		}
+	}
 	if errors.Is(err, ErrConflict) {
 		record, err = s.reviseSubmission(ctx, store, normalized, idempotencyKey, materialHash)
 		replayed = err == nil
@@ -73,6 +82,41 @@ func (s *Service) reviseSubmission(ctx context.Context, store SubmissionStore, r
 	return revisions.ReviseSubmission(ctx, SubmissionRevision{
 		ID: existing.ID, ExpectedHash: existing.MaterialHash, Request: request, MaterialHash: materialHash, ResetRound: resetRound,
 	})
+}
+
+// retireAfterChangesRequested lets the same review target be submitted again
+// after its reviewer returned changes_requested, for example when a finding
+// was answered without a new commit. The finished submission keeps its record
+// under a retired key, and the caller admits a fresh submission, which records
+// a new Den round. A looks_good result, or a job still in flight, keeps the
+// ordinary replay.
+func (s *Service) retireAfterChangesRequested(ctx context.Context, store SubmissionStore, idempotencyKey string) (bool, error) {
+	revisions, ok := store.(SubmissionRevisionStore)
+	if !ok {
+		return false, nil
+	}
+	existing, err := revisions.SubmissionByKey(ctx, idempotencyKey)
+	if errors.Is(err, ErrNotFound) {
+		// A concurrent resubmission already retired it.
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if existing.Phase != SubmissionJobAdmitted || existing.JobID == "" {
+		return false, nil
+	}
+	job, err := s.store.Get(ctx, existing.JobID)
+	if err != nil {
+		return false, err
+	}
+	if job.State != Succeeded || job.Receipt == nil || job.Receipt.Verdict != "changes_requested" {
+		return false, nil
+	}
+	if err := revisions.RetireSubmission(ctx, existing.ID, idempotencyKey); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // AdvanceSubmissions moves unfinished submissions forward so a caller's single

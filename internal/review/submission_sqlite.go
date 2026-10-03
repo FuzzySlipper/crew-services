@@ -123,6 +123,15 @@ func (s *SQLiteStore) ReviseSubmission(ctx context.Context, revision SubmissionR
 	return s.GetSubmission(ctx, revision.ID)
 }
 
+func (s *SQLiteStore) RetireSubmission(ctx context.Context, id string, idempotencyKey string) error {
+	if id == "" || idempotencyKey == "" {
+		return errors.New("invalid review submission retirement")
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE crew_review_submissions SET idem_key=? WHERE id=? AND idem_key=? AND phase=?`,
+		idempotencyKey+":retired:"+id, id, idempotencyKey, SubmissionJobAdmitted)
+	return err
+}
+
 // ListUnfinishedSubmissions returns every submission that has not reached a
 // terminal phase, oldest update first. All are returned so a long-waiting
 // submission is never starved or aged out of the background advance.

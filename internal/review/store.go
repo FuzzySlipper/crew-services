@@ -40,6 +40,10 @@ type SubmissionRevisionStore interface {
 	SubmissionStore
 	SubmissionByKey(context.Context, string) (SubmissionRecord, error)
 	ReviseSubmission(context.Context, SubmissionRevision) (SubmissionRecord, error)
+	// RetireSubmission moves a finished submission off its idempotency key so
+	// the same target can be submitted again. It is a no-op when another
+	// caller already retired it.
+	RetireSubmission(ctx context.Context, id string, idempotencyKey string) error
 }
 
 // SubmissionAdvanceStore lists unfinished submissions so the service can move

@@ -139,7 +139,11 @@ submission (and records a new Den round for the new summary) instead of
 conflicting. A repeat of a `gate_failed` submission asks Den to re-evaluate the
 gate, for example after a GitHub re-run; a repeat of `source_missing` re-checks
 the checkout. The background pass never re-checks those terminal outcomes on
-its own. Submission state and round-scoped job admission are durable in the
+its own. Once a submission's reviewer has returned `changes_requested`,
+submitting the same target again (or using the manual action) starts a fresh
+submission and Den round, so a finding answered without a new commit can still
+be re-reviewed; after `looks_good` a repeat only replays. Submission state and
+round-scoped job admission are durable in the
 local SQLite file, so an uncertain retry reconciles instead of starting a
 second job. An unavailable crew-review backend is returned as an actionable
 retryable result; there is no automatic Rusty fallback.

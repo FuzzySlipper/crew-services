@@ -578,3 +578,89 @@ func TestAdvanceSubmissionsRecoversSubmissionPendingPastADay(t *testing.T) {
 		t.Fatalf("submission after a day=%+v err=%v", record, err)
 	}
 }
+
+func TestResubmissionAfterChangesRequestedStartsFreshReview(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		summary string
+	}{
+		// The manual-review button replays the stored request unchanged.
+		{name: "identical request", summary: ""},
+		{name: "corrected summary", summary: "Finding answered on the thread; no code change."},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			den := &submissionDen{watchGate: GateEvidence{Status: "passed", Handle: "43", TerminalReason: "checks_passed"}}
+			store, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), nil, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			runtime := &fakeRuntime{completion: Completion{Verdict: "changes_requested", NewFindings: []NewFinding{{Category: "acceptance_gap", Summary: "needs another look"}}}}
+			service, err := New(store, den, runtime, "review profile")
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := submissionRequestForTest()
+			first, _, err := service.SubmitTaskForReview(context.Background(), request)
+			if err != nil || first.Phase != SubmissionJobAdmitted {
+				t.Fatalf("first receipt=%+v err=%v", first, err)
+			}
+
+			// While the first job has no verdict yet, a repeat is a replay.
+			replay, replayed, err := service.SubmitTaskForReview(context.Background(), request)
+			if err != nil || !replayed || replay.SubmissionID != first.SubmissionID || replay.JobID != first.JobID {
+				t.Fatalf("in-flight replay=%+v replayed=%v err=%v", replay, replayed, err)
+			}
+
+			if ran, err := service.RunOne(context.Background()); err != nil || !ran {
+				t.Fatalf("run reviewer ran=%v err=%v", ran, err)
+			}
+			if job, err := store.Get(context.Background(), first.JobID); err != nil || job.State != Succeeded || job.Receipt == nil || job.Receipt.Verdict != "changes_requested" {
+				t.Fatalf("first job=%+v err=%v", job, err)
+			}
+
+			den.mu.Lock()
+			den.roundID = 8
+			den.mu.Unlock()
+			if test.summary != "" {
+				request.ReviewSummary = test.summary
+			}
+			second, replayed, err := service.SubmitTaskForReview(context.Background(), request)
+			if err != nil || replayed || second.SubmissionID == first.SubmissionID || second.Phase != SubmissionJobAdmitted ||
+				second.ReviewRoundID != 8 || second.JobID == "" || second.JobID == first.JobID {
+				t.Fatalf("re-review receipt=%+v replayed=%v err=%v", second, replayed, err)
+			}
+			if den.requestCalls != 2 {
+				t.Fatalf("Den request_review calls=%d, want a second round", den.requestCalls)
+			}
+			retired, err := store.GetSubmission(context.Background(), first.SubmissionID)
+			if err != nil || retired.Phase != SubmissionJobAdmitted || retired.JobID != first.JobID || !strings.Contains(retired.IdempotencyKey, ":retired:") {
+				t.Fatalf("retired submission=%+v err=%v", retired, err)
+			}
+		})
+	}
+}
+
+func TestResubmissionAfterLooksGoodStillReplays(t *testing.T) {
+	den := &submissionDen{watchGate: GateEvidence{Status: "passed", Handle: "43", TerminalReason: "checks_passed"}}
+	store, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), nil, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service, err := New(store, den, &fakeRuntime{completion: Completion{Verdict: "looks_good"}}, "review profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ran, err := service.RunOne(context.Background()); err != nil || !ran {
+		t.Fatalf("run reviewer ran=%v err=%v", ran, err)
+	}
+	again, replayed, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil || !replayed || again.SubmissionID != first.SubmissionID || again.JobID != first.JobID || den.requestCalls != 1 {
+		t.Fatalf("looks_good resubmission=%+v replayed=%v requests=%d err=%v", again, replayed, den.requestCalls, err)
+	}
+}
