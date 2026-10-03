@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -195,7 +196,12 @@ func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, com
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	wait := make(chan error, 1)
-	go func() { _, err := r.server.WaitTurn(waitCtx, w.threadID, turn.ID); wait <- err }()
+	var done codexadapter.TurnCompletion
+	go func() {
+		var err error
+		done, err = r.server.WaitTurn(waitCtx, w.threadID, turn.ID)
+		wait <- err
+	}()
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -230,9 +236,30 @@ completed:
 		if w.rejectedReason != "" {
 			return fmt.Errorf("Codex turn completed without complete_review: %s", w.rejectedReason)
 		}
-		return errors.New("Codex turn completed without complete_review")
+		return errors.New(missingCompletion(done))
 	}
 	return nil
+}
+
+// missingCompletion explains a turn that ended without complete_review using
+// what Codex reported: its turn status and error, and the reviewer's last
+// message, which usually says why it stopped.
+func missingCompletion(done codexadapter.TurnCompletion) string {
+	text := "Codex turn completed without complete_review"
+	if done.Status != "" && done.Status != "completed" {
+		text = "Codex turn " + done.Status + " without complete_review"
+	}
+	if message := strings.TrimSpace(done.Error); message != "" {
+		text += ": " + message
+	}
+	if message := strings.Join(strings.Fields(done.LastMessage), " "); message != "" {
+		const limit = 600
+		if len(message) > limit {
+			message = strings.ToValidUTF8(message[:limit], "") + "…"
+		}
+		text += "; reviewer's last message: " + message
+	}
+	return text
 }
 func (r *Runtime) Release(_ context.Context, raw review.Worker) error {
 	w, e := r.require(raw)

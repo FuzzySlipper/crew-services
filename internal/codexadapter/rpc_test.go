@@ -492,3 +492,19 @@ func TestUntrackedCompletionIsIgnoredButTrackedPreWaitIsCached(t *testing.T) {
 		t.Fatalf("cached ephemeral completion=%+v err=%v", done, err)
 	}
 }
+
+func TestTurnCompletionCarriesErrorAndLastAgentMessage(t *testing.T) {
+	client := &StdioAppServer{turnWaiters: map[string]chan TurnCompletion{}, completedTurns: map[string]TurnCompletion{}, ephemeralThreads: map[string]struct{}{"ephemeral": {}}, done: make(chan struct{}), interactions: map[string]pendingInteraction{}, pending: map[string]chan rpcResponse{}, handshakeDone: make(chan struct{})}
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"ordinary","turnId":"one","item":{"type":"agentMessage","id":"m0","text":"not tracked"}}}`))
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"ephemeral","turnId":"one","item":{"type":"agentMessage","id":"m1","text":"first"}}}`))
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"ephemeral","turnId":"one","item":{"type":"commandExecution","id":"c1"}}}`))
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"ephemeral","turnId":"one","item":{"type":"agentMessage","id":"m2","text":"cannot run commands"}}}`))
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"ephemeral","turn":{"id":"one","status":"failed","error":{"message":"usage limit reached"},"items":[]}}}`))
+	done, err := client.WaitTurn(context.Background(), "ephemeral", "one")
+	if err != nil || done.Status != "failed" || done.Error != "usage limit reached" || done.LastMessage != "cannot run commands" {
+		t.Fatalf("completion=%+v err=%v", done, err)
+	}
+	if len(client.agentMessages) != 0 {
+		t.Fatalf("agent messages retained after completion: %#v", client.agentMessages)
+	}
+}

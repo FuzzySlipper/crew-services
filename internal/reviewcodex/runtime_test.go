@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"crew-services/internal/codexadapter"
 	"crew-services/internal/review"
@@ -564,3 +565,22 @@ func must(v json.RawMessage, e error) json.RawMessage {
 }
 
 var _ = errors.New
+
+func TestMissingCompletionReportsTurnErrorAndLastMessage(t *testing.T) {
+	for _, tc := range []struct {
+		done codexadapter.TurnCompletion
+		want string
+	}{
+		{codexadapter.TurnCompletion{Status: "completed"}, "Codex turn completed without complete_review"},
+		{codexadapter.TurnCompletion{Status: "failed", Error: "usage limit reached"}, "Codex turn failed without complete_review: usage limit reached"},
+		{codexadapter.TurnCompletion{Status: "completed", LastMessage: "Shell is failing:\n  bwrap denied."}, "Codex turn completed without complete_review; reviewer's last message: Shell is failing: bwrap denied."},
+	} {
+		if got := missingCompletion(tc.done); got != tc.want {
+			t.Fatalf("missingCompletion(%+v) = %q, want %q", tc.done, got, tc.want)
+		}
+	}
+	long := missingCompletion(codexadapter.TurnCompletion{Status: "completed", LastMessage: strings.Repeat("é", 400)})
+	if !utf8.ValidString(long) || !strings.HasSuffix(long, "…") {
+		t.Fatalf("long message not truncated cleanly: %q", long)
+	}
+}

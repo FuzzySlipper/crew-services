@@ -110,7 +110,7 @@ remain outside the projected event surface.
 
 The separate `crew-review` command owns the local review job ledger and its
 ephemeral runtime pool. It calls the current Den MCP endpoint directly for
-`request_review`, exact-SHA GitHub gate operations, `get_review_context`, and
+`request_review`, GitHub check gate operations, `get_review_context`, and
 `finalize_review`; it does not import Den or Rusty Crew code. Den remains the
 review authority, while crew-review owns durable submission admission and the
 runtime choice.
@@ -225,9 +225,11 @@ The Den MCP facade's `submit_task_for_review` tool forwards the public
 project/task/repository/exact-SHA/checks/summary envelope to
 `POST /v1/review-submissions` on the loopback `crew-review` backend. Configure
 that backend in the MCP route/config files before enabling the tool. The
-receipt is immediately `gate_pending` when checks are not terminal; retry the
-same envelope after Den advances the gate. A passed gate is admitted exactly
-once for its Den review round. If the backend is down, the MCP response is a
+receipt is immediately `gate_pending` when checks are not terminal; crew-review
+advances the submission itself on its submission interval, so callers do not
+poll or resend it. A passed gate is admitted exactly once for its Den review
+round. Resend the same envelope only after re-running a failed check or after
+fixing `changes_requested` findings. If the backend is down, the MCP response is a
 retryable `den_backend_unavailable` result; the route never falls back to
 Rusty or dispatches a second review authority.
 

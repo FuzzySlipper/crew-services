@@ -485,7 +485,7 @@ func TestFinalizingStaleConflictAndResponseLoss(t *testing.T) {
 		err  error
 		want State
 	}{
-		"stale": {ErrStaleRound, Stale}, "conflict": {ErrDenConflict, Failed}, "rejected": {ErrDenRejected, Failed},
+		"stale": {ErrStaleRound, Stale}, "conflict": {ErrDenConflict, Stale}, "rejected": {ErrDenRejected, Failed},
 	} {
 		t.Run(name, func(t *testing.T) {
 			svc, store, den, _, a := fixture(t, 1)

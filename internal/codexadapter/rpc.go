@@ -94,6 +94,10 @@ type TurnCompletion struct {
 	ThreadID string
 	TurnID   string
 	Status   string
+	// Error is Codex's message for a failed or interrupted turn.
+	Error string
+	// LastMessage is the turn's final agent message, kept for diagnostics.
+	LastMessage string
 }
 type EphemeralServer interface {
 	Initialize(context.Context) error
@@ -132,6 +136,7 @@ type StdioAppServer struct {
 	toolCancel       context.CancelFunc
 	turnWaiters      map[string]chan TurnCompletion
 	completedTurns   map[string]TurnCompletion
+	agentMessages    map[string]string
 	ephemeralThreads map[string]struct{}
 	closing          bool
 	closed           bool
@@ -297,6 +302,11 @@ func (c *StdioAppServer) ForgetThread(threadID string) {
 	for key := range c.completedTurns {
 		if strings.HasPrefix(key, threadID+"\x00") {
 			delete(c.completedTurns, key)
+		}
+	}
+	for key := range c.agentMessages {
+		if strings.HasPrefix(key, threadID+"\x00") {
+			delete(c.agentMessages, key)
 		}
 	}
 }
@@ -670,18 +680,47 @@ func (c *StdioAppServer) handleFrame(frame []byte) {
 	if err := json.Unmarshal(frame, &envelope); err != nil {
 		return
 	}
+	if envelope.Method == "item/completed" {
+		var completed struct {
+			ThreadID string `json:"threadId"`
+			TurnID   string `json:"turnId"`
+			Item     struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"item"`
+		}
+		if json.Unmarshal(envelope.Params, &completed) == nil && completed.Item.Type == "agentMessage" && strings.TrimSpace(completed.Item.Text) != "" {
+			c.mu.Lock()
+			if _, tracked := c.ephemeralThreads[completed.ThreadID]; tracked {
+				if c.agentMessages == nil {
+					c.agentMessages = make(map[string]string)
+				}
+				c.agentMessages[turnKey(completed.ThreadID, completed.TurnID)] = completed.Item.Text
+			}
+			c.mu.Unlock()
+		}
+		return
+	}
 	if envelope.Method == "turn/completed" {
 		var completed struct {
 			ThreadID string `json:"threadId"`
 			Turn     struct {
 				ID     string `json:"id"`
 				Status string `json:"status"`
+				Error  *struct {
+					Message string `json:"message"`
+				} `json:"error"`
 			} `json:"turn"`
 		}
 		if json.Unmarshal(envelope.Params, &completed) == nil && completed.ThreadID != "" && completed.Turn.ID != "" {
 			value := TurnCompletion{ThreadID: completed.ThreadID, TurnID: completed.Turn.ID, Status: completed.Turn.Status}
+			if completed.Turn.Error != nil {
+				value.Error = completed.Turn.Error.Message
+			}
 			key := turnKey(value.ThreadID, value.TurnID)
 			c.mu.Lock()
+			value.LastMessage = c.agentMessages[key]
+			delete(c.agentMessages, key)
 			if wait := c.turnWaiters[key]; wait != nil {
 				delete(c.turnWaiters, key)
 				wait <- value
@@ -835,6 +874,7 @@ func (c *StdioAppServer) fail(err error) {
 		close(waiter)
 	}
 	c.completedTurns = make(map[string]TurnCompletion)
+	c.agentMessages = nil
 	c.ephemeralThreads = make(map[string]struct{})
 	c.interactions = make(map[string]pendingInteraction)
 	c.closed = true

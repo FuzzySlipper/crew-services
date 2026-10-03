@@ -307,7 +307,10 @@ func (s *Service) reconcile(ctx context.Context, j Job) error {
 			return s.terminal(ctx, j, Stale, e.Error())
 		}
 		if errors.Is(e, ErrDenConflict) {
-			return s.terminal(ctx, j, Failed, e.Error())
+			// Den keeps the first finalization of a round. crew-review always
+			// retries its stored request unchanged, so a different decision
+			// identity means another reviewer finalized this round first.
+			return s.terminal(ctx, j, Stale, "Den review round was already finalized by another reviewer; this review was not recorded: "+e.Error())
 		}
 		if errors.Is(e, ErrDenRejected) {
 			return s.terminal(ctx, j, Failed, e.Error())
