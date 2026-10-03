@@ -1,6 +1,9 @@
 package review
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type Store interface {
 	Admit(context.Context, Admission) (Job, bool, error)
@@ -31,6 +34,22 @@ type SubmissionStore interface {
 	AdmitSubmission(context.Context, SubmissionRequest, string, string) (SubmissionRecord, bool, error)
 	GetSubmission(context.Context, string) (SubmissionRecord, error)
 	TransitionSubmission(context.Context, string, SubmissionPhase, SubmissionTransition) (SubmissionRecord, error)
+}
+
+// SubmissionRevisionStore lets a caller correct the summary or reviewer of a
+// submission that has not admitted a reviewer job yet, instead of treating the
+// corrected request as an idempotency conflict.
+type SubmissionRevisionStore interface {
+	SubmissionStore
+	SubmissionByKey(context.Context, string) (SubmissionRecord, error)
+	ReviseSubmission(context.Context, SubmissionRevision) (SubmissionRecord, error)
+}
+
+// SubmissionAdvanceStore lists unfinished submissions so the service can move
+// them forward without callers retrying.
+type SubmissionAdvanceStore interface {
+	SubmissionStore
+	ListUnfinishedSubmissions(ctx context.Context, createdAfter time.Time, limit int) ([]SubmissionRecord, error)
 }
 
 // ManualReviewSubmissionStore is an additive capability. Keeping it

@@ -39,6 +39,12 @@ type commandConfig struct {
 	codexArgs      []string
 	runInterval    time.Duration
 	workspaceRoots []string
+	// submissionInterval paces the background advance of unfinished review
+	// submissions (gate waits, Den retries, checkout waits).
+	submissionInterval time.Duration
+	// sourceGrace bounds how long a submission waits for the review checkout
+	// to contain its commit before reporting source_missing.
+	sourceGrace time.Duration
 }
 
 type repeatString []string
@@ -81,7 +87,8 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	svc, err := review.New(store, den, runtime, cfg.profile, review.WithBackend(cfg.backend))
+	svc, err := review.New(store, den, runtime, cfg.profile, review.WithBackend(cfg.backend),
+		review.WithSourceChecker(reviewden.GitSourceChecker{}, cfg.sourceGrace))
 	if err != nil {
 		_ = runtime.Close()
 		return err
@@ -91,6 +98,11 @@ func run(args []string) error {
 	loopDone := startRunLoops(ctx, cfg.runInterval, cfg.capacity, svc.RunOne, func(err error) {
 		if ctx.Err() == nil {
 			logger.Printf("review job loop: %v", err)
+		}
+	})
+	submissionsDone := startRunLoop(ctx, cfg.submissionInterval, svc.AdvanceSubmissions, func(err error) {
+		if ctx.Err() == nil {
+			logger.Printf("review submission loop: %v", err)
 		}
 	})
 	server := &http.Server{Addr: cfg.listen, Handler: review.NewHandler(svc)}
@@ -104,6 +116,7 @@ func run(args []string) error {
 	serverErr := server.ListenAndServe()
 	stop()
 	<-loopDone
+	<-submissionsDone
 	closeErr := svc.Close()
 	if errors.Is(serverErr, http.ErrServerClosed) {
 		return closeErr
@@ -131,6 +144,9 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 		codexEffort:  strings.TrimSpace(getenv("CREW_REVIEW_REASONING_EFFORT")),
 		codexCommand: envOr(getenv, "CODEX_COMMAND", "codex"),
 		runInterval:  500 * time.Millisecond,
+
+		submissionInterval: 30 * time.Second,
+		sourceGrace:        15 * time.Minute,
 	}
 	if raw := strings.TrimSpace(getenv("CREW_REVIEW_RUN_INTERVAL")); raw != "" {
 		interval, err := time.ParseDuration(raw)
@@ -138,6 +154,21 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 			return commandConfig{}, fmt.Errorf("parse CREW_REVIEW_RUN_INTERVAL: %w", err)
 		}
 		cfg.runInterval = interval
+	}
+	for _, setting := range []struct {
+		name   string
+		target *time.Duration
+	}{
+		{"CREW_REVIEW_SUBMISSION_INTERVAL", &cfg.submissionInterval},
+		{"CREW_REVIEW_SOURCE_GRACE", &cfg.sourceGrace},
+	} {
+		if raw := strings.TrimSpace(getenv(setting.name)); raw != "" {
+			value, err := time.ParseDuration(raw)
+			if err != nil {
+				return commandConfig{}, fmt.Errorf("parse %s: %w", setting.name, err)
+			}
+			*setting.target = value
+		}
 	}
 	if raw := strings.TrimSpace(getenv("CREW_REVIEW_CAPACITY")); raw != "" {
 		capacity, err := strconv.Atoi(raw)
@@ -163,6 +194,8 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	flags.Var(&workspaceRoots, "workspace-root", "absolute directory containing local Git checkouts; repeatable; overrides CREW_REVIEW_WORKSPACE_ROOTS")
 	flags.Var(&codexArgs, "codex-arg", "Codex App Server argument; repeatable")
 	flags.DurationVar(&cfg.runInterval, "run-interval", cfg.runInterval, "delay between bounded single-job runner passes")
+	flags.DurationVar(&cfg.submissionInterval, "submission-interval", cfg.submissionInterval, "delay between background passes over unfinished review submissions")
+	flags.DurationVar(&cfg.sourceGrace, "source-grace", cfg.sourceGrace, "how long a submission waits for the review checkout to contain its commit")
 	if err := flags.Parse(args); err != nil {
 		return commandConfig{}, err
 	}
@@ -205,6 +238,12 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	}
 	if cfg.runInterval <= 0 {
 		return commandConfig{}, errors.New("run interval must be positive")
+	}
+	if cfg.submissionInterval <= 0 {
+		return commandConfig{}, errors.New("submission interval must be positive")
+	}
+	if cfg.sourceGrace <= 0 {
+		return commandConfig{}, errors.New("source grace must be positive")
 	}
 	return cfg, nil
 }

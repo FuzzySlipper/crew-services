@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -90,6 +91,75 @@ func (s *SQLiteStore) LatestReusableSubmission(ctx context.Context, projectID st
 		return record, true, nil
 	}
 	return SubmissionRecord{}, false, nil
+}
+
+func (s *SQLiteStore) SubmissionByKey(ctx context.Context, idempotencyKey string) (SubmissionRecord, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id,idem_key,material_hash,request_json,phase,review_round_id,gate_json,job_id,failure,created_at,updated_at FROM crew_review_submissions WHERE idem_key=?`, idempotencyKey)
+	return scanSubmission(row)
+}
+
+// ReviseSubmission replaces the request material of a submission that has not
+// admitted a reviewer job. It returns to accepted so the next advance re-reads
+// Den state; the recorded gate is kept.
+func (s *SQLiteStore) ReviseSubmission(ctx context.Context, revision SubmissionRevision) (SubmissionRecord, error) {
+	if revision.ID == "" || revision.ExpectedHash == "" || revision.MaterialHash == "" {
+		return SubmissionRecord{}, errors.New("invalid review submission revision")
+	}
+	requestJSON, err := json.Marshal(revision.Request)
+	if err != nil {
+		return SubmissionRecord{}, fmt.Errorf("encode review submission: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE crew_review_submissions SET request_json=?, material_hash=?, phase=?, review_round_id=CASE WHEN ?=1 THEN 0 ELSE review_round_id END, failure='', updated_at=? WHERE id=? AND material_hash=? AND phase<>?`,
+		string(requestJSON), revision.MaterialHash, SubmissionAccepted, boolInt(revision.ResetRound), stamp(s.clock.Now()), revision.ID, revision.ExpectedHash, SubmissionJobAdmitted)
+	if err != nil {
+		return SubmissionRecord{}, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return SubmissionRecord{}, err
+	}
+	if rows != 1 {
+		return SubmissionRecord{}, ErrConflict
+	}
+	return s.GetSubmission(ctx, revision.ID)
+}
+
+// ListUnfinishedSubmissions returns submissions created after createdAfter
+// that have not reached a terminal phase, oldest update first.
+func (s *SQLiteStore) ListUnfinishedSubmissions(ctx context.Context, createdAfter time.Time, limit int) ([]SubmissionRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM crew_review_submissions WHERE phase NOT IN (?,?,?,?) AND created_at>? ORDER BY updated_at, id LIMIT ?`,
+		SubmissionGateFailed, SubmissionJobAdmitted, SubmissionStale, SubmissionSourceMissing, stamp(createdAfter), limit)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	records := make([]SubmissionRecord, 0, len(ids))
+	for _, id := range ids {
+		record, err := s.GetSubmission(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, nil
 }
 
 func scanSubmission(row scanner) (SubmissionRecord, error) {
@@ -179,3 +249,5 @@ func boolInt(value bool) int {
 
 var _ SubmissionStore = (*SQLiteStore)(nil)
 var _ ManualReviewSubmissionStore = (*SQLiteStore)(nil)
+var _ SubmissionRevisionStore = (*SQLiteStore)(nil)
+var _ SubmissionAdvanceStore = (*SQLiteStore)(nil)

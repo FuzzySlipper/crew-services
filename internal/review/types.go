@@ -85,10 +85,22 @@ type Admission struct {
 	Branch         string       `json:"branch,omitempty"`
 	Gate           GateEvidence `json:"gate,omitempty"`
 	PacketHandle   string       `json:"packet_handle,omitempty"`
+	// Source names the exact change a managed submission asks the reviewer to
+	// examine. Best-effort manual admissions have none.
+	Source *ReviewSource `json:"source,omitempty"`
 	// ReviewPreamble is controller-owned prompt context for a manual
 	// best-effort admission. It is intentionally persisted with the private
 	// admission envelope, while Job.Projection never exposes it.
 	ReviewPreamble string `json:"review_preamble,omitempty"`
+}
+
+// ReviewSource is the submitted change: CommitSHA on Ref, optionally the
+// range BaseCommit..CommitSHA when the change spans several commits.
+type ReviewSource struct {
+	Repository string `json:"repository"`
+	CommitSHA  string `json:"commit_sha"`
+	Ref        string `json:"ref,omitempty"`
+	BaseCommit string `json:"base_commit,omitempty"`
 }
 
 type ManualReviewMode string
@@ -201,10 +213,18 @@ const (
 	SubmissionJobAdmitted   SubmissionPhase = "job_admitted"
 	SubmissionUnavailable   SubmissionPhase = "unavailable"
 	SubmissionStale         SubmissionPhase = "stale"
+	// SubmissionSourcePending waits for the review checkout to contain the
+	// submitted commit, usually until the checkout is pulled. It is bounded by
+	// the service's source grace period.
+	SubmissionSourcePending SubmissionPhase = "source_pending"
+	// SubmissionSourceMissing is a typed infrastructure failure: the checkout
+	// never contained the submitted commit within the grace period. Submitting
+	// the same request again re-checks it.
+	SubmissionSourceMissing SubmissionPhase = "source_missing"
 )
 
 func (p SubmissionPhase) Terminal() bool {
-	return p == SubmissionGateFailed || p == SubmissionJobAdmitted || p == SubmissionStale
+	return p == SubmissionGateFailed || p == SubmissionJobAdmitted || p == SubmissionStale || p == SubmissionSourceMissing
 }
 
 // SubmissionRecord is the durable handoff ledger between the caller, Den's
@@ -222,6 +242,17 @@ type SubmissionRecord struct {
 	Failure        string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+}
+
+// SubmissionRevision replaces a not-yet-admitted submission's request
+// material. ExpectedHash guards against a concurrent revision. ResetRound
+// clears the recorded Den round so the revised summary reaches a new round.
+type SubmissionRevision struct {
+	ID           string
+	ExpectedHash string
+	Request      SubmissionRequest
+	MaterialHash string
+	ResetRound   bool
 }
 
 type SubmissionTransition struct {

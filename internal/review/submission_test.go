@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -260,7 +261,7 @@ func TestManagedRereviewAdmissionRefreshesIdleAffinityButReplayDoesNot(t *testin
 	}
 }
 
-func TestSubmitTaskForReviewGateFailureIsTerminal(t *testing.T) {
+func TestSubmitTaskForReviewGateFailureRechecksOnlyOnResubmission(t *testing.T) {
 	den := &submissionDen{watchGate: GateEvidence{
 		Repository: "owner/repo", Ref: "main", CommitSHA: submissionTestSHA, Status: "failed", Handle: "42",
 		TerminalReason: "required_checks_missing", FailureSummary: "lint was not observed",
@@ -274,9 +275,183 @@ func TestSubmitTaskForReviewGateFailureIsTerminal(t *testing.T) {
 	if receipt.Error == "" || runtime.acquired != 0 || den.contextCalls != 0 {
 		t.Fatalf("failure receipt/error or runtime state receipt=%+v acquired=%d contexts=%d", receipt, runtime.acquired, den.contextCalls)
 	}
-	replayedReceipt, replayed, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
-	if err != nil || !replayed || replayedReceipt.SubmissionID != receipt.SubmissionID || replayedReceipt.ErrorCode != "github_gate_failed" || replayedReceipt.Retryable || den.watchCalls != 1 {
-		t.Fatalf("terminal failure replay=%+v replayed=%v calls=%d err=%v", replayedReceipt, replayed, den.watchCalls, err)
+
+	if _, err := service.AdvanceSubmissions(context.Background()); err != nil || den.watchCalls != 1 {
+		t.Fatalf("background advance re-polled a failed gate: calls=%d err=%v", den.watchCalls, err)
+	}
+
+	stillFailing, replayed, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil || !replayed || stillFailing.SubmissionID != receipt.SubmissionID || stillFailing.ErrorCode != "github_gate_failed" || stillFailing.Retryable || den.watchCalls != 2 {
+		t.Fatalf("still-failing resubmission=%+v replayed=%v calls=%d err=%v", stillFailing, replayed, den.watchCalls, err)
+	}
+
+	den.mu.Lock()
+	den.watchGate = GateEvidence{Repository: "owner/repo", Ref: "main", CommitSHA: submissionTestSHA, Status: "passed", Handle: "42", TerminalReason: "checks_passed"}
+	den.mu.Unlock()
+	recovered, _, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil || !recovered.OK || recovered.Phase != SubmissionJobAdmitted || recovered.JobID == "" || recovered.SubmissionID != receipt.SubmissionID {
+		t.Fatalf("recovered resubmission=%+v err=%v", recovered, err)
+	}
+}
+
+func TestAdvanceSubmissionsAdmitsPendingGateWithoutCallerRetry(t *testing.T) {
+	den := &submissionDen{
+		watchGate: GateEvidence{Repository: "owner/repo", Ref: "main", CommitSHA: submissionTestSHA, Status: "pending", Handle: "41"},
+		readGates: []GateEvidence{
+			{Repository: "owner/repo", Ref: "main", CommitSHA: submissionTestSHA, Status: "pending", Handle: "41"},
+			{Repository: "owner/repo", Ref: "main", CommitSHA: submissionTestSHA, Status: "passed", Handle: "41", TerminalReason: "checks_passed"},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "review.db")
+	store, err := OpenSQLite(context.Background(), path, nil, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := New(store, den, &fakeRuntime{}, "review profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil || first.Phase != SubmissionGatePending {
+		t.Fatalf("first receipt=%+v err=%v", first, err)
+	}
+	if examined, err := service.AdvanceSubmissions(context.Background()); err != nil || !examined {
+		t.Fatalf("first advance examined=%v err=%v", examined, err)
+	}
+	if record, err := store.GetSubmission(context.Background(), first.SubmissionID); err != nil || record.Phase != SubmissionGatePending {
+		t.Fatalf("still-pending record=%+v err=%v", record, err)
+	}
+
+	// The pending submission survives a restart and is admitted by the
+	// background advance alone.
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = OpenSQLite(context.Background(), path, nil, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service, err = New(store, den, &fakeRuntime{}, "review profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AdvanceSubmissions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.GetSubmission(context.Background(), first.SubmissionID)
+	if err != nil || record.Phase != SubmissionJobAdmitted || record.JobID == "" {
+		t.Fatalf("advanced record=%+v err=%v", record, err)
+	}
+	if examined, err := service.AdvanceSubmissions(context.Background()); err != nil || examined {
+		t.Fatalf("finished submission still listed: examined=%v err=%v", examined, err)
+	}
+}
+
+func TestSubmitTaskForReviewRevisesSummaryBeforeJobAdmission(t *testing.T) {
+	den := &submissionDen{
+		watchGate: GateEvidence{Repository: "owner/repo", Ref: "main", CommitSHA: submissionTestSHA, Status: "pending", Handle: "41"},
+	}
+	service, store, _ := submissionFixture(t, den)
+	defer store.Close()
+	request := submissionRequestForTest()
+	first, _, err := service.SubmitTaskForReview(context.Background(), request)
+	if err != nil || first.Phase != SubmissionGatePending || den.requestCalls != 1 {
+		t.Fatalf("first receipt=%+v requests=%d err=%v", first, den.requestCalls, err)
+	}
+
+	request.ReviewSummary = "Corrected summary: the change also covers retries."
+	revised, replayed, err := service.SubmitTaskForReview(context.Background(), request)
+	if err != nil || !replayed || revised.SubmissionID != first.SubmissionID || revised.Phase != SubmissionGatePending {
+		t.Fatalf("revised receipt=%+v replayed=%v err=%v", revised, replayed, err)
+	}
+	if den.requestCalls != 2 || den.lastRequest.ReviewSummary != request.ReviewSummary {
+		t.Fatalf("revised summary did not reach a new Den round: requests=%d last=%q", den.requestCalls, den.lastRequest.ReviewSummary)
+	}
+
+	request.Ref = "release"
+	if _, _, err := service.SubmitTaskForReview(context.Background(), request); err != nil {
+		t.Fatalf("a different target is a new submission, got %v", err)
+	}
+}
+
+type fakeSourceChecker struct {
+	mu       sync.Mutex
+	contains bool
+	calls    int
+}
+
+func (f *fakeSourceChecker) ContainsCommit(context.Context, string, string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.contains, nil
+}
+
+func TestSubmissionWaitsForCheckoutThenReportsSourceMissing(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)}
+	store, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), clock, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	den := &submissionDen{watchGate: GateEvidence{Status: "passed", Handle: "43", TerminalReason: "checks_passed"}}
+	source := &fakeSourceChecker{}
+	runtime := &fakeRuntime{}
+	service, err := New(store, den, runtime, "review profile", WithClock(clock), WithSourceChecker(source, 10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pending, _, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil || !pending.OK || !pending.Retryable || pending.Phase != SubmissionSourcePending || pending.JobID != "" {
+		t.Fatalf("pending receipt=%+v err=%v", pending, err)
+	}
+	clock.now = clock.now.Add(5 * time.Minute)
+	if _, err := service.AdvanceSubmissions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if record, _ := store.GetSubmission(context.Background(), pending.SubmissionID); record.Phase != SubmissionSourcePending {
+		t.Fatalf("submission left source_pending inside the grace period: %+v", record)
+	}
+	clock.now = clock.now.Add(6 * time.Minute)
+	if _, err := service.AdvanceSubmissions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	missing, err := store.GetSubmission(context.Background(), pending.SubmissionID)
+	if err != nil || missing.Phase != SubmissionSourceMissing {
+		t.Fatalf("submission after grace=%+v err=%v", missing, err)
+	}
+	if receipt := submissionReceipt(missing); receipt.OK || receipt.ErrorCode != "checkout_missing_commit" || receipt.Retryable {
+		t.Fatalf("source_missing receipt=%+v", receipt)
+	}
+	if runtime.acquired != 0 {
+		t.Fatalf("reviewer started without the commit: %d", runtime.acquired)
+	}
+
+	source.mu.Lock()
+	source.contains = true
+	source.mu.Unlock()
+	admitted, _, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil || admitted.Phase != SubmissionJobAdmitted || admitted.JobID == "" {
+		t.Fatalf("resubmission after pull=%+v err=%v", admitted, err)
+	}
+	job, err := store.Get(context.Background(), admitted.JobID)
+	if err != nil || job.Admission.Source == nil || job.Admission.Source.CommitSHA != submissionTestSHA || job.Admission.Source.BaseCommit == "" {
+		t.Fatalf("admitted job source=%+v err=%v", job.Admission.Source, err)
+	}
+}
+
+func TestReviewerPromptNamesSubmittedRange(t *testing.T) {
+	key := Key{ProjectID: "dsh-crew", TaskID: 7416, ReviewRoundID: 7, CorrelationID: "c"}
+	prompt := reviewerPrompt(key, nil, "", &ReviewSource{
+		Repository: "owner/repo", CommitSHA: submissionTestSHA, Ref: "main", BaseCommit: "fedcba9876543210fedcba9876543210fedcba98",
+	})
+	if !strings.Contains(prompt, "git diff fedcba9876543210fedcba9876543210fedcba98.."+submissionTestSHA) || !strings.Contains(prompt, "judge only this range") {
+		t.Fatalf("prompt does not name the range:\n%s", prompt)
+	}
+	if strings.Contains(reviewerPrompt(key, nil, "", nil), "Change under review") {
+		t.Fatal("prompt without a source named a change")
 	}
 }
 

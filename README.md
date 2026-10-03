@@ -93,14 +93,15 @@ The installed service keeps ordinary machine configuration in
 instructions beside it in `reviewer.md`. `CREW_REVIEW_LISTEN`,
 `CREW_REVIEW_DB`, `CREW_REVIEW_MODEL`, `CREW_REVIEW_REASONING_EFFORT`,
 `DEN_MCP_TOKEN`, `CREW_REVIEW_PROFILE`, `CREW_REVIEW_CAPACITY`,
-`CREW_REVIEW_RUN_INTERVAL`, and `CODEX_COMMAND` may be supplied through the
+`CREW_REVIEW_RUN_INTERVAL`, `CREW_REVIEW_SUBMISSION_INTERVAL`,
+`CREW_REVIEW_SOURCE_GRACE`, and `CODEX_COMMAND` may be supplied through the
 environment; all have corresponding flags where they affect the process.
 The command starts a fixed number of bounded runner lanes (one durable job per
 lane at a time), reports `backend: "codex"` from `GET /v1/review-pool`, and
 never exposes ephemeral Codex worker or thread IDs in that projection.
 The pool projection includes bounded active jobs and a separate `finalizing`
 count so durable reconciliation cannot hide behind the running aggregate. The
-Den adapter validates the exact encoded 4 KiB finalization request before it
+Den adapter validates the exact encoded 16 KiB finalization request before it
 is stored; a rejected tool result lets the reviewer submit a shorter completion
 in the same turn. Deterministic Den validation failures become one terminal
 job failure, while ambiguous transport failures retain the exact request for
@@ -116,13 +117,32 @@ admission or retrying automatically.
 The managed submission boundary is `POST /v1/review-submissions`. The Den MCP
 facade routes its `submit_task_for_review` green path to this endpoint through
 the separately configured `crew-review` backend. A first call records the Den
-round and exact-SHA gate; it returns `phase: "gate_pending"` while checks are
-pending, and later retries of the same target advance to `phase:
-"job_admitted"` once Den reports the gate passed and the current review context
-is source-review-ready. Submission state and round-scoped job admission are
-durable in the local SQLite file, so an uncertain retry reconciles instead of
-starting a second job. An unavailable crew-review backend is returned as an
-actionable retryable result; there is no automatic Rusty fallback.
+round and the task commit's GitHub check gate and returns at once, usually with
+`phase: "gate_pending"`. One call is enough: a background pass (every
+`-submission-interval`, 30 seconds by default) keeps advancing unfinished
+submissions through gate waits and Den unavailability until `phase:
+"job_admitted"`, including across restarts. Den may satisfy the gate with
+checks from a later commit of the ref that contains the task commit.
+
+Before admitting a reviewer, crew-review checks read-only (`git merge-base
+--is-ancestor`) that the resolved checkout contains the submitted commit. If it
+does not yet, usually because the checkout has not been pulled, the submission
+waits quietly in `source_pending`; after `-source-grace` (15 minutes by default)
+it stops as `source_missing` with `error_code: "checkout_missing_commit"`. This
+never produces a review verdict or a message to the submitter, and crew-review
+never fetches or checks out. The admitted job carries the submitted
+`base_commit..commit_sha` range, which the reviewer prompt names explicitly.
+
+Repeating the same submission is an idempotent replay. While no reviewer job
+exists, a repeat with a corrected `review_summary_md` or `reviewer` revises the
+submission (and records a new Den round for the new summary) instead of
+conflicting. A repeat of a `gate_failed` submission asks Den to re-evaluate the
+gate, for example after a GitHub re-run; a repeat of `source_missing` re-checks
+the checkout. The background pass never re-checks those terminal outcomes on
+its own. Submission state and round-scoped job admission are durable in the
+local SQLite file, so an uncertain retry reconciles instead of starting a
+second job. An unavailable crew-review backend is returned as an actionable
+retryable result; there is no automatic Rusty fallback.
 
 Den Web's contextual manual action uses
 `GET /v1/projects/{project_id}/tasks/{task_id}/manual-review` to read a

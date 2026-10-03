@@ -42,12 +42,59 @@ func (s *Service) SubmitTaskForReview(ctx context.Context, request SubmissionReq
 		return SubmissionReceipt{}, false, err
 	}
 	record, replayed, err := store.AdmitSubmission(ctx, normalized, idempotencyKey, materialHash)
+	if errors.Is(err, ErrConflict) {
+		record, err = s.reviseSubmission(ctx, store, normalized, idempotencyKey, materialHash)
+		replayed = err == nil
+	}
 	if err != nil {
 		return SubmissionReceipt{}, replayed, err
 	}
-	receipt, err := s.advanceSubmission(ctx, store, record)
+	receipt, err := s.advanceSubmission(ctx, store, record, true)
 	receipt.Replayed = replayed
 	return receipt, replayed, err
+}
+
+// reviseSubmission accepts a corrected summary or reviewer for the same
+// review target while no reviewer job exists yet. Any other difference, or a
+// submission that already admitted a job, stays an idempotency conflict.
+func (s *Service) reviseSubmission(ctx context.Context, store SubmissionStore, request SubmissionRequest, idempotencyKey, materialHash string) (SubmissionRecord, error) {
+	revisions, ok := store.(SubmissionRevisionStore)
+	if !ok {
+		return SubmissionRecord{}, ErrConflict
+	}
+	existing, err := revisions.SubmissionByKey(ctx, idempotencyKey)
+	if err != nil {
+		return SubmissionRecord{}, err
+	}
+	if existing.Phase == SubmissionJobAdmitted || submissionTargetKey(existing.Request) != submissionTargetKey(request) {
+		return SubmissionRecord{}, ErrConflict
+	}
+	resetRound := existing.Request.ReviewSummary != request.ReviewSummary || existing.Request.Reviewer != request.Reviewer
+	return revisions.ReviseSubmission(ctx, SubmissionRevision{
+		ID: existing.ID, ExpectedHash: existing.MaterialHash, Request: request, MaterialHash: materialHash, ResetRound: resetRound,
+	})
+}
+
+// AdvanceSubmissions moves unfinished submissions forward so a caller's single
+// submit is enough: gate waits, Den unavailability, and checkout waits resolve
+// here instead of through caller retries. It reports whether any submission
+// was examined.
+func (s *Service) AdvanceSubmissions(ctx context.Context) (bool, error) {
+	store, ok := s.store.(SubmissionAdvanceStore)
+	if !ok {
+		return false, nil
+	}
+	records, err := store.ListUnfinishedSubmissions(ctx, s.clock.Now().Add(-s.submissionMaxAge), s.submissionBatchSize)
+	if err != nil {
+		return false, err
+	}
+	var advanceErrors []error
+	for _, record := range records {
+		if _, err := s.advanceSubmission(ctx, store, record, false); err != nil {
+			advanceErrors = append(advanceErrors, fmt.Errorf("advance review submission %s: %w", record.ID, err))
+		}
+	}
+	return len(records) > 0, errors.Join(advanceErrors...)
 }
 
 func normalizeSubmissionRequest(request SubmissionRequest) (SubmissionRequest, error) {
@@ -132,8 +179,13 @@ func submissionMaterialHash(request SubmissionRequest) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, record SubmissionRecord) (SubmissionReceipt, error) {
-	if record.Phase == SubmissionGateFailed || record.Phase == SubmissionStale || record.Phase == SubmissionJobAdmitted {
+// advanceSubmission moves one submission as far as current Den and checkout
+// state allow. explicit is true for a caller's submit: only then are a failed
+// gate and a missing checkout re-checked, so the background advance never
+// re-polls a terminal outcome on its own.
+func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, record SubmissionRecord, explicit bool) (SubmissionReceipt, error) {
+	recheck := explicit && (record.Phase == SubmissionGateFailed || record.Phase == SubmissionSourceMissing)
+	if record.Phase.Terminal() && !recheck {
 		return submissionReceipt(record), nil
 	}
 	den, ok := s.den.(SubmissionDenClient)
@@ -176,7 +228,9 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 				return SubmissionReceipt{}, err
 			}
 		}
-	} else if gate.Handle == "" {
+	} else if gate.Handle == "" || (explicit && gateRecheckable(record.Gate.Status)) {
+		// Registering the same gate again asks Den to re-evaluate a failed or
+		// timed-out gate, for example after a GitHub re-run.
 		gate, err = den.WatchGitHubChecks(ctx, submissionGateRequest(record.Request))
 		if err != nil {
 			return s.submissionUnavailable(ctx, store, record, "den_watch_github_checks_unavailable", err.Error(), true)
@@ -230,7 +284,7 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 		}
 		return s.submissionGateFailed(ctx, store, record, gate, "github gate is "+reason)
 	}
-	if record.Phase != SubmissionGatePassed {
+	if record.Phase != SubmissionGatePassed && record.Phase != SubmissionSourcePending {
 		record, err = s.transitionSubmission(ctx, store, record, SubmissionTransition{Phase: SubmissionGatePassed, Gate: &gate, Failure: emptyStringPtr()})
 		if err != nil {
 			return SubmissionReceipt{}, err
@@ -256,6 +310,12 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 		}
 		return s.submissionStale(ctx, store, record, "Den current review context is no longer source_review_ready")
 	}
+	if s.source != nil && current.Workspace != "" {
+		contains, sourceErr := s.source.ContainsCommit(ctx, current.Workspace, record.Request.CommitSHA)
+		if sourceErr != nil || !contains {
+			return s.submissionSourcePending(ctx, store, record, gate, current.Workspace, sourceErr)
+		}
+	}
 	job, _, err := s.admitRound(ctx, Admission{
 		IdempotencyKey: "crew-review-round:" + record.Request.ProjectID + ":" + strconv.FormatInt(record.ReviewRoundID, 10),
 		Key:            key,
@@ -263,6 +323,10 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 		Workspace:      current.Workspace,
 		Branch:         record.Request.Ref,
 		Gate:           gate,
+		Source: &ReviewSource{
+			Repository: record.Request.Repository, CommitSHA: record.Request.CommitSHA,
+			Ref: record.Request.Ref, BaseCommit: record.Request.BaseCommit,
+		},
 	})
 	if err != nil {
 		return s.submissionUnavailable(ctx, store, record, "review_job_admission_failed", err.Error(), true)
@@ -273,6 +337,35 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 		return SubmissionReceipt{}, err
 	}
 	return submissionReceipt(record), nil
+}
+
+// submissionSourcePending waits quietly for the checkout to contain the
+// submitted commit. It never produces a review verdict or a message to the
+// submitter; after the grace period it records the typed source_missing
+// infrastructure failure.
+func (s *Service) submissionSourcePending(ctx context.Context, store SubmissionStore, record SubmissionRecord, gate GateEvidence, workspace string, checkErr error) (SubmissionReceipt, error) {
+	message := "review checkout " + workspace + " does not contain commit " + record.Request.CommitSHA + " yet"
+	if checkErr != nil {
+		message = "checking review checkout " + workspace + " for commit " + record.Request.CommitSHA + ": " + checkErr.Error()
+	}
+	var err error
+	if record.Phase != SubmissionSourcePending {
+		record, err = s.transitionSubmission(ctx, store, record, SubmissionTransition{Phase: SubmissionSourcePending, Gate: &gate, Failure: &message})
+		if err != nil {
+			return SubmissionReceipt{}, err
+		}
+	} else if !s.clock.Now().Before(record.UpdatedAt.Add(s.sourceGrace)) {
+		message += " after " + s.sourceGrace.String()
+		record, err = s.transitionSubmission(ctx, store, record, SubmissionTransition{Phase: SubmissionSourceMissing, Gate: &gate, Failure: &message})
+		if err != nil {
+			return SubmissionReceipt{}, err
+		}
+	}
+	return submissionReceipt(record), nil
+}
+
+func gateRecheckable(status string) bool {
+	return status == "failed" || status == "timed_out"
 }
 
 func submissionGateRequest(request SubmissionRequest) GateRequest {
@@ -357,7 +450,7 @@ func submissionReceipt(record SubmissionRecord) SubmissionReceipt {
 	receipt := SubmissionReceipt{
 		Schema:         submissionSchema,
 		SchemaVersion:  1,
-		OK:             record.Phase != SubmissionGateFailed && record.Phase != SubmissionStale && record.Phase != SubmissionUnavailable,
+		OK:             record.Phase != SubmissionGateFailed && record.Phase != SubmissionStale && record.Phase != SubmissionUnavailable && record.Phase != SubmissionSourceMissing,
 		SubmissionID:   record.ID,
 		ProjectID:      record.Request.ProjectID,
 		TaskID:         record.Request.TaskID,
@@ -395,6 +488,13 @@ func submissionReceipt(record SubmissionRecord) SubmissionReceipt {
 		receipt.Retryable = false
 		receipt.ErrorCode = "stale_review_round"
 		receipt.Summary = firstNonEmpty(record.Failure, submissionSummary(record))
+	case SubmissionSourcePending:
+		receipt.Retryable = true
+	case SubmissionSourceMissing:
+		receipt.OK = false
+		receipt.Retryable = false
+		receipt.ErrorCode = "checkout_missing_commit"
+		receipt.Summary = firstNonEmpty(record.Failure, submissionSummary(record))
 	case SubmissionJobAdmitted:
 		receipt.OK = true
 		receipt.Retryable = false
@@ -416,13 +516,17 @@ func submissionSummary(record SubmissionRecord) string {
 	case SubmissionAccepted, SubmissionRoundRecorded:
 		return "Review submission is waiting for Den review setup."
 	case SubmissionUnavailable:
-		return "Review submission is temporarily unavailable; retry the same request."
+		return "Review submission is temporarily unavailable; crew-review keeps retrying it."
 	case SubmissionGatePending:
-		return "Review submission is waiting for the exact GitHub check gate."
+		return "Review submission is waiting for the GitHub check gate; crew-review admits the reviewer when it passes."
+	case SubmissionSourcePending:
+		return "Review submission is waiting for the review checkout to contain the submitted commit."
+	case SubmissionSourceMissing:
+		return "Review submission stopped because the review checkout never contained the submitted commit; pull the checkout and submit again."
 	case SubmissionGatePassed, SubmissionJobAdmitted:
 		return "Review submission was admitted to the local review job queue."
 	case SubmissionGateFailed:
-		return "Review submission stopped because the exact GitHub check gate did not pass."
+		return "Review submission stopped because the GitHub check gate did not pass; after a re-run or fix, submit again to re-check it."
 	case SubmissionStale:
 		return "Review submission stopped because its Den review round is stale."
 	default:
