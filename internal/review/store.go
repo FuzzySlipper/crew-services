@@ -1,9 +1,6 @@
 package review
 
-import (
-	"context"
-	"time"
-)
+import "context"
 
 type Store interface {
 	Admit(context.Context, Admission) (Job, bool, error)
@@ -49,7 +46,7 @@ type SubmissionRevisionStore interface {
 // them forward without callers retrying.
 type SubmissionAdvanceStore interface {
 	SubmissionStore
-	ListUnfinishedSubmissions(ctx context.Context, createdAfter time.Time, limit int) ([]SubmissionRecord, error)
+	ListUnfinishedSubmissions(ctx context.Context) ([]SubmissionRecord, error)
 }
 
 // ManualReviewSubmissionStore is an additive capability. Keeping it

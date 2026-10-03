@@ -84,7 +84,7 @@ func (s *Service) AdvanceSubmissions(ctx context.Context) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	records, err := store.ListUnfinishedSubmissions(ctx, s.clock.Now().Add(-s.submissionMaxAge), s.submissionBatchSize)
+	records, err := store.ListUnfinishedSubmissions(ctx)
 	if err != nil {
 		return false, err
 	}

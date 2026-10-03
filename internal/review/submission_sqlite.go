@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -124,14 +123,12 @@ func (s *SQLiteStore) ReviseSubmission(ctx context.Context, revision SubmissionR
 	return s.GetSubmission(ctx, revision.ID)
 }
 
-// ListUnfinishedSubmissions returns submissions created after createdAfter
-// that have not reached a terminal phase, oldest update first.
-func (s *SQLiteStore) ListUnfinishedSubmissions(ctx context.Context, createdAfter time.Time, limit int) ([]SubmissionRecord, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM crew_review_submissions WHERE phase NOT IN (?,?,?,?) AND created_at>? ORDER BY updated_at, id LIMIT ?`,
-		SubmissionGateFailed, SubmissionJobAdmitted, SubmissionStale, SubmissionSourceMissing, stamp(createdAfter), limit)
+// ListUnfinishedSubmissions returns every submission that has not reached a
+// terminal phase, oldest update first. All are returned so a long-waiting
+// submission is never starved or aged out of the background advance.
+func (s *SQLiteStore) ListUnfinishedSubmissions(ctx context.Context) ([]SubmissionRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM crew_review_submissions WHERE phase NOT IN (?,?,?,?) ORDER BY updated_at, id`,
+		SubmissionGateFailed, SubmissionJobAdmitted, SubmissionStale, SubmissionSourceMissing)
 	if err != nil {
 		return nil, err
 	}

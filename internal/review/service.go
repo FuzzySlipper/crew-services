@@ -21,10 +21,8 @@ type Service struct {
 
 	// source, when set, confirms the review checkout contains a submitted
 	// commit before a reviewer job is admitted.
-	source              SourceChecker
-	sourceGrace         time.Duration
-	submissionMaxAge    time.Duration
-	submissionBatchSize int
+	source      SourceChecker
+	sourceGrace time.Duration
 }
 
 // SourceChecker answers, read-only, whether a local checkout's HEAD contains
@@ -33,11 +31,7 @@ type SourceChecker interface {
 	ContainsCommit(ctx context.Context, workspace string, commitSHA string) (bool, error)
 }
 
-const (
-	defaultSourceGrace         = 15 * time.Minute
-	defaultSubmissionMaxAge    = 24 * time.Hour
-	defaultSubmissionBatchSize = 50
-)
+const defaultSourceGrace = 15 * time.Minute
 
 // WithSourceChecker enables the checkout-contains-commit check. grace bounds
 // how long a submission waits for the checkout before reporting
@@ -47,16 +41,6 @@ func WithSourceChecker(checker SourceChecker, grace time.Duration) Option {
 		s.source = checker
 		if grace > 0 {
 			s.sourceGrace = grace
-		}
-	}
-}
-
-// WithSubmissionMaxAge bounds which unfinished submissions the background
-// advance still moves forward. Older ones wait for an explicit resubmission.
-func WithSubmissionMaxAge(maxAge time.Duration) Option {
-	return func(s *Service) {
-		if maxAge > 0 {
-			s.submissionMaxAge = maxAge
 		}
 	}
 }
@@ -95,7 +79,7 @@ func New(store Store, den DenReviewClient, runtime ReviewerRuntime, profile stri
 	}
 	s := &Service{
 		store: store, den: den, runtime: runtime, profile: profile, clock: SystemClock{}, affinities: map[TaskKey]*affinity{},
-		sourceGrace: defaultSourceGrace, submissionMaxAge: defaultSubmissionMaxAge, submissionBatchSize: defaultSubmissionBatchSize,
+		sourceGrace: defaultSourceGrace,
 	}
 	for _, option := range options {
 		option(s)

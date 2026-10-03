@@ -538,3 +538,43 @@ func TestSubmitTaskForReviewRejectsInvalidExactSHA(t *testing.T) {
 		t.Fatalf("invalid request reached Den request_review: %d", den.requestCalls)
 	}
 }
+
+func TestAdvanceSubmissionsRecoversSubmissionPendingPastADay(t *testing.T) {
+	clock := &testClock{now: time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)}
+	store, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), clock, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	den := &submissionDen{
+		watchGate: GateEvidence{Repository: "owner/repo", Ref: "main", CommitSHA: submissionTestSHA, Status: "pending", Handle: "41"},
+	}
+	service, err := New(store, den, &fakeRuntime{}, "review profile", WithClock(clock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil || first.Phase != SubmissionGatePending {
+		t.Fatalf("first receipt=%+v err=%v", first, err)
+	}
+
+	den.mu.Lock()
+	den.readErr = errors.New("Den is down")
+	den.mu.Unlock()
+	if _, err := service.AdvanceSubmissions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(25 * time.Hour)
+
+	den.mu.Lock()
+	den.readErr = nil
+	den.readGates = []GateEvidence{{Repository: "owner/repo", Ref: "main", CommitSHA: submissionTestSHA, Status: "passed", Handle: "41", TerminalReason: "checks_passed"}}
+	den.mu.Unlock()
+	if examined, err := service.AdvanceSubmissions(context.Background()); err != nil || !examined {
+		t.Fatalf("advance after a day examined=%v err=%v", examined, err)
+	}
+	record, err := store.GetSubmission(context.Background(), first.SubmissionID)
+	if err != nil || record.Phase != SubmissionJobAdmitted || record.JobID == "" {
+		t.Fatalf("submission after a day=%+v err=%v", record, err)
+	}
+}
