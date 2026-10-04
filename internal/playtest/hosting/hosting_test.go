@@ -20,6 +20,9 @@ type fakeHosts struct {
 	stopErr error
 	upErr   error
 	upPID   int
+	exited  bool
+	runErr  error
+	checks  []devserver.StatusOptions
 }
 
 func (f *fakeHosts) Up(_ context.Context, o devserver.UpOptions) (devserver.UpResult, error) {
@@ -32,7 +35,7 @@ func (f *fakeHosts) Up(_ context.Context, o devserver.UpOptions) (devserver.UpRe
 	f.mu.Lock()
 	f.active--
 	f.mu.Unlock()
-	session := devserver.SessionState{Project: o.Project, RepoRoot: o.RepoRoot, Instance: o.Instance, LocalURL: "http://127.0.0.1:37301/", Port: 37301, PID: 4242}
+	session := devserver.SessionState{Project: o.Project, RepoRoot: o.RepoRoot, Instance: o.Instance, Label: o.Label, Keep: o.Keep, LocalURL: "http://127.0.0.1:37301/", Port: 37301, PID: 4242}
 	if f.upErr != nil {
 		session.PID = f.upPID
 		return devserver.UpResult{Session: session}, f.upErr
@@ -43,6 +46,11 @@ func (f *fakeHosts) Up(_ context.Context, o devserver.UpOptions) (devserver.UpRe
 func (f *fakeHosts) Stop(_ context.Context, o devserver.StopOptions) (devserver.StopResult, error) {
 	f.stops = append(f.stops, o)
 	return devserver.StopResult{Stopped: true, Session: devserver.SessionState{Instance: o.Instance}}, f.stopErr
+}
+
+func (f *fakeHosts) Running(_ context.Context, o devserver.StatusOptions) (devserver.SessionState, bool, error) {
+	f.checks = append(f.checks, o)
+	return devserver.SessionState{}, !f.exited, f.runErr
 }
 
 type recordingLauncher struct {
@@ -165,5 +173,75 @@ func TestReleaseFailuresStayVisible(t *testing.T) {
 	}
 	if _, err := l.ReleaseHost(context.Background(), "s", p, map[string]any{"project": "doom"}); err == nil {
 		t.Fatal("incomplete identity accepted")
+	}
+}
+
+func TestHostIsLabelledForItsSessionAndKeptOnRequest(t *testing.T) {
+	hosts := &fakeHosts{}
+	l := testLauncher(hosts, &recordingLauncher{})
+	p := session.Profile{ID: "doom", Host: &session.HostSpec{Repo: "/repo/doom"}}
+	launched, err := l.Launch(session.WithLaunchOptions(context.Background(), session.LaunchOptions{Keep: true}), "s1", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hosts.ups[0].Label != "crew-playtest:s1" || !hosts.ups[0].Keep {
+		t.Fatalf("host owner: %+v", hosts.ups[0])
+	}
+	host := launched["host"].(map[string]any)
+	if host["label"] != "crew-playtest:s1" || host["keep"] != true {
+		t.Fatalf("launch facts lack the owner: %v", host)
+	}
+	if _, err := l.Launch(context.Background(), "s2", p); err != nil || hosts.ups[1].Keep {
+		t.Fatalf("keep leaked into another session: %+v %v", hosts.ups[1], err)
+	}
+}
+
+func TestHostEndedReadsTheRecordedHostAndExplainsWhy(t *testing.T) {
+	hosts := &fakeHosts{}
+	l := testLauncher(hosts, &recordingLauncher{})
+	var asked []string
+	l.Ended = func(_ context.Context, label string) string { asked = append(asked, label); return "idle-expired" }
+	p := session.Profile{ID: "doom", Host: &session.HostSpec{Repo: "/repo/doom"}}
+	launched, err := l.Launch(context.Background(), "s1", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := launched["host"].(map[string]any)
+	if ended, _, err := l.HostEnded(context.Background(), "s1", p, host); ended || err != nil {
+		t.Fatalf("running host reported ended: %v %v", ended, err)
+	}
+	if hosts.checks[0].Instance != "s1" || hosts.checks[0].RepoRoot != "/repo/doom" || hosts.checks[0].Project != "doom" {
+		t.Fatalf("checked the wrong host: %+v", hosts.checks[0])
+	}
+	hosts.exited = true
+	ended, reason, err := l.HostEnded(context.Background(), "s1", p, host)
+	if !ended || reason != "idle-expired" || err != nil || asked[0] != "crew-playtest:s1" {
+		t.Fatalf("exited host: %v %q %v asked %v", ended, reason, err, asked)
+	}
+	l.Ended = func(context.Context, string) string { return "" }
+	if _, reason, _ := l.HostEnded(context.Background(), "s1", p, host); reason != "the product host exited" {
+		t.Fatalf("crash reason = %q", reason)
+	}
+	hosts.runErr = devserver.ErrSessionNotFound
+	if ended, _, err := l.HostEnded(context.Background(), "s1", p, host); ended || err == nil {
+		t.Fatalf("missing host state taken as an exit: %v %v", ended, err)
+	}
+}
+
+func TestEndedStateReadsTheLastEndedRecordForTheLabel(t *testing.T) {
+	listing := []byte(`[
+		{"id":"game.s1-10","state":"serving","label":"crew-playtest:s1"},
+		{"id":"game.s1-9","state":"port-unavailable","label":"crew-playtest:s1","endedAt":100},
+		{"id":"game.s2-8","state":"idle-expired","label":"crew-playtest:s2","endedAt":120},
+		{"id":"game.s1-7","state":"idle-expired","label":"crew-playtest:s1","endedAt":130}
+	]`)
+	if got := endedState(listing, "crew-playtest:s1"); got != "idle-expired" {
+		t.Fatalf("endedState = %q", got)
+	}
+	if got := endedState(listing, "crew-playtest:none"); got != "" {
+		t.Fatalf("endedState for an unknown label = %q", got)
+	}
+	if got := endedState([]byte("RUSTY_ARGUMENT: unknown"), "x"); got != "" {
+		t.Fatalf("endedState of non-JSON = %q", got)
 	}
 }

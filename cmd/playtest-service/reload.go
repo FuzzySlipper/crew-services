@@ -18,6 +18,23 @@ import (
 type poolConfig struct {
 	Size        int  `json:"size"`
 	QueueWaitMS *int `json:"queue_wait_ms,omitempty"`
+	// IdleTimeoutMinutes ends a session no agent call has named for this
+	// long; 0 never does. Default 30, the Engine's own idle limit.
+	IdleTimeoutMinutes *int `json:"idle_timeout_minutes,omitempty"`
+	// HistoryRetentionDays keeps ended session records this long; 0 keeps
+	// them. Default 14.
+	HistoryRetentionDays *int `json:"history_retention_days,omitempty"`
+}
+
+func (c poolConfig) lifecycle() pool.Lifecycle {
+	l := pool.DefaultLifecycle
+	if c.IdleTimeoutMinutes != nil {
+		l.IdleTimeout = time.Duration(*c.IdleTimeoutMinutes) * time.Minute
+	}
+	if c.HistoryRetentionDays != nil {
+		l.Retention = time.Duration(*c.HistoryRetentionDays) * 24 * time.Hour
+	}
+	return l
 }
 
 func (c poolConfig) wait() time.Duration {
@@ -61,7 +78,12 @@ func (s *reloadService) Command(ctx context.Context, request session.Request) (a
 	if err := s.pool.Reload(profiles, config.Size, config.wait()); err != nil {
 		return nil, err
 	}
-	return map[string]any{"reloaded": true, "profiles": len(profiles), "capacity": config.Size, "queue_wait_ms": config.wait().Milliseconds()}, nil
+	lifecycle := config.lifecycle()
+	if err := s.pool.SetLifecycle(lifecycle); err != nil {
+		return nil, err
+	}
+	return map[string]any{"reloaded": true, "profiles": len(profiles), "capacity": config.Size, "queue_wait_ms": config.wait().Milliseconds(),
+		"idle_timeout_minutes": int(lifecycle.IdleTimeout.Minutes()), "history_retention_days": int(lifecycle.Retention.Hours() / 24)}, nil
 }
 func loadConfiguration(gamesPath, poolPath string) ([]session.Profile, poolConfig, error) {
 	var profiles []session.Profile
@@ -84,6 +106,12 @@ func loadConfiguration(gamesPath, poolPath string) ([]session.Profile, poolConfi
 	// Check integers before converting milliseconds to Duration, avoiding overflow.
 	if config.QueueWaitMS != nil && (*config.QueueWaitMS < 0 || *config.QueueWaitMS > 20000) {
 		return nil, config, fmt.Errorf("queue_wait_ms must be 0..20000")
+	}
+	if config.IdleTimeoutMinutes != nil && (*config.IdleTimeoutMinutes < 0 || *config.IdleTimeoutMinutes > 7*24*60) {
+		return nil, config, fmt.Errorf("idle_timeout_minutes must be 0..10080")
+	}
+	if config.HistoryRetentionDays != nil && (*config.HistoryRetentionDays < 0 || *config.HistoryRetentionDays > 3650) {
+		return nil, config, fmt.Errorf("history_retention_days must be 0..3650")
 	}
 	return profiles, config, nil
 }

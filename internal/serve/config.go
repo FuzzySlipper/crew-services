@@ -74,6 +74,7 @@ type configFile struct {
 	PublicHost  string         `yaml:"public_host"`
 	PortRange   portRangeFile  `yaml:"port_range"`
 	Timeouts    timeoutFile    `yaml:"timeouts"`
+	Retention   string         `yaml:"retention"`
 	StatusPage  statusPageFile `yaml:"status_page"`
 }
 
@@ -124,6 +125,12 @@ func (f configFile) toManagerConfig() (devserver.ManagerConfig, error) {
 	if err != nil {
 		return devserver.ManagerConfig{}, err
 	}
+	var retention time.Duration
+	if strings.TrimSpace(f.Retention) != "" {
+		if retention, err = time.ParseDuration(f.Retention); err != nil || retention <= 0 {
+			return devserver.ManagerConfig{}, fmt.Errorf("%w: retention must be a positive duration such as 72h", devserver.ErrInvalidConfig)
+		}
+	}
 	return devserver.ManagerConfig{
 		StateDir:    f.StateDir,
 		SessionRoot: f.SessionRoot,
@@ -134,7 +141,8 @@ func (f configFile) toManagerConfig() (devserver.ManagerConfig, error) {
 			Start: f.PortRange.Start,
 			End:   f.PortRange.End,
 		},
-		Timeouts: timeouts,
+		Timeouts:  timeouts,
+		Retention: retention,
 	}, nil
 }
 

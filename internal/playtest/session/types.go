@@ -59,6 +59,33 @@ type HostReleaser interface {
 	ReleaseHost(ctx context.Context, sessionID string, p Profile, host map[string]any) (map[string]any, error)
 }
 
+// HostWatcher reports whether a session-owned product host has ended on its
+// own (idle expiry on the host, a crash, or a stop from outside). reason
+// says why when the host told anyone. An error means the host's state could
+// not be read; it is not taken as ended.
+type HostWatcher interface {
+	HostEnded(ctx context.Context, sessionID string, p Profile, host map[string]any) (ended bool, reason string, err error)
+}
+
+// LaunchOptions are per-session choices a launcher may honour.
+type LaunchOptions struct {
+	// Keep asks a session-owned host not to expire while unused.
+	Keep bool
+}
+
+type launchOptionsKey struct{}
+
+// WithLaunchOptions passes a session's options to its launcher.
+func WithLaunchOptions(ctx context.Context, options LaunchOptions) context.Context {
+	return context.WithValue(ctx, launchOptionsKey{}, options)
+}
+
+// LaunchOptionsFrom returns the options of the session being launched.
+func LaunchOptionsFrom(ctx context.Context) LaunchOptions {
+	options, _ := ctx.Value(launchOptionsKey{}).(LaunchOptions)
+	return options
+}
+
 // ProfileBackend selects an execution environment without changing session ownership.
 type ProfileBackend interface {
 	SelectProfile(Profile) error
@@ -81,6 +108,8 @@ type Request struct {
 	Data      json.RawMessage  `json:"data,omitempty"`
 	Steps     []map[string]any `json:"steps,omitempty"`
 	BudgetMS  int              `json:"budget_ms,omitempty"`
+	// Keep exempts a started session from idle expiry.
+	Keep bool `json:"keep,omitempty"`
 }
 
 type Session struct {
@@ -94,6 +123,14 @@ type Session struct {
 	Launch          map[string]any `json:"launch,omitempty"`
 	ScriptID        string         `json:"script_id,omitempty"`
 	PreviousSession string         `json:"previous_session,omitempty"`
+	// Keep exempts the session from idle expiry.
+	Keep bool `json:"keep,omitempty"`
+	// LastActivity is the last agent call that named the session.
+	LastActivity time.Time `json:"last_activity,omitzero"`
+	// EndReason says why the session was ended: stopped, idle_expired or
+	// host_exited (with the host's reason when it gave one).
+	EndReason string     `json:"end_reason,omitempty"`
+	EndedAt   *time.Time `json:"ended_at,omitempty"`
 }
 
 type Script struct {

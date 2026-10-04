@@ -22,3 +22,5 @@ timeouts:
   health_timeout: "2s"                          # Per-request health check timeout.
   health_interval: "250ms"                      # Poll interval while waiting for a server to become healthy.
   shutdown_timeout: "5s"                        # Grace period before killing a broker-owned process group.
+
+retention: "72h"                                # How long an ended session's directory and logs are kept; list and up prune older ones.

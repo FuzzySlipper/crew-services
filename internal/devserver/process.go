@@ -1,6 +1,7 @@
 package devserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -42,6 +43,50 @@ func startManagedProcess(command string, workDir string, env map[string]string, 
 	// which liveness checks treat as dead but which never leave the table.
 	go func() { _ = cmd.Wait() }()
 	return &ManagedProcess{Command: cmd, PID: cmd.Process.Pid}, nil
+}
+
+// stopCommandGrace is how much longer than the shutdown timeout a stop
+// command may take: it can wait for the host's own graceful stop first.
+const stopCommandGrace = 30 * time.Second
+
+// runStopCommand runs a session's stop command from its checkout, with the
+// same session variables the host was given. Its output goes to the host's
+// stderr log.
+func runStopCommand(ctx context.Context, session SessionState, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", session.StopCommand)
+	if info, err := os.Stat(session.RepoRoot); err == nil && info.IsDir() {
+		cmd.Dir = session.RepoRoot
+	}
+	cmd.Env = mergeEnv(os.Environ(), map[string]string{
+		"DEN_SERVE_SESSION_DIR": session.SessionDir,
+		"DEN_SERVE_INSTANCE":    session.Instance,
+		"DEN_SERVE_LABEL":       session.Label,
+	})
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	var output strings.Builder
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err := cmd.Run()
+	if session.StderrLog != "" {
+		if log, openErr := os.OpenFile(session.StderrLog, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600); openErr == nil {
+			_, _ = fmt.Fprintf(log, "den-serve stop command: %s\n%s", session.StopCommand, output.String())
+			_ = log.Close()
+		}
+	}
+	if err != nil {
+		text := strings.TrimSpace(output.String())
+		if len(text) > 400 {
+			text = text[len(text)-400:]
+		}
+		if text != "" {
+			return fmt.Errorf("%w: %s", err, text)
+		}
+		return err
+	}
+	return nil
 }
 
 func StopProcessGroup(pid int, timeout time.Duration) error {

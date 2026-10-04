@@ -490,6 +490,11 @@ func mcpCommand(name string, arguments map[string]json.RawMessage) (Request, err
 			return Request{}, err
 		}
 		command = Request{Op: "start", Game: game}
+		if raw, ok := arguments["keep"]; ok {
+			if err := json.Unmarshal(raw, &command.Keep); err != nil {
+				return Request{}, fmt.Errorf("keep must be a boolean")
+			}
+		}
 	case "status":
 		command.Op = "status"
 		command.SessionID, _ = optionalString(arguments, "session_id")
@@ -595,7 +600,7 @@ func mcpTools() []map[string]any {
 		tool("capture", "Capture original image plus comparison metadata. Optional data: label, compare_to (prior capture_id), viewpoint (caller supplied), assistance (caller supplied string array), overlay_policy (preserve only), engine_presentation (boolean override of profile presentation_observations; records separate Engine submitted camera/viewport facts). Does not establish frame freshness or visual acceptance.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Optional capture metadata and comparison options.")}, "session_id")),
 		tool("games", "List games the local playtest service can start.", properties(map[string]any{})),
 		tool("game", "Read one game's service-provided metadata.", properties(map[string]any{"game": stringField("Game identifier.")}, "game")),
-		tool("start", "Start a game session in a free configured pool slot; returns session id and slot_id. A full pool queues briefly, then reports pool_busy. A connected result means the stream transport connected, not that the game is visually ready; use observe to inspect readiness.", properties(map[string]any{"game": stringField("Game identifier.")}, "game")),
+		tool("start", "Start a game session in a free configured pool slot; returns session id and slot_id. A full pool queues briefly, then reports pool_busy. A connected result means the stream transport connected, not that the game is visually ready; use observe to inspect readiness. A session no call names for 30 minutes (pool.json idle_timeout_minutes) ends by itself, as does one whose product host exits; keep exempts a long live demo from the idle limit.", properties(map[string]any{"game": stringField("Game identifier."), "keep": map[string]any{"type": "boolean", "description": "Keep the session and its host up while unused, for a long live demo. Stop it yourself."}}, "game")),
 		tool("status", "Read one session's status, or aggregate pool occupancy and all slots when no session_id is supplied.", properties(map[string]any{"session_id": stringField("Optional session identifier.")})),
 		tool("observe", "Capture current session observation. When the result has a local image path, returns it as MCP image content.", properties(map[string]any{"session_id": stringField("Session identifier.")}, "session_id")),
 		tool("interaction", "Read the game's optional interaction query at the reticle, or at an explicitly supplied normalized bottom-left cursor. This read-only result is product-provided query evidence, not screenshot freshness or permission to activate anything. Send normal input to act, then query again. Candidate route unknown remains unknown.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": objectField("Optional interaction options: mode reticle (default) or cursor with x, y, and aspect.")}, "session_id")),

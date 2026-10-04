@@ -34,12 +34,15 @@ The LAN URL is the one to give the human.
 ```bash
 den-serve up <project-id> -repo /path/to/repo
 den-serve restart <project-id> -repo /path/to/repo
-den-serve status <project-id> [-repo /path/to/repo]
+den-serve status <project-id> [-repo /path/to/repo [-instance name]]
 den-serve list
 den-serve page
-den-serve logs <project-id> [-repo /path/to/repo]
-den-serve stop <project-id> [-repo /path/to/repo]
+den-serve logs <project-id> [-repo /path/to/repo [-instance name]]
+den-serve stop <project-id> [-repo /path/to/repo [-instance name]]
 ```
+
+`-instance` addresses one of several hosts of a checkout, such as a playtest
+session's (its instance is the playtest session ID); it needs `-repo`.
 
 `den-serve page` runs a small status site at `http://<lan-host>:37299/`. It
 binds to `0.0.0.0` by default and, on every browser refresh, lists assignments
@@ -118,6 +121,35 @@ Template variables available in serve commands and manifest env values:
 - `{local_url}`
 - `{public_url}`
 - `{session_dir}`
+- `{instance}` and `{label}`, for an instance session (see Instances)
+
+### Instance, keep and stop commands
+
+Three optional `serve` fields let a host take part in owner-aware lifecycle.
+Each is appended to, or run beside, the ordinary `command`, so the command must
+end with the host invocation itself (`exec rusty dev …`, or a script that
+forwards its arguments):
+
+- `instanceArgs` is appended for an instance session. A host that allows one
+  session per project needs it to run several. For an Engine product on a pair
+  from rusty-engine `0807adf51` or later:
+  `"instanceArgs": "--instance {instance} --label {label}"`. `{label}` is the
+  owner's label, `crew-playtest:<session>` for a playtest session, so
+  `rusty dev list` shows which session owns each host.
+- `keepArgs` is appended when the owner asks the host to stay up unused, as a
+  kept playtest session does: `"keepArgs": "--keep"`.
+- `stopCommand` runs from the repo root before den-serve signals the host's
+  process group, so the host can stop its own process tree. Rendered at launch
+  and kept with the session, so later manifest edits cannot redirect it:
+  `"stopCommand": "PATH=\"$HOME/.local/bin:$PATH\" rusty dev stop --project ./src/Game/Game.csproj --instance {instance}"`.
+  A failed stop command is reported, and the process group is signalled anyway.
+  An ordinary (non-instance) session renders `{instance}` empty, so give it a
+  stop command only if that still addresses it.
+
+Add these only for a host that accepts them. An older Engine pair refuses
+`--instance` and would fail to start, which is why den-serve never adds them by
+itself. `rusty dev stop` and `rusty dev list` run in whichever `rusty` is
+invoked, so the one on PATH must be from `0807adf51` or later.
 
 ## Safety Rules
 
@@ -144,6 +176,12 @@ fingerprint is the freshness proof.
 
 Session state lives under `~/.cache/den-serve/sessions` by default and is keyed by project plus repo path. Two worktrees with the same project id get separate session records. `status`, `list`, `logs`, and `stop` work from this persisted state.
 
+`list` and `up` prune that state: leases whose process group has gone, the
+directory and logs of a broker-owned session whose processes ended more than
+`retention` ago (72h by default; set `retention: 168h` in the config file to
+keep a week), and earlier launch directories beside a current session after the
+same time. Records of hosts den-serve does not own are left alone.
+
 Fallback ports come from the managed range, 30300-30450 by default. It sits
 below Linux's ephemeral port range (32768-60999): a port inside that range can be
 taken as the local end of an outgoing connection while a product builds, and the
@@ -157,8 +195,9 @@ instances (`UpOptions.Instance`). The crew playtest service starts one per
 session for hosted profiles, so each tester gets its own world. Instance session
 state is keyed by project, repo path and instance name; instances never adopt the
 preferred port or a healthy host that belongs to another session. `den-serve
-list` and the status page show them as `project · instance`; the page offers no
-Restart for them, because their owner stops and replaces them.
+list` and the status page show them as `project · instance (label)`; the page
+offers no Restart for them, because their owner stops and replaces them. Stop
+one by hand with `den-serve stop <project> -repo <repo> -instance <name>`.
 
 `status` recalculates the current fingerprint without changing the launch
 fingerprint. It reports `stale` plus a reason when repo `HEAD`, dirty/explicit

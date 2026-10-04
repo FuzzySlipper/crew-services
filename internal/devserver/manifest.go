@@ -33,6 +33,9 @@ type serveManifestFile struct {
 	HealthInterval      string            `json:"healthInterval"`
 	Environment         map[string]string `json:"env"`
 	FingerprintPaths    []string          `json:"fingerprintPaths"`
+	InstanceArgs        string            `json:"instanceArgs"`
+	KeepArgs            string            `json:"keepArgs"`
+	StopCommand         string            `json:"stopCommand"`
 }
 
 type portRangeFile struct {
@@ -142,6 +145,9 @@ func (f serveManifestFile) toManifest(cfg ManagerConfig) (ServeManifest, error) 
 		HealthInterval:      healthInterval,
 		Environment:         copyMap(f.Environment),
 		FingerprintPaths:    append([]string(nil), f.FingerprintPaths...),
+		InstanceArgs:        strings.TrimSpace(f.InstanceArgs),
+		KeepArgs:            strings.TrimSpace(f.KeepArgs),
+		StopCommand:         strings.TrimSpace(f.StopCommand),
 	}, nil
 }
 

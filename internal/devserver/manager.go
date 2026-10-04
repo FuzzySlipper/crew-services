@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,10 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 func (m *Manager) Up(ctx context.Context, options UpOptions) (UpResult, error) {
 	if strings.TrimSpace(options.Project) == "" {
 		return UpResult{}, errors.New("project is required")
+	}
+	instance, label, err := hostOwner(options)
+	if err != nil {
+		return UpResult{}, err
 	}
 	repoRoot, err := resolveRepoRoot(options.RepoRoot)
 	if err != nil {
@@ -70,6 +75,7 @@ func (m *Manager) Up(ctx context.Context, options UpOptions) (UpResult, error) {
 	}
 	leases = pruneDeadLeases(leases)
 	store := NewSessionStore(m.cfg.SessionRoot)
+	store.PruneEnded(m.clock(), m.cfg.Retention)
 	restartSource := ""
 	if existing, ok := m.currentSession(ctx, store, manifest, sessionKey); ok {
 		existing.CurrentFingerprint = intendedFingerprint
@@ -110,7 +116,7 @@ func (m *Manager) Up(ctx context.Context, options UpOptions) (UpResult, error) {
 			default:
 				restartSource = "restarted_reuse_disabled"
 			}
-			if err := StopProcessGroup(existing.PID, m.cfg.Timeouts.ShutdownTimeout); err != nil {
+			if _, err := m.stopHost(ctx, existing); err != nil {
 				return UpResult{}, fmt.Errorf("stopping previous broker-owned process group: %w", err)
 			}
 			leases = removeLease(leases, existing.SessionKey)
@@ -139,13 +145,27 @@ func (m *Manager) Up(ctx context.Context, options UpOptions) (UpResult, error) {
 		localURL:   local,
 		publicURL:  lan,
 		sessionDir: sessionDir,
+		instance:   instance,
+		label:      label,
 	}
 	command := renderTemplate(manifest.Command, values)
+	if instance != "" && manifest.InstanceArgs != "" {
+		command += " " + renderTemplate(manifest.InstanceArgs, values)
+	}
+	if options.Keep && manifest.KeepArgs != "" {
+		command += " " + renderTemplate(manifest.KeepArgs, values)
+	}
+	stopCommand := ""
+	if manifest.StopCommand != "" {
+		stopCommand = renderTemplate(manifest.StopCommand, values)
+	}
 	session := SessionState{
 		SchemaVersion:      SessionSchemaV1,
 		SessionID:          sessionID,
 		SessionKey:         sessionKey,
-		Instance:           strings.TrimSpace(options.Instance),
+		Instance:           instance,
+		Label:              label,
+		Keep:               options.Keep,
 		Project:            manifest.Project,
 		Target:             manifest.Target,
 		RepoRoot:           manifest.RepoRoot,
@@ -153,6 +173,7 @@ func (m *Manager) Up(ctx context.Context, options UpOptions) (UpResult, error) {
 		LaunchFingerprint:  intendedFingerprint,
 		CurrentFingerprint: intendedFingerprint,
 		Command:            command,
+		StopCommand:        stopCommand,
 		BindHost:           manifest.BindHost,
 		ProbeHost:          manifest.ProbeHost,
 		PublicHost:         publicHost,
@@ -213,7 +234,7 @@ func (m *Manager) Up(ctx context.Context, options UpOptions) (UpResult, error) {
 	health, err = waitForHealth(ctx, m.httpClient, manifest, port)
 	session.Health = health
 	if err != nil {
-		_ = StopProcessGroup(process.PID, m.cfg.Timeouts.ShutdownTimeout)
+		_, _ = m.stopHost(ctx, session)
 		session.Status = "failed"
 		_ = store.WriteCurrent(session)
 		_ = registry.Save(leases)
@@ -221,7 +242,7 @@ func (m *Manager) Up(ctx context.Context, options UpOptions) (UpResult, error) {
 	}
 	launchedFingerprint, err := ResolveLaunchFingerprint(ctx, manifest)
 	if err != nil {
-		_ = StopProcessGroup(process.PID, m.cfg.Timeouts.ShutdownTimeout)
+		_, _ = m.stopHost(ctx, session)
 		session.Status = "failed"
 		session.FingerprintError = err.Error()
 		_ = store.WriteCurrent(session)
@@ -247,12 +268,12 @@ func (m *Manager) Up(ctx context.Context, options UpOptions) (UpResult, error) {
 	}
 	leases = upsertLease(leases, lease)
 	if err := registry.Save(leases); err != nil {
-		_ = StopProcessGroup(process.PID, m.cfg.Timeouts.ShutdownTimeout)
+		_, _ = m.stopHost(ctx, session)
 		return UpResult{}, err
 	}
 	if err := store.WriteCurrent(session); err != nil {
 		// Without its state record the host could not be found to stop later.
-		_ = StopProcessGroup(process.PID, m.cfg.Timeouts.ShutdownTimeout)
+		_, _ = m.stopHost(ctx, session)
 		_ = registry.Save(removeLease(leases, session.SessionKey))
 		return UpResult{}, err
 	}
@@ -278,6 +299,9 @@ func (m *Manager) Status(ctx context.Context, options StatusOptions) (SessionSta
 
 func (m *Manager) List(ctx context.Context) ([]SessionState, error) {
 	store := NewSessionStore(m.cfg.SessionRoot)
+	if err := m.prune(ctx, store); err != nil {
+		return nil, err
+	}
 	sessions, err := store.List()
 	if err != nil {
 		return nil, err
@@ -316,7 +340,8 @@ func (m *Manager) Stop(ctx context.Context, options StopOptions) (StopResult, er
 		}
 		return StopResult{Session: session, Message: "session is not broker-owned; leaving process untouched"}, nil
 	}
-	if err := StopProcessGroup(session.PID, m.cfg.Timeouts.ShutdownTimeout); err != nil {
+	stopNote, err := m.stopHost(ctx, session)
+	if err != nil {
 		return StopResult{}, err
 	}
 	registry := NewLeaseRegistry(m.cfg.StateDir)
@@ -333,8 +358,88 @@ func (m *Manager) Stop(ctx context.Context, options StopOptions) (StopResult, er
 	if err := store.WriteCurrent(session); err != nil {
 		return StopResult{}, err
 	}
-	return StopResult{Session: session, Stopped: true, Message: "stopped broker-owned process group"}, nil
+	message := "stopped broker-owned process group"
+	if stopNote != "" {
+		message += "; " + stopNote
+	}
+	return StopResult{Session: session, Stopped: true, Message: message}, nil
 }
+
+// Running reports whether a session's broker-owned process group is still
+// alive. It reads the state record only: no health probe, fingerprint or
+// write, so a watcher can call it often.
+func (m *Manager) Running(_ context.Context, options StatusOptions) (SessionState, bool, error) {
+	store := NewSessionStore(m.cfg.SessionRoot)
+	repoRoot := strings.TrimSpace(options.RepoRoot)
+	if repoRoot != "" {
+		// The recorded root, even if the checkout has since been removed.
+		repoRoot = filepath.Clean(repoRoot)
+	}
+	session, err := store.FindInstance(options.Project, repoRoot, options.Instance)
+	if err != nil {
+		return SessionState{}, false, err
+	}
+	if session.Ownership != "broker_owned" || session.PID <= 0 {
+		return session, false, fmt.Errorf("session %s is not broker-owned", session.SessionKey)
+	}
+	return session, processGroupAlive(session.PID), nil
+}
+
+// stopHost asks the host to stop through the session's stop command, then
+// signals its process group, which the command may have left behind. The
+// note says what the stop command did when it did not succeed cleanly.
+func (m *Manager) stopHost(ctx context.Context, session SessionState) (string, error) {
+	note := ""
+	if session.StopCommand != "" && session.PID > 0 && processGroupAlive(session.PID) {
+		if err := runStopCommand(ctx, session, m.cfg.Timeouts.ShutdownTimeout+stopCommandGrace); err != nil {
+			note = "stop command failed, signalled the process group: " + err.Error()
+		}
+	}
+	return note, StopProcessGroup(session.PID, m.cfg.Timeouts.ShutdownTimeout)
+}
+
+// prune drops leases whose process group has gone and the directories of
+// sessions that ended longer ago than the retention.
+func (m *Manager) prune(ctx context.Context, store *SessionStore) error {
+	registry := NewLeaseRegistry(m.cfg.StateDir)
+	if err := registry.Lock(ctx, m.cfg.Timeouts.LockTimeout); err != nil {
+		return err
+	}
+	defer registry.Unlock()
+	leases, err := registry.Load()
+	if err != nil {
+		return err
+	}
+	if live := pruneDeadLeases(append([]LeaseRecord(nil), leases...)); len(live) != len(leases) {
+		if err := registry.Save(live); err != nil {
+			return err
+		}
+	}
+	store.PruneEnded(m.clock(), m.cfg.Retention)
+	return nil
+}
+
+// hostOwner validates the instance and label a host is launched under. Both
+// can reach the host's command line, so they are plain identifiers.
+func hostOwner(options UpOptions) (string, string, error) {
+	instance := strings.TrimSpace(options.Instance)
+	label := strings.TrimSpace(options.Label)
+	if instance != "" && !instancePattern.MatchString(instance) {
+		return "", "", fmt.Errorf("instance %q must be 1 to 64 letters, digits, '.', '_' or '-'", instance)
+	}
+	if label == "" && instance != "" {
+		label = "den-serve:" + instance
+	}
+	if label != "" && !labelPattern.MatchString(label) {
+		return "", "", fmt.Errorf("label %q must be 1 to 128 letters, digits, '.', '_', ':', '@', '/' or '-'", label)
+	}
+	return instance, label, nil
+}
+
+var (
+	instancePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+	labelPattern    = regexp.MustCompile(`^[A-Za-z0-9._:@/-]{1,128}$`)
+)
 
 func (m *Manager) currentSession(ctx context.Context, store *SessionStore, manifest *ServeManifest, sessionKey string) (SessionState, bool) {
 	session, err := store.ReadCurrentByKey(sessionKey)

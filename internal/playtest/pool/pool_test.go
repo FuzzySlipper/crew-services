@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -238,5 +239,37 @@ func TestParallelLaunchAndShutdown(t *testing.T) {
 		if id != "" {
 			t.Fatal("lease leaked at shutdown")
 		}
+	}
+}
+
+func TestReaperFreesSlotsOfUnusedSessionsButNotKeptOnes(t *testing.T) {
+	p, _, _ := setup(t, 0)
+	if err := p.SetLifecycle(Lifecycle{IdleTimeout: time.Nanosecond}); err != nil {
+		t.Fatal(err)
+	}
+	abandoned := start(t, p, "game-a")
+	value, err := p.Command(context.Background(), session.Request{Op: "start", Game: "game-b", Keep: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := value.(*session.Session)
+	if _, err := p.Command(context.Background(), session.Request{Op: "start", Game: "game-a"}); err == nil {
+		t.Fatal("full pool admitted a third session")
+	}
+	time.Sleep(time.Millisecond)
+	lines := p.Reap(context.Background())
+	if len(lines) != 1 || !strings.Contains(lines[0], abandoned.ID) || !strings.Contains(lines[0], "idle_expired") {
+		t.Fatalf("reaper lines = %v", lines)
+	}
+	again := start(t, p, "game-a")
+	if again.SlotID != abandoned.SlotID {
+		t.Fatalf("freed slot not reused: %s, want %s", again.SlotID, abandoned.SlotID)
+	}
+	status, err := p.Command(context.Background(), session.Request{Op: "status", SessionID: kept.ID})
+	if err != nil || status.(map[string]any)["session"].(*session.Session).Phase != "connected" {
+		t.Fatalf("kept session was reaped: %v %v", status, err)
+	}
+	if err := p.SetLifecycle(Lifecycle{IdleTimeout: -time.Second}); err == nil {
+		t.Fatal("negative idle timeout accepted")
 	}
 }

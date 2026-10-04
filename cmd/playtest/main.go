@@ -74,10 +74,13 @@ func cliCommand(args []string) (client.Request, error) {
 		}
 		return client.Request{Op: "game", Game: args[2]}, nil
 	case "start":
-		if len(args) != 2 {
-			return client.Request{}, errors.New("usage: playtest start GAME")
+		switch {
+		case len(args) == 2 && !strings.HasPrefix(args[1], "-"):
+			return client.Request{Op: "start", Game: args[1]}, nil
+		case len(args) == 3 && args[2] == "--keep" && !strings.HasPrefix(args[1], "-"):
+			return client.Request{Op: "start", Game: args[1], Keep: true}, nil
 		}
-		return client.Request{Op: "start", Game: args[1]}, nil
+		return client.Request{}, errors.New("usage: playtest start GAME [--keep]")
 	case "status":
 		if len(args) > 2 {
 			return client.Request{}, errors.New("usage: playtest status [SESSION]")
@@ -224,5 +227,5 @@ func writeJSON(output io.Writer, value json.RawMessage) error {
 }
 
 func usageError() error {
-	return errors.New("usage: playtest [--url URL] {assist SESSION [--json JSON] | reload | games | game show GAME | start GAME | status [SESSION] | observe SESSION | interaction SESSION [--json JSON] | input SESSION --json JSON | browser SESSION --json JSON | capture SESSION [--json JSON] | run SESSION --file PATH [--budget-ms N] | script SCRIPTID | cancel SESSION | resume SESSION [--json VALUE] | recover SESSION | stop SESSION | mcp}\n  reload: re-read the game profile file and pool configuration without restarting sessions.")
+	return errors.New("usage: playtest [--url URL] {assist SESSION [--json JSON] | reload | games | game show GAME | start GAME [--keep] | status [SESSION] | observe SESSION | interaction SESSION [--json JSON] | input SESSION --json JSON | browser SESSION --json JSON | capture SESSION [--json JSON] | run SESSION --file PATH [--budget-ms N] | script SCRIPTID | cancel SESSION | resume SESSION [--json VALUE] | recover SESSION | stop SESSION | mcp}\n  reload: re-read the game profile file and pool configuration without restarting sessions.\n  start --keep: exempt the session from idle expiry (default 30 minutes without a call naming it).")
 }

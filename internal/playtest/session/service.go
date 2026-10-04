@@ -36,6 +36,7 @@ type Service struct {
 	scripts          map[string]*activeScript
 	current          string
 	launchCancel     context.CancelFunc
+	now              func() time.Time
 }
 
 func New(backend Backend, launcher Launcher, profiles []Profile, stateDir, worker string) (*Service, error) {
@@ -46,7 +47,7 @@ func NewWithRegistry(backend Backend, launcher Launcher, registry *Registry, sta
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, err
 	}
-	s := &Service{backend: backend, launcher: launcher, registry: registry, stateDir: stateDir, worker: worker, sessions: map[string]*Session{}, scripts: map[string]*activeScript{}}
+	s := &Service{backend: backend, launcher: launcher, registry: registry, stateDir: stateDir, worker: worker, sessions: map[string]*Session{}, scripts: map[string]*activeScript{}, now: func() time.Time { return time.Now().UTC() }}
 	files, err := filepath.Glob(filepath.Join(stateDir, "session-*.json"))
 	if err != nil {
 		return nil, err
@@ -62,7 +63,10 @@ func NewWithRegistry(backend Backend, launcher Launcher, registry *Registry, sta
 		}
 		if saved.Phase != "stopped" && saved.Phase != "failed" {
 			saved.Phase = "interrupted"
-			saved.LastError = "Session service restarted; execution was not replayed. Stop or recover explicitly."
+			saved.LastError = "Session service restarted; execution was not replayed. Stop or recover explicitly; it ends by itself if its host has gone or it stays idle."
+			if saved.LastActivity.IsZero() {
+				saved.LastActivity = saved.CreatedAt
+			}
 			if s.current != "" {
 				return nil, errors.New("multiple unfinished saved sessions require reconciliation")
 			}
@@ -112,13 +116,14 @@ func (s *Service) require(id string) (*Session, error) {
 }
 
 func (s *Service) Command(ctx context.Context, r Request) (any, error) {
+	s.touch(r)
 	switch r.Op {
 	case "games":
 		return s.registry.Profiles(), nil
 	case "game":
 		return s.registry.Profile(r.Game)
 	case "start":
-		return s.Start(ctx, r.Game, "")
+		return s.start(ctx, r.Game, "", r.Keep)
 	case "status":
 		return s.Status(ctx, r.SessionID)
 	case "observe":
@@ -144,9 +149,9 @@ func (s *Service) Command(ctx context.Context, r Request) (any, error) {
 	case "recover":
 		s.mu.Lock()
 		st, err := s.require(r.SessionID)
-		game := ""
+		game, keep := "", false
 		if err == nil {
-			game = st.Game
+			game, keep = st.Game, st.Keep
 		}
 		s.mu.Unlock()
 		if err != nil {
@@ -155,13 +160,47 @@ func (s *Service) Command(ctx context.Context, r Request) (any, error) {
 		if _, err = s.Stop(ctx, r.SessionID); err != nil {
 			return nil, err
 		}
-		return s.Start(ctx, game, r.SessionID)
+		return s.start(ctx, game, r.SessionID, keep)
 	default:
 		return nil, errors.New("unknown operation")
 	}
 }
 
+// touch records an agent call that names a session, which keeps it from idle
+// expiry. Reading status does not count: inspection never renews a session.
+func (s *Service) touch(r Request) {
+	if r.Op == "status" || r.Op == "recover" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := r.SessionID
+	if r.Op == "script" {
+		if script := s.scripts[r.ScriptID]; script != nil {
+			id = script.state.SessionID
+		}
+	}
+	st := s.sessions[id]
+	if st == nil || id == "" || id != s.current {
+		return
+	}
+	now := s.now()
+	persist := now.Sub(st.LastActivity) >= activityPersistInterval
+	st.LastActivity = now
+	if persist {
+		_ = s.saveSession(st)
+	}
+}
+
+// activityPersistInterval bounds how often an agent call rewrites the session
+// record; a restart may lose up to this much of the idle clock.
+const activityPersistInterval = time.Minute
+
 func (s *Service) Start(ctx context.Context, game, previous string) (any, error) {
+	return s.start(ctx, game, previous, false)
+}
+
+func (s *Service) start(ctx context.Context, game, previous string, keep bool) (any, error) {
 	p, err := s.registry.Profile(game)
 	if err != nil {
 		return nil, err
@@ -194,7 +233,8 @@ func (s *Service) Start(ctx context.Context, game, previous string) (any, error)
 	if id == "" {
 		return nil, errors.New("backend returned no lease_id")
 	}
-	st := &Session{SlotID: s.slotID, ID: id, Game: game, Profile: &p, Phase: "starting", CreatedAt: time.Now().UTC(), PreviousSession: previous}
+	now := s.now()
+	st := &Session{SlotID: s.slotID, ID: id, Game: game, Profile: &p, Phase: "starting", CreatedAt: now, LastActivity: now, PreviousSession: previous, Keep: keep}
 	s.mu.Lock()
 	s.sessions[id] = st
 	s.current = id
@@ -204,7 +244,7 @@ func (s *Service) Start(ctx context.Context, game, previous string) (any, error)
 	defer func() { s.mu.Lock(); s.launchCancel = nil; s.mu.Unlock() }()
 	var launched map[string]any
 	if err == nil {
-		launched, err = s.launcher.Launch(ctx, id, p)
+		launched, err = s.launcher.Launch(WithLaunchOptions(ctx, LaunchOptions{Keep: keep}), id, p)
 	}
 	if err != nil {
 		captureCtx, captureCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -230,6 +270,8 @@ func (s *Service) Start(ctx context.Context, game, previous string) (any, error)
 		browserReleased := cleanupErr == nil && receipt["released"] == true
 		if browserReleased && hostErr == nil {
 			s.current = ""
+			ended := s.now()
+			st.EndedAt = &ended
 		} else {
 			st.Phase = "degraded"
 			if !browserReleased {
@@ -251,6 +293,7 @@ func (s *Service) Start(ctx context.Context, game, previous string) (any, error)
 	}
 	st.Phase = "connected"
 	st.Launch = launched
+	st.LastActivity = s.now()
 	err = s.saveSession(st)
 	result := clone(st)
 	s.mu.Unlock()
@@ -394,6 +437,12 @@ func (s *Service) Cancel(ctx context.Context, id string) (any, error) {
 }
 
 func (s *Service) Stop(ctx context.Context, id string) (any, error) {
+	return s.stop(ctx, id, "stopped")
+}
+
+// stop ends a session and records why: "stopped" for an agent's stop,
+// otherwise the reaper's reason.
+func (s *Service) stop(ctx context.Context, id, reason string) (any, error) {
 	// Cancel before acquiring opMu: an in-flight manual input owns that mutex.
 	_, _ = s.Cancel(ctx, id)
 	s.opMu.Lock()
@@ -435,12 +484,18 @@ func (s *Service) Stop(ctx context.Context, id string) (any, error) {
 		if result["released"] != true {
 			st.LastError += fmt.Sprintf("; browser cleanup unresolved: %v %v", err, result)
 		}
+		if reason != "stopped" {
+			st.LastError = reason + "; " + st.LastError
+		}
 		err = errors.New(st.LastError)
 	} else if result["released"] == true {
 		st.Phase = "stopped"
 		if s.current == id {
 			s.current = ""
 		}
+		ended := s.now()
+		st.EndReason, st.EndedAt = reason, &ended
+		result["end_reason"] = reason
 		evidenceErr, _ := result["evidence_error"].(string)
 		if err != nil && evidenceErr == "" {
 			evidenceErr = err.Error()
@@ -453,6 +508,9 @@ func (s *Service) Stop(ctx context.Context, id string) (any, error) {
 	} else {
 		st.Phase = "degraded"
 		st.LastError = fmt.Sprintf("cleanup unresolved: %v %v", err, result)
+		if reason != "stopped" {
+			st.LastError = reason + "; " + st.LastError
+		}
 		if err == nil {
 			err = errors.New(st.LastError)
 		}

@@ -127,10 +127,12 @@ func runStatus(args []string) error {
 	project, rest := splitProjectArg(args)
 	var cfgPath string
 	var repoRoot string
+	var instance string
 	flags := flag.NewFlagSet("den-serve status", flag.ContinueOnError)
 	flags.StringVar(&cfgPath, "config", os.Getenv(configPathEnv), "config path")
 	flags.StringVar(&repoRoot, "repo", "", "repo root for disambiguating sessions")
 	flags.StringVar(&project, "project-id", project, "manifest project id")
+	flags.StringVar(&instance, "instance", "", "instance host, such as a playtest session's (needs -repo)")
 	if err := flags.Parse(rest); err != nil {
 		return err
 	}
@@ -138,7 +140,7 @@ func runStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	session, err := manager.Status(context.Background(), devserver.StatusOptions{Project: project, RepoRoot: repoRoot})
+	session, err := manager.Status(context.Background(), devserver.StatusOptions{Project: project, RepoRoot: repoRoot, Instance: instance})
 	if err != nil {
 		return err
 	}
@@ -170,6 +172,9 @@ func runList(args []string) error {
 		if session.Instance != "" {
 			// Hosts owned by another tool, such as one playtest session each.
 			name += " · " + session.Instance
+		}
+		if session.Label != "" {
+			name += " (" + session.Label + ")"
 		}
 		fmt.Printf("%s\t%s\t%s\t%s\t%s\n", name, session.Status, url, session.RepoRoot, session.StatePath)
 	}
@@ -219,10 +224,12 @@ func runStop(args []string) error {
 	project, rest := splitProjectArg(args)
 	var cfgPath string
 	var repoRoot string
+	var instance string
 	flags := flag.NewFlagSet("den-serve stop", flag.ContinueOnError)
 	flags.StringVar(&cfgPath, "config", os.Getenv(configPathEnv), "config path")
 	flags.StringVar(&repoRoot, "repo", "", "repo root for disambiguating sessions")
 	flags.StringVar(&project, "project-id", project, "manifest project id")
+	flags.StringVar(&instance, "instance", "", "instance host, such as a playtest session's (needs -repo)")
 	if err := flags.Parse(rest); err != nil {
 		return err
 	}
@@ -230,7 +237,7 @@ func runStop(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := manager.Stop(context.Background(), devserver.StopOptions{Project: project, RepoRoot: repoRoot})
+	result, err := manager.Stop(context.Background(), devserver.StopOptions{Project: project, RepoRoot: repoRoot, Instance: instance})
 	if err != nil {
 		return err
 	}
@@ -243,10 +250,12 @@ func runLogs(args []string) error {
 	project, rest := splitProjectArg(args)
 	var cfgPath string
 	var repoRoot string
+	var instance string
 	flags := flag.NewFlagSet("den-serve logs", flag.ContinueOnError)
 	flags.StringVar(&cfgPath, "config", os.Getenv(configPathEnv), "config path")
 	flags.StringVar(&repoRoot, "repo", "", "repo root for disambiguating sessions")
 	flags.StringVar(&project, "project-id", project, "manifest project id")
+	flags.StringVar(&instance, "instance", "", "instance host, such as a playtest session's (needs -repo)")
 	if err := flags.Parse(rest); err != nil {
 		return err
 	}
@@ -254,7 +263,7 @@ func runLogs(args []string) error {
 	if err != nil {
 		return err
 	}
-	session, err := manager.Status(context.Background(), devserver.StatusOptions{Project: project, RepoRoot: repoRoot})
+	session, err := manager.Status(context.Background(), devserver.StatusOptions{Project: project, RepoRoot: repoRoot, Instance: instance})
 	if err != nil {
 		return err
 	}
@@ -297,6 +306,12 @@ func printSessionPacket(session devserver.SessionState) {
 func formatSessionPacket(session devserver.SessionState) string {
 	var packet strings.Builder
 	fmt.Fprintf(&packet, "%s %s\n", session.Project, session.Status)
+	if session.Instance != "" {
+		fmt.Fprintf(&packet, "instance: %s\n", session.Instance)
+	}
+	if session.Label != "" {
+		fmt.Fprintf(&packet, "label: %s\n", session.Label)
+	}
 	fmt.Fprintf(&packet, "local: %s\n", session.LocalURL)
 	if session.LANURL != "" {
 		fmt.Fprintf(&packet, "lan:   %s\n", session.LANURL)
@@ -352,10 +367,11 @@ func printUsage() {
 	name := filepath.Base(os.Args[0])
 	fmt.Printf("usage: %s up <project> -repo /path/to/repo [--public-host ip]\n", name)
 	fmt.Printf("       %s restart <project> -repo /path/to/repo [--public-host ip]\n", name)
-	fmt.Printf("       %s status <project> [-repo /path/to/repo]\n", name)
+	fmt.Printf("       %s status <project> [-repo /path/to/repo [-instance name]]\n", name)
 	fmt.Printf("       %s list\n", name)
 	fmt.Printf("       %s page\n", name)
-	fmt.Printf("       %s stop <project> [-repo /path/to/repo]\n", name)
-	fmt.Printf("       %s logs <project> [-repo /path/to/repo]\n", name)
+	fmt.Printf("       %s stop <project> [-repo /path/to/repo [-instance name]]\n", name)
+	fmt.Printf("       %s logs <project> [-repo /path/to/repo [-instance name]]\n", name)
+	fmt.Println("list also removes dead leases and the directories of sessions that ended longer ago than the retention (default 72h)")
 	fmt.Println("pass -config or set " + configPathEnv + " only to override built-in defaults")
 }

@@ -14,6 +14,8 @@ type templateContext struct {
 	localURL   string
 	publicURL  string
 	sessionDir string
+	instance   string
+	label      string
 }
 
 func renderTemplate(input string, values templateContext) string {
@@ -28,6 +30,8 @@ func renderTemplate(input string, values templateContext) string {
 		"{local_url}":   values.localURL,
 		"{public_url}":  values.publicURL,
 		"{session_dir}": values.sessionDir,
+		"{instance}":    values.instance,
+		"{label}":       values.label,
 	}
 	output := input
 	for key, value := range replacements {

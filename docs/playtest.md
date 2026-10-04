@@ -297,6 +297,26 @@ tester's world there), launch fingerprint and log paths. Instances appear on the
 den-serve status page and in `den-serve list` labelled with their session ID;
 they never adopt the checkout's ordinary host or another instance.
 
+Every host of an Engine product on a pair from rusty-engine `0807adf51` or
+later takes a per-project lock, so a second concurrent session of that game
+needs its manifest to name the instance. Add to its `serve` block:
+
+```json
+"instanceArgs": "--instance {instance} --label {label}",
+"keepArgs": "--keep",
+"stopCommand": "PATH=\"$HOME/.local/bin:$PATH\" rusty dev stop --project ./src/Game/Game.csproj --instance {instance}"
+```
+
+`{instance}` is the playtest session ID and `{label}` is
+`crew-playtest:<session>`, so `rusty dev list` shows which session owns each
+host, and `rusty dev stop` stops the host's whole process tree (runtime and
+headless browser too). Add these only together with that pair: an older pair
+refuses `--instance` and the host would not start. See
+[den-serve instance, keep and stop commands](den-serve.md#instance-keep-and-stop-commands).
+To stop a session's host by hand, use
+`den-serve stop <project> -repo <repo> -instance <session>` or
+`rusty dev stop <id>` from `rusty dev list`; never kill by name pattern.
+
 Hosted starts from one checkout are serialized until each host is ready, because
 products such as `rusty dev` build and stage into the checkout. Starting takes
 seconds when the product is already built and up to five minutes otherwise; the
@@ -549,9 +569,46 @@ never treat the last state as verified neutralization.
 retaining the previous session ID. For a hosted profile that is a fresh world;
 for a URL profile the server's world continues. It never replays a script or
 uncertain gameplay input. After a service restart, saved active sessions become
-interrupted and must be stopped or recovered; their hosts ended with the
-service. Programs, API calls/results, checkpoints, and final state are retained
-under the service state directory.
+interrupted; their hosts ended with the service, so the reaper's first pass
+ends them and frees their slots (otherwise stop or recover them). Programs,
+API calls/results, checkpoints, and final state are retained under the service
+state directory.
+
+## Expiry and keep
+
+Client disconnection does not stop a session, so the service ends abandoned
+ones itself. A reaper checks every slot when the service starts and every 30 s:
+
+- **Idle expiry.** A session that no agent call has named for
+  `idle_timeout_minutes` (pool.json, default 30, the Engine's own idle limit;
+  0 never expires) is stopped: its browser and host are released and the slot
+  freed. Any call naming the session counts (observe, input, run, assist,
+  capture, script, …); `playtest status` does not, since inspection never
+  renews a session. A session running a script is not expired.
+- **Host exit.** When a hosted session's product host exits by itself (Engine
+  idle expiry, a crash, `rusty dev stop` or `den-serve stop` from outside), the
+  session is stopped too, whatever its phase, rather than held degraded.
+- **Keep.** `playtest start GAME --keep` (MCP `start` with `"keep": true`)
+  exempts a long live demo from idle expiry, and launches its host with the
+  manifest's `keepArgs` so the Engine does not expire it either. `recover`
+  keeps the flag. Stop a kept session yourself.
+
+The ended session's `phase` is `stopped` with `end_reason` `idle_expired` or
+`host_exited: <reason>`, and `ended_at`. For an Engine host the reason comes
+from `rusty dev list --all --json`, which keeps a host that ended for a reason
+(`idle-expired`, `port-unavailable`, `project-removed`) for a day; a crash
+leaves none, so the reason is `the product host exited`. An agent's own stop
+records `stopped`. If cleanup fails, the session stays degraded and the next
+pass retries.
+
+The Engine expires a host after 30 minutes without product activity (input, a
+lifecycle call, a page attaching); frame pulls do not count. A session that
+only observes for that long can therefore end with `host_exited: idle-expired`
+before its own idle limit. Use `--keep` for a demo that is watched, not played.
+
+Ended session records older than `history_retention_days` (default 14; 0 keeps
+them) are removed from the state directory. Captures, scripts and other
+evidence are kept.
 
 ## Pool and reload
 
@@ -562,6 +619,9 @@ persisted or replayed. `playtest status` returns aggregate `pool` occupancy and
 a `slots` array; `playtest status SESSION` is specific to that session.
 Occupancy is not a GPU-performance guarantee: an unattended game keeps rendering.
 
+`pool.json` also sets `idle_timeout_minutes` (0..10080, default 30) and
+`history_retention_days` (0..3650, default 14); see Expiry and keep.
+
 After atomically replacing the profiles file or `pool.json`, run:
 
 ```sh
@@ -571,7 +631,8 @@ curl --fail-with-body -H 'Content-Type: application/json' \
   -d '{"op":"reload"}' http://127.0.0.1:48200/command
 ```
 
-The response reports profile count, capacity and `queue_wait_ms`. A read/JSON/
+The response reports profile count, capacity, `queue_wait_ms`,
+`idle_timeout_minutes` and `history_retention_days`. A read/JSON/
 schema error, duplicate profile ID, invalid size/wait, slot construction failure
 or unsafe shrink returns an error and keeps the previous registry, capacity and
 queue policy. Unknown fields are rejected. Each profile needs an `id` and either

@@ -35,6 +35,7 @@ type Request struct {
 	Data      json.RawMessage `json:"data,omitempty"`
 	Steps     json.RawMessage `json:"steps,omitempty"`
 	BudgetMS  *int            `json:"budget_ms,omitempty"`
+	Keep      bool            `json:"keep,omitempty"`
 }
 
 // Response is the service command envelope. Result remains raw JSON so each

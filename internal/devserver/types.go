@@ -24,6 +24,8 @@ type ManagerConfig struct {
 	PublicHost  string
 	PortRange   PortRange
 	Timeouts    TimeoutConfig
+	// Retention is how long an ended session's directory and logs are kept.
+	Retention time.Duration
 }
 
 type PortRange struct {
@@ -59,6 +61,15 @@ type ServeManifest struct {
 	HealthInterval      time.Duration
 	Environment         map[string]string
 	FingerprintPaths    []string
+	// InstanceArgs is appended to Command for an instance session, so a host
+	// that locks per project can run beside others of the same checkout.
+	InstanceArgs string
+	// KeepArgs is appended to Command when the caller asks the host to stay
+	// up without activity.
+	KeepArgs string
+	// StopCommand asks the host to stop itself before its process group is
+	// signalled; it is rendered at launch and kept with the session.
+	StopCommand string
 }
 
 // ExpectedIdentityHeaderValue returns the configured host identity value. The
@@ -94,6 +105,11 @@ type UpOptions struct {
 	PublicHostOverride string
 	// Instance runs an additional, separately owned host of the same project.
 	Instance string
+	// Label names the host's owner for the manifest's {label}; it defaults to
+	// den-serve:<instance>.
+	Label string
+	// Keep appends the manifest's keepArgs.
+	Keep bool
 }
 
 type StatusOptions struct {
@@ -127,6 +143,8 @@ type SessionState struct {
 	SessionKey         string            `json:"session_key"`
 	Project            string            `json:"project"`
 	Instance           string            `json:"instance,omitempty"`
+	Label              string            `json:"label,omitempty"`
+	Keep               bool              `json:"keep,omitempty"`
 	Target             string            `json:"target"`
 	RepoRoot           string            `json:"repo_root"`
 	ManifestPath       string            `json:"manifest_path"`
@@ -137,6 +155,7 @@ type SessionState struct {
 	StaleReason        string            `json:"stale_reason,omitempty"`
 	FingerprintError   string            `json:"fingerprint_error,omitempty"`
 	Command            string            `json:"command"`
+	StopCommand        string            `json:"stop_command,omitempty"`
 	BindHost           string            `json:"bind_host"`
 	ProbeHost          string            `json:"probe_host"`
 	PublicHost         string            `json:"public_host,omitempty"`

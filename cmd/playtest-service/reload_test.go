@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"crew-services/internal/playtest/pool"
 	"crew-services/internal/playtest/session"
@@ -145,5 +146,34 @@ func TestUnknownGameDistinguishesDiskFromLoadedRegistry(t *testing.T) {
 	}
 	if _, err = service.Command(context.Background(), session.Request{Op: "game", Game: "b"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPoolLifecycleDefaultsAndBounds(t *testing.T) {
+	dir := t.TempDir()
+	gamesPath, poolPath := filepath.Join(dir, "games.json"), filepath.Join(dir, "pool.json")
+	if err := os.WriteFile(gamesPath, []byte(`[{"id":"a","url":"http://localhost/a"}]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for body, want := range map[string]pool.Lifecycle{
+		`{"size":1}`: pool.DefaultLifecycle,
+		`{"size":1,"idle_timeout_minutes":0,"history_retention_days":0}`:  {},
+		`{"size":1,"idle_timeout_minutes":90,"history_retention_days":3}`: {IdleTimeout: 90 * time.Minute, Retention: 3 * 24 * time.Hour},
+	} {
+		if err := os.WriteFile(poolPath, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		_, config, err := loadConfiguration(gamesPath, poolPath)
+		if err != nil || config.lifecycle() != want {
+			t.Fatalf("%s: lifecycle %+v %v, want %+v", body, config.lifecycle(), err, want)
+		}
+	}
+	for _, body := range []string{`{"size":1,"idle_timeout_minutes":-1}`, `{"size":1,"history_retention_days":-2}`} {
+		if err := os.WriteFile(poolPath, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := loadConfiguration(gamesPath, poolPath); err == nil {
+			t.Fatalf("%s accepted", body)
+		}
 	}
 }

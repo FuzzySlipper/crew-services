@@ -19,6 +19,10 @@ import (
 	"crew-services/internal/serve"
 )
 
+// reaperInterval is how often sessions are checked for idle expiry and for a
+// product host that ended by itself.
+const reaperInterval = 30 * time.Second
+
 func main() {
 	listen := flag.String("listen", "127.0.0.1:48200", "loopback API address")
 	poolPath := flag.String("pool", "", "local pool configuration JSON; size and optional queue_wait_ms")
@@ -28,6 +32,7 @@ func main() {
 	browserWorker := flag.String("browser-worker", "", "Playwright browser worker path")
 	chromium := flag.String("chromium", "", "optional Chromium executable for browser backend")
 	serveConfig := flag.String("serve-config", "", "den-serve configuration for session-owned product hosts; default shares den-serve's state")
+	rustyPath := flag.String("rusty", "", "rusty CLI used to explain hosts that ended by themselves; default from PATH or ~/.local/bin")
 	flag.Parse()
 	if *profilesPath == "" || *state == "" || *worker == "" || *browserWorker == "" {
 		log.Fatal("--games, --state, --worker and --browser-worker are required")
@@ -63,6 +68,12 @@ func main() {
 	}
 	builder := slotBuilder{state: absoluteState, worker: *worker, browserWorker: *browserWorker, chromium: *chromium, registry: registry,
 		hosts: hosts, manifest: hosting.ManifestProject(hostConfig.Manager), locks: &hosting.RepoLocks{}}
+	if *rustyPath == "" {
+		*rustyPath = hosting.FindRusty()
+	}
+	if *rustyPath != "" {
+		builder.ended = hosting.RustyDevEndReason(*rustyPath)
+	}
 	var services []*session.Service
 	for index := 0; index < pc.Size; index++ {
 		slot, release, err := builder.create(index)
@@ -76,6 +87,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := service.SetLifecycle(pc.lifecycle()); err != nil {
+		log.Fatal(err)
+	}
+	service.RunReaper(reaperInterval, log.Printf)
 	commands := &reloadService{pool: service, gamesPath: *profilesPath, poolPath: *poolPath}
 	if *poolPath == "" {
 		commands.single = services[0]

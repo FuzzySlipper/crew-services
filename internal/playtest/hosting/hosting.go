@@ -18,7 +18,12 @@ import (
 type Hosts interface {
 	Up(context.Context, devserver.UpOptions) (devserver.UpResult, error)
 	Stop(context.Context, devserver.StopOptions) (devserver.StopResult, error)
+	Running(context.Context, devserver.StatusOptions) (devserver.SessionState, bool, error)
 }
+
+// EndReason looks up why a host ended, by the label it was launched with.
+// It returns "" when the host left no reason (a crash leaves none).
+type EndReason func(ctx context.Context, label string) string
 
 // ManifestReader resolves the project a repository's manifest serves.
 type ManifestReader func(repoRoot, explicitPath string) (project string, err error)
@@ -31,7 +36,12 @@ type Launcher struct {
 	Manifest ManifestReader
 	// Locks is shared by every slot so one checkout starts one host at a time.
 	Locks *RepoLocks
+	// Ended optionally explains a host that ended by itself.
+	Ended EndReason
 }
+
+// Label is the owner label a playtest session's host is launched with.
+func Label(sessionID string) string { return "crew-playtest:" + sessionID }
 
 // RepoLocks serializes host startup per checkout. Products such as `rusty dev`
 // build and stage into the checkout, so simultaneous first starts would race.
@@ -80,7 +90,8 @@ func (l *Launcher) Launch(ctx context.Context, id string, p session.Profile) (ma
 	if err := lockContext(ctx, lock); err != nil {
 		return nil, fmt.Errorf("host_unavailable: waiting for another host of this checkout to start: %w", err)
 	}
-	up, err := l.Hosts.Up(ctx, devserver.UpOptions{Project: project, RepoRoot: p.Host.Repo, ManifestPath: p.Host.Manifest, Instance: id})
+	up, err := l.Hosts.Up(ctx, devserver.UpOptions{Project: project, RepoRoot: p.Host.Repo, ManifestPath: p.Host.Manifest, Instance: id,
+		Label: Label(id), Keep: session.LaunchOptionsFrom(ctx).Keep})
 	lock.Unlock()
 	if err != nil {
 		if up.Session.PID <= 0 {
@@ -129,9 +140,40 @@ func (l *Launcher) ReleaseHost(ctx context.Context, id string, p session.Profile
 	return receipt, nil
 }
 
+// HostEnded reports whether the host recorded at launch has exited. Like
+// ReleaseHost it trusts only the recorded identity. A missing state record is
+// an error, not an exit: the host is not known to be gone.
+func (l *Launcher) HostEnded(ctx context.Context, id string, p session.Profile, host map[string]any) (bool, string, error) {
+	if p.Host == nil || host == nil {
+		return false, "", nil
+	}
+	project, _ := host["project"].(string)
+	repo, _ := host["repo_root"].(string)
+	instance, _ := host["instance"].(string)
+	if project == "" || repo == "" || instance == "" {
+		return false, "", fmt.Errorf("recorded host identity is incomplete: project %q, repo %q, instance %q", project, repo, instance)
+	}
+	_, running, err := l.Hosts.Running(ctx, devserver.StatusOptions{Project: project, RepoRoot: repo, Instance: instance})
+	if err != nil || running {
+		return false, "", err
+	}
+	reason := ""
+	if l.Ended != nil {
+		label, _ := host["label"].(string)
+		if label == "" {
+			label = Label(id)
+		}
+		reason = l.Ended(ctx, label)
+	}
+	if reason == "" {
+		reason = "the product host exited"
+	}
+	return true, reason, nil
+}
+
 func hostFacts(s devserver.SessionState) map[string]any {
 	return map[string]any{
-		"project": s.Project, "instance": s.Instance, "repo_root": s.RepoRoot,
+		"project": s.Project, "instance": s.Instance, "repo_root": s.RepoRoot, "label": s.Label, "keep": s.Keep,
 		"local_url": s.LocalURL, "lan_url": s.LANURL, "port": s.Port, "pid": s.PID,
 		"status": s.Status, "launch_fingerprint": s.LaunchFingerprint,
 		"stdout_log": s.StdoutLog, "stderr_log": s.StderrLog,

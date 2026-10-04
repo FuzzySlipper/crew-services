@@ -170,6 +170,18 @@ func (l *Launcher) Launch(ctx context.Context, id string, p session.Profile) (ma
 
 // ReleaseHost stops the recorded Windows instance, or defers to the inner
 // launcher for other hosts.
+// HostEnded delegates hosts this launcher did not start. A Windows instance
+// is watched by its agent, not here.
+func (l *Launcher) HostEnded(ctx context.Context, id string, p session.Profile, host map[string]any) (bool, string, error) {
+	if instance, _ := host["windows_instance"].(string); instance != "" || p.Windows != nil {
+		return false, "", nil
+	}
+	if watcher, ok := l.Inner.(session.HostWatcher); ok {
+		return watcher.HostEnded(ctx, id, p, host)
+	}
+	return false, "", nil
+}
+
 func (l *Launcher) ReleaseHost(ctx context.Context, id string, p session.Profile, host map[string]any) (map[string]any, error) {
 	instance, _ := host["windows_instance"].(string)
 	if instance == "" {

@@ -30,6 +30,112 @@ type Pool struct {
 	changed   chan struct{}
 	closed    bool
 	wait      time.Duration
+	idle      time.Duration
+	retention time.Duration
+}
+
+// Lifecycle bounds how long a session lives unused and how long an ended
+// session's record is kept. Zero disables either.
+type Lifecycle struct {
+	IdleTimeout time.Duration
+	Retention   time.Duration
+}
+
+// DefaultLifecycle matches the Engine's idle limit for dev hosts and keeps
+// ended session records for two weeks.
+var DefaultLifecycle = Lifecycle{IdleTimeout: 30 * time.Minute, Retention: 14 * 24 * time.Hour}
+
+// SetLifecycle publishes the expiry policy the reaper applies from its next
+// pass. Running sessions keep their activity clocks.
+func (p *Pool) SetLifecycle(l Lifecycle) error {
+	if l.IdleTimeout < 0 || l.Retention < 0 {
+		return errors.New("idle timeout and retention cannot be negative")
+	}
+	p.mu.Lock()
+	p.idle, p.retention = l.IdleTimeout, l.Retention
+	p.mu.Unlock()
+	return nil
+}
+
+// Reap makes one reaper pass. Each occupied slot is reserved while its
+// session is checked, so no recover runs beside it, and ended sessions older
+// than the retention are forgotten. It returns one line per session it ended
+// or failed to end.
+func (p *Pool) Reap(ctx context.Context) []string {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return nil
+	}
+	var picked []int
+	for i, s := range p.slots[:p.capacity] {
+		if !p.reserved[i] && s.SlotStatus() != nil {
+			p.reserved[i] = true
+			picked = append(picked, i)
+		}
+	}
+	p.starts.Add(1)
+	slots, idle, retention := p.slots, p.idle, p.retention
+	p.mu.Unlock()
+	defer p.starts.Done()
+	reapCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(p.lifecycle, cancel)
+	defer stop()
+	var (
+		mu    sync.Mutex
+		lines []string
+		wg    sync.WaitGroup
+	)
+	for _, i := range picked {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer p.unreserve(i)
+			id := ""
+			if st := slots[i].SlotStatus(); st != nil {
+				id = st.ID
+			}
+			reason, err := slots[i].Reap(reapCtx, idle)
+			if reason == "" && err == nil {
+				return
+			}
+			line := fmt.Sprintf("%s session %s ended: %s", slotID(i), id, reason)
+			if err != nil {
+				line = fmt.Sprintf("%s session %s could not be ended (%s): %v", slotID(i), id, reason, err)
+			}
+			mu.Lock()
+			lines = append(lines, line)
+			mu.Unlock()
+		}(i)
+	}
+	wg.Wait()
+	if retention > 0 {
+		cutoff := time.Now().UTC().Add(-retention)
+		for _, s := range slots {
+			s.PruneHistory(cutoff)
+		}
+	}
+	return lines
+}
+
+// RunReaper reaps at once, which resolves sessions a restart interrupted,
+// and then every interval until the pool closes.
+func (p *Pool) RunReaper(interval time.Duration, logf func(string, ...any)) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			for _, line := range p.Reap(p.lifecycle) {
+				logf("playtest reaper: %s", line)
+			}
+			select {
+			case <-p.lifecycle.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 }
 
 func New(slots []*session.Service, wait time.Duration) (*Pool, error) {
@@ -40,7 +146,8 @@ func New(slots []*session.Service, wait time.Duration) (*Pool, error) {
 		return nil, errors.New("queue_wait_ms must be 0..20000")
 	}
 	lifecycle, cancel := context.WithCancel(context.Background())
-	p := &Pool{lifecycle: lifecycle, cancel: cancel, slots: slots, capacity: len(slots), reserved: make([]bool, len(slots)), changed: make(chan struct{}), wait: wait}
+	p := &Pool{lifecycle: lifecycle, cancel: cancel, slots: slots, capacity: len(slots), reserved: make([]bool, len(slots)), changed: make(chan struct{}), wait: wait,
+		idle: DefaultLifecycle.IdleTimeout, retention: DefaultLifecycle.Retention}
 	for i, s := range slots {
 		if s == nil {
 			return nil, errors.New("pool slot is nil")

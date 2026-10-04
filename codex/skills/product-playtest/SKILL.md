@@ -134,7 +134,18 @@ slot. Other demos may keep rendering while their agents are idle; capture
    than adjusting the observation to fit an expected answer.
 5. Stop owned sessions with `playtest stop SESSION`, including after a failed
    mission, unless explicitly asked to retain them. Check the cleanup receipt;
-   use `status` for discrepancies. Client disconnection does not stop a session.
+   use `status` for discrepancies. Client disconnection does not stop a session,
+   but a session no call names for 30 minutes ends by itself
+   (`end_reason: idle_expired`), and so does one whose product host exits
+   (`host_exited: …`, e.g. the Engine's own `idle-expired`). `status` does not
+   count as use. For a long live demo, start with `playtest start GAME --keep`
+   and stop it yourself. A session that ended this way needs `recover` or a new
+   `start`, not more input.
+6. Each hosted session runs its own product host. Find hosts with
+   `rusty dev list` (label `crew-playtest:<session>`) and stop one with
+   `rusty dev stop <id>`, or `den-serve stop <project> -repo <repo> -instance
+   <session>`. Never `pkill` or kill hosts by name pattern: that takes down
+   other sessions' worlds.
 
 ## Engine products: assist actions and held time
 

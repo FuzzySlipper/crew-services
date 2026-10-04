@@ -20,6 +20,7 @@ type slotBuilder struct {
 	hosts    hosting.Hosts
 	manifest hosting.ManifestReader
 	locks    *hosting.RepoLocks
+	ended    hosting.EndReason
 }
 
 func (b slotBuilder) create(index int) (*session.Service, func(), error) {
@@ -51,7 +52,7 @@ func (b slotBuilder) create(index int) (*session.Service, func(), error) {
 	}
 	releases = append(releases, func() { direct.Close() })
 	router.Entries["engine"] = routing.Entry{Backend: direct, Launcher: direct}
-	launcher := &windesk.Launcher{Inner: &hosting.Launcher{Inner: router, Hosts: b.hosts, Manifest: b.manifest, Locks: b.locks}}
+	launcher := &windesk.Launcher{Inner: &hosting.Launcher{Inner: router, Hosts: b.hosts, Manifest: b.manifest, Locks: b.locks, Ended: b.ended}}
 	service, err := session.NewWithRegistry(router, launcher, b.registry, state, b.worker)
 	if err != nil {
 		cleanup()

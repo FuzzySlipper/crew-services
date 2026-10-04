@@ -157,3 +157,73 @@ func readSession(path string) (SessionState, error) {
 	}
 	return session, nil
 }
+
+// PruneEnded removes what ended sessions leave behind once they are older
+// than retention: the whole directory of a session whose process has gone,
+// and earlier launch directories beside a session that is still current. A
+// record that cannot be read is removed only when its directory is that old
+// too. Pruning is best effort; whatever fails stays for the next pass.
+func (s *SessionStore) PruneEnded(now time.Time, retention time.Duration) {
+	if retention <= 0 {
+		return
+	}
+	cutoff := now.Add(-retention)
+	keys, err := os.ReadDir(s.root)
+	if err != nil {
+		return
+	}
+	for _, key := range keys {
+		if !key.IsDir() {
+			continue
+		}
+		keyDir := filepath.Join(s.root, key.Name())
+		session, err := readSession(filepath.Join(keyDir, "current.json"))
+		if err != nil {
+			if modifiedBefore(keyDir, cutoff) {
+				_ = os.RemoveAll(keyDir)
+			}
+			continue
+		}
+		if sessionEnded(session) && lastSeen(session, keyDir).Before(cutoff) {
+			_ = os.RemoveAll(keyDir)
+			continue
+		}
+		current := filepath.Base(session.SessionDir)
+		launches, err := os.ReadDir(keyDir)
+		if err != nil {
+			continue
+		}
+		for _, launch := range launches {
+			path := filepath.Join(keyDir, launch.Name())
+			if launch.IsDir() && launch.Name() != current && modifiedBefore(path, cutoff) {
+				_ = os.RemoveAll(path)
+			}
+		}
+	}
+}
+
+// sessionEnded is true once nothing of a broker-owned session can still run.
+// Records of hosts the broker does not own are left alone: they describe a
+// project's external host, not a launch.
+func sessionEnded(session SessionState) bool {
+	if session.Ownership != "broker_owned" {
+		return session.Status == "failed"
+	}
+	return session.PID <= 0 || !processGroupAlive(session.PID)
+}
+
+func lastSeen(session SessionState, keyDir string) time.Time {
+	latest := session.StartedAt
+	if session.LastCheckedAt.After(latest) {
+		latest = session.LastCheckedAt
+	}
+	if info, err := os.Stat(filepath.Join(keyDir, "current.json")); err == nil && info.ModTime().After(latest) {
+		latest = info.ModTime()
+	}
+	return latest
+}
+
+func modifiedBefore(path string, cutoff time.Time) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.ModTime().Before(cutoff)
+}

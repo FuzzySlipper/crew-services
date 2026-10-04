@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func (c *ManagerConfig) Validate() error {
@@ -34,8 +35,14 @@ func (c *ManagerConfig) Validate() error {
 		c.Timeouts.ShutdownTimeout <= 0 {
 		return fmt.Errorf("%w: timeouts must be positive", ErrInvalidConfig)
 	}
+	if c.Retention < 0 {
+		return fmt.Errorf("%w: retention cannot be negative", ErrInvalidConfig)
+	}
 	return nil
 }
+
+// DefaultRetention keeps an ended session's logs for three days.
+const DefaultRetention = 72 * time.Hour
 
 func NormalizeConfig(cfg ManagerConfig) (ManagerConfig, error) {
 	var err error
@@ -50,6 +57,9 @@ func NormalizeConfig(cfg ManagerConfig) (ManagerConfig, error) {
 	cfg.BindHost = valueOrDefault(cfg.BindHost, DefaultBindHost)
 	cfg.ProbeHost = valueOrDefault(cfg.ProbeHost, DefaultProbeHost)
 	cfg.PublicHost = valueOrDefault(cfg.PublicHost, PublicHostAuto)
+	if cfg.Retention == 0 {
+		cfg.Retention = DefaultRetention
+	}
 	if err := cfg.Validate(); err != nil {
 		return ManagerConfig{}, err
 	}
