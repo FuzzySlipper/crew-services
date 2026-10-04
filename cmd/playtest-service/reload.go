@@ -21,8 +21,8 @@ type poolConfig struct {
 	// IdleTimeoutMinutes ends a session no agent call has named for this
 	// long; 0 never does. Default 30, the Engine's own idle limit.
 	IdleTimeoutMinutes *int `json:"idle_timeout_minutes,omitempty"`
-	// HistoryRetentionDays keeps ended session records this long; 0 keeps
-	// them. Default 14.
+	// HistoryRetentionDays keeps an ended session's record and evidence this
+	// long after it last changed; 0 keeps them. Default 14.
 	HistoryRetentionDays *int `json:"history_retention_days,omitempty"`
 }
 

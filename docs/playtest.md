@@ -236,7 +236,7 @@ and don't compare them with uncapped numbers from another machine.
 - Programs: `~/.local/share/crew-playtest/`
 - Profiles: `~/.config/crew-playtest/games.json`
 - Pool: `~/.config/crew-playtest/pool.json` (`{"size": 10}` here)
-- Evidence: `~/.local/state/crew-playtest-local/`
+- Evidence: `~/.local/state/crew-playtest-local/` (kept 14 days after a session ends; see [Retention](#retention))
 
 Install or update from this repository with the active sessions stopped:
 
@@ -571,8 +571,8 @@ for a URL profile the server's world continues. It never replays a script or
 uncertain gameplay input. After a service restart, saved active sessions become
 interrupted; their hosts ended with the service, so the reaper's first pass
 ends them and frees their slots (otherwise stop or recover them). Programs,
-API calls/results, checkpoints, and final state are retained under the service
-state directory.
+API calls/results, checkpoints, and final state stay under the service state
+directory for the [retention](#retention) window.
 
 ## Expiry and keep
 
@@ -606,9 +606,18 @@ lifecycle call, a page attaching); frame pulls do not count. A session that
 only observes for that long can therefore end with `host_exited: idle-expired`
 before its own idle limit. Use `--keep` for a demo that is watched, not played.
 
-Ended session records older than `history_retention_days` (default 14; 0 keeps
-them) are removed from the state directory. Captures, scripts and other
-evidence are kept.
+## Retention
+
+The state directory is working space, not an archive. An ended session's
+record and everything it produced are removed together once nothing of it has
+changed for `history_retention_days` (pool.json, default 14; 0 keeps
+everything). That covers the session record, its browser and engine artifacts
+(`browser/<session>/`, `engine/<session>/`), assist receipts
+(`receipts/<session>/`), scripts, and capture, interaction and presentation
+records. The reaper sweeps evidence at most hourly. Anything else in the state
+directory, such as a hand-made verification folder, is never touched. Evidence
+that must outlive the window belongs in a durable artifact: an acceptance
+record, a document or a test.
 
 ## Pool and reload
 
@@ -620,7 +629,8 @@ a `slots` array; `playtest status SESSION` is specific to that session.
 Occupancy is not a GPU-performance guarantee: an unattended game keeps rendering.
 
 `pool.json` also sets `idle_timeout_minutes` (0..10080, default 30) and
-`history_retention_days` (0..3650, default 14); see Expiry and keep.
+`history_retention_days` (0..3650, default 14); see Expiry and keep and
+Retention.
 
 After atomically replacing the profiles file or `pool.json`, run:
 

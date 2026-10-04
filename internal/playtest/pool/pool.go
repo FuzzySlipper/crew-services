@@ -32,17 +32,19 @@ type Pool struct {
 	wait      time.Duration
 	idle      time.Duration
 	retention time.Duration
+	// sweptAt is when the reaper last swept evidence; it does so hourly.
+	sweptAt time.Time
 }
 
 // Lifecycle bounds how long a session lives unused and how long an ended
-// session's record is kept. Zero disables either.
+// session's record and evidence are kept. Zero disables either.
 type Lifecycle struct {
 	IdleTimeout time.Duration
 	Retention   time.Duration
 }
 
 // DefaultLifecycle matches the Engine's idle limit for dev hosts and keeps
-// ended session records for two weeks.
+// ended sessions and their evidence for two weeks.
 var DefaultLifecycle = Lifecycle{IdleTimeout: 30 * time.Minute, Retention: 14 * 24 * time.Hour}
 
 // SetLifecycle publishes the expiry policy the reaper applies from its next
@@ -58,8 +60,8 @@ func (p *Pool) SetLifecycle(l Lifecycle) error {
 }
 
 // Reap makes one reaper pass. Each occupied slot is reserved while its
-// session is checked, so no recover runs beside it, and ended sessions older
-// than the retention are forgotten. It returns one line per session it ended
+// session is checked, so no recover runs beside it. Ended sessions older than
+// the retention are forgotten, and at most hourly their evidence is removed. It returns one line per session it ended
 // or failed to end.
 func (p *Pool) Reap(ctx context.Context) []string {
 	p.mu.Lock()
@@ -76,6 +78,10 @@ func (p *Pool) Reap(ctx context.Context) []string {
 	}
 	p.starts.Add(1)
 	slots, idle, retention := p.slots, p.idle, p.retention
+	sweep := retention > 0 && time.Since(p.sweptAt) >= evidenceSweepInterval
+	if sweep {
+		p.sweptAt = time.Now()
+	}
 	p.mu.Unlock()
 	defer p.starts.Done()
 	reapCtx, cancel := context.WithCancel(ctx)
@@ -114,10 +120,16 @@ func (p *Pool) Reap(ctx context.Context) []string {
 		cutoff := time.Now().UTC().Add(-retention)
 		for _, s := range slots {
 			s.PruneHistory(cutoff)
+			if sweep {
+				s.PruneEvidence(cutoff)
+			}
 		}
 	}
 	return lines
 }
+
+// evidenceSweepInterval spaces evidence sweeps, which read every old record.
+const evidenceSweepInterval = time.Hour
 
 // RunReaper reaps at once, which resolves sessions a restart interrupted,
 // and then every interval until the pool closes.

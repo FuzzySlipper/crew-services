@@ -174,3 +174,57 @@ func TestPruneHistoryForgetsOldEndedSessionsOnly(t *testing.T) {
 		t.Fatalf("old session record still on disk: %v", err)
 	}
 }
+
+func TestPruneEvidenceRemovesOnlyOldEvidenceOfForgottenSessions(t *testing.T) {
+	state := t.TempDir()
+	s, clock := watchedService(t, &watchingLauncher{}, state)
+	known := startWatched(t, s, false)
+	now := time.Now()
+	old := now.Add(-20 * 24 * time.Hour)
+	write := func(path, body string, at time.Time) string {
+		t.Helper()
+		full := filepath.Join(state, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for p := full; p != state; p = filepath.Dir(p) {
+			_ = os.Chtimes(p, at, at)
+		}
+		return full
+	}
+	owned := func(id string) string { return `{"session_id":"` + id + `"}` }
+	gone, recent := "11111111-0000-0000-0000-000000000001", "11111111-0000-0000-0000-000000000002"
+	paths := map[string]bool{
+		write("browser/"+gone+"/frame.png", "x", old):            false,
+		write("engine/"+gone+"/events.jsonl", "x", old):          false,
+		write("receipts/"+gone+"/a.json", "{}", old):             false,
+		write("scripts/s-old/script.json", owned(gone), old):     false,
+		write("capture-c1.json", owned(gone), old):               false,
+		write("interaction-q1.json", owned(gone), old):           false,
+		write("presentation-q2.json", owned(gone), old):          false,
+		write("browser/"+known+"/frame.png", "x", old):           true,
+		write("capture-c2.json", owned(known), old):              true,
+		write("browser/"+recent+"/frame.png", "x", now):          true,
+		write("capture-c3.json", owned(recent), now):             true,
+		write("verification-1/notes.json", owned(gone), old):     true,
+		write("local-setup-verification.json", owned(gone), old): true,
+		write("capture-unreadable.json", "not json", old):        true,
+	}
+	// A directory whose own time is old but whose file was appended recently.
+	appended := write("engine/"+recent+"/events.jsonl", "x", now)
+	_ = os.Chtimes(filepath.Dir(appended), old, old)
+	paths[appended] = true
+
+	clock.advance(time.Hour)
+	if removed := s.PruneEvidence(now.Add(-14 * 24 * time.Hour)); removed != 7 {
+		t.Errorf("PruneEvidence removed %d entries, want 7", removed)
+	}
+	for path, keep := range paths {
+		if _, err := os.Stat(path); (err == nil) != keep {
+			t.Errorf("%s kept = %v, want %v", strings.TrimPrefix(path, state), err == nil, keep)
+		}
+	}
+}
