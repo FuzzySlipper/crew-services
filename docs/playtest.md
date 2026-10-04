@@ -615,7 +615,13 @@ everything). That covers the session record, its browser and engine artifacts
 (`browser/<session>/`, `engine/<session>/`), assist receipts
 (`receipts/<session>/`), scripts, and capture, interaction and presentation
 records. The reaper sweeps evidence at most hourly. Anything else in the state
-directory, such as a hand-made verification folder, is never touched. Evidence
+directory, such as a hand-made verification folder, is never touched.
+
+For now pruning moves rather than deletes: what it removes goes to
+`/data/crew-playtest-pending-delete/<date>/`, under the same path it had in
+the state directory (other slots under `slots/slot-N/`). Once a few rounds
+there look right, start the service with `--retire-dir ""` to delete instead,
+and remove the pending folder. Evidence
 that must outlive the window belongs in a durable artifact: an acceptance
 record, a document or a test.
 

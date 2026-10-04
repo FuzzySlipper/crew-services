@@ -21,12 +21,17 @@ type slotBuilder struct {
 	manifest hosting.ManifestReader
 	locks    *hosting.RepoLocks
 	ended    hosting.EndReason
+	// retireDir receives pruned records and evidence; empty deletes them.
+	retireDir string
 }
 
 func (b slotBuilder) create(index int) (*session.Service, func(), error) {
-	state := b.state
+	state, retire := b.state, b.retireDir
 	if index > 0 {
 		state = filepath.Join(state, "slots", fmt.Sprintf("slot-%d", index+1))
+		if retire != "" {
+			retire = filepath.Join(retire, "slots", fmt.Sprintf("slot-%d", index+1))
+		}
 	}
 	router := &routing.Router{Entries: map[string]routing.Entry{}}
 	var releases []func()
@@ -58,5 +63,6 @@ func (b slotBuilder) create(index int) (*session.Service, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
+	service.RetireTo(retire)
 	return service, cleanup, nil
 }

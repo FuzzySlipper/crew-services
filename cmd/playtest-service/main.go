@@ -23,6 +23,10 @@ import (
 // product host that ended by itself.
 const reaperInterval = 30 * time.Second
 
+// defaultRetireDir holds what retention pruning removes until pruning has
+// been checked over a few rounds; then pass --retire-dir "" to delete.
+const defaultRetireDir = "/data/crew-playtest-pending-delete"
+
 func main() {
 	listen := flag.String("listen", "127.0.0.1:48200", "loopback API address")
 	poolPath := flag.String("pool", "", "local pool configuration JSON; size and optional queue_wait_ms")
@@ -32,6 +36,7 @@ func main() {
 	browserWorker := flag.String("browser-worker", "", "Playwright browser worker path")
 	chromium := flag.String("chromium", "", "optional Chromium executable for browser backend")
 	serveConfig := flag.String("serve-config", "", "den-serve configuration for session-owned product hosts; default shares den-serve's state")
+	retireDir := flag.String("retire-dir", defaultRetireDir, "where pruned session records and evidence are moved instead of deleted; empty deletes them")
 	rustyPath := flag.String("rusty", "", "rusty CLI used to explain hosts that ended by themselves; default from PATH or ~/.local/bin")
 	flag.Parse()
 	if *profilesPath == "" || *state == "" || *worker == "" || *browserWorker == "" {
@@ -67,7 +72,7 @@ func main() {
 		log.Fatal(err)
 	}
 	builder := slotBuilder{state: absoluteState, worker: *worker, browserWorker: *browserWorker, chromium: *chromium, registry: registry,
-		hosts: hosts, manifest: hosting.ManifestProject(hostConfig.Manager), locks: &hosting.RepoLocks{}}
+		hosts: hosts, manifest: hosting.ManifestProject(hostConfig.Manager), locks: &hosting.RepoLocks{}, retireDir: *retireDir}
 	if *rustyPath == "" {
 		*rustyPath = hosting.FindRusty()
 	}

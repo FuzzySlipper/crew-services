@@ -37,6 +37,8 @@ type Service struct {
 	current          string
 	launchCancel     context.CancelFunc
 	now              func() time.Time
+	// retireDir receives pruned records and evidence instead of deleting them.
+	retireDir string
 }
 
 func New(backend Backend, launcher Launcher, profiles []Profile, stateDir, worker string) (*Service, error) {

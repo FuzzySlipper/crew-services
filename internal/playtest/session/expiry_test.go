@@ -228,3 +228,65 @@ func TestPruneEvidenceRemovesOnlyOldEvidenceOfForgottenSessions(t *testing.T) {
 		}
 	}
 }
+
+func TestRetireToMovesPrunedRecordsAndEvidenceAside(t *testing.T) {
+	state, retired := t.TempDir(), t.TempDir()
+	s, clock := watchedService(t, &watchingLauncher{}, state)
+	s.RetireTo(retired)
+	id := startWatched(t, s, false)
+	if _, err := s.Stop(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	frame := filepath.Join(state, "browser", id, "frame.png")
+	if err := os.MkdirAll(filepath.Dir(frame), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(frame, []byte("png"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-20 * 24 * time.Hour)
+	_ = os.Chtimes(frame, old, old)
+	_ = os.Chtimes(filepath.Dir(frame), old, old)
+	clock.advance(15 * 24 * time.Hour)
+	cutoff := clock.now.Add(-14 * 24 * time.Hour)
+	if s.PruneHistory(cutoff) != 1 || s.PruneEvidence(time.Now().Add(-14*24*time.Hour)) != 1 {
+		t.Fatal("nothing pruned")
+	}
+	day := filepath.Join(retired, clock.now.Format("2006-01-02"))
+	for _, moved := range []string{filepath.Join(day, "session-"+id+".json"), filepath.Join(day, "browser", id, "frame.png")} {
+		if _, err := os.Stat(moved); err != nil {
+			t.Errorf("not moved aside: %v", err)
+		}
+	}
+	if _, err := os.Stat(frame); !os.IsNotExist(err) {
+		t.Errorf("evidence still in the state directory: %v", err)
+	}
+}
+
+func TestCopyTreeKeepsFilesTimesAndLinks(t *testing.T) {
+	source, destination := t.TempDir(), filepath.Join(t.TempDir(), "copy")
+	old := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	if err := os.MkdirAll(filepath.Join(source, "a", "b"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "a", "b", "f.json"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chtimes(filepath.Join(source, "a", "b", "f.json"), old, old)
+	if err := os.Symlink("b/f.json", filepath.Join(source, "a", "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTree(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(destination, "a", "b", "f.json"))
+	if err != nil || !info.ModTime().Equal(old) {
+		t.Fatalf("copied file: %v %v", info, err)
+	}
+	if link, err := os.Readlink(filepath.Join(destination, "a", "link")); err != nil || link != "b/f.json" {
+		t.Fatalf("link: %q %v", link, err)
+	}
+	if err := moveAside(source, destination); err == nil {
+		t.Fatal("moveAside overwrote an existing destination")
+	}
+}

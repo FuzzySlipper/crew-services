@@ -41,8 +41,9 @@ historical `192.168.1.22` profile URLs.
 
 Profiles are in `/home/agent/.config/crew-playtest/games.json`, pool size in
 `/home/agent/.config/crew-playtest/pool.json`, and evidence under
-`/home/agent/.local/state/crew-playtest-local`, which removes a session's
-evidence 14 days after the session ends. `local-gpu-check` is an
+`/home/agent/.local/state/crew-playtest-local`, which retires a session's
+evidence 14 days after the session ends (for now into
+`/data/crew-playtest-pending-delete/`). `local-gpu-check` is an
 infrastructure check, not a game acceptance test. The parent adds product
 profiles or changes pool size, then runs `playtest reload`. Reload preserves
 existing sessions; invalid files and shrinks that would remove occupied slots

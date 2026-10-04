@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -86,7 +87,7 @@ func (s *Service) PruneHistory(cutoff time.Time) int {
 		if !ended.Before(cutoff) {
 			continue
 		}
-		if err := os.Remove(filepath.Join(s.stateDir, "session-"+id+".json")); err != nil && !os.IsNotExist(err) {
+		if err := s.retire(filepath.Join(s.stateDir, "session-"+id+".json")); err != nil && !os.IsNotExist(err) {
 			continue
 		}
 		delete(s.sessions, id)
@@ -123,7 +124,7 @@ func (s *Service) PruneEvidence(cutoff time.Time) int {
 		entries, _ := os.ReadDir(filepath.Join(s.stateDir, kind))
 		for _, entry := range entries {
 			path := filepath.Join(s.stateDir, kind, entry.Name())
-			if entry.IsDir() && !known[entry.Name()] && unchangedSince(path, cutoff) && os.RemoveAll(path) == nil {
+			if entry.IsDir() && !known[entry.Name()] && unchangedSince(path, cutoff) && s.retire(path) == nil {
 				removed++
 			}
 		}
@@ -134,7 +135,7 @@ func (s *Service) PruneEvidence(cutoff time.Time) int {
 		if !entry.IsDir() || !unchangedSince(path, cutoff) {
 			continue
 		}
-		if owner, ok := recordSession(filepath.Join(path, "script.json")); ok && !known[owner] && os.RemoveAll(path) == nil {
+		if owner, ok := recordSession(filepath.Join(path, "script.json")); ok && !known[owner] && s.retire(path) == nil {
 			removed++
 		}
 	}
@@ -148,11 +149,29 @@ func (s *Service) PruneEvidence(cutoff time.Time) int {
 		if !unchangedSince(path, cutoff) {
 			continue
 		}
-		if owner, ok := recordSession(path); ok && !known[owner] && os.Remove(path) == nil {
+		if owner, ok := recordSession(path); ok && !known[owner] && s.retire(path) == nil {
 			removed++
 		}
 	}
 	return removed
+}
+
+// RetireTo makes pruning move what it removes into dir/<date>/<path below
+// the state directory> instead of deleting it, so a pruning round can be
+// checked before anything is lost. An empty dir deletes. It is called only
+// during service construction, before requests.
+func (s *Service) RetireTo(dir string) { s.retireDir = dir }
+
+// retire removes a pruned record or directory, or moves it aside.
+func (s *Service) retire(path string) error {
+	if s.retireDir == "" {
+		return os.RemoveAll(path)
+	}
+	relative, err := filepath.Rel(s.stateDir, path)
+	if err != nil || strings.HasPrefix(relative, "..") {
+		return fmt.Errorf("%s is outside the state directory", path)
+	}
+	return moveAside(path, filepath.Join(s.retireDir, s.now().Format("2006-01-02"), relative))
 }
 
 // unchangedSince is true when nothing at or below path was modified after
