@@ -381,7 +381,7 @@ type fakeSourceChecker struct {
 	calls    int
 }
 
-func (f *fakeSourceChecker) ContainsCommit(context.Context, string, string) (bool, error) {
+func (f *fakeSourceChecker) HasCommit(context.Context, string, string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -447,7 +447,8 @@ func TestReviewerPromptNamesSubmittedRange(t *testing.T) {
 	prompt := reviewerPrompt(key, nil, "", &ReviewSource{
 		Repository: "owner/repo", CommitSHA: submissionTestSHA, Ref: "main", BaseCommit: "fedcba9876543210fedcba9876543210fedcba98",
 	})
-	if !strings.Contains(prompt, "git diff fedcba9876543210fedcba9876543210fedcba98.."+submissionTestSHA) || !strings.Contains(prompt, "judge only this range") {
+	if !strings.Contains(prompt, "git diff fedcba9876543210fedcba9876543210fedcba98.."+submissionTestSHA) || !strings.Contains(prompt, "Judge only this range") ||
+		!strings.Contains(prompt, "git show "+submissionTestSHA+":<path>") || !strings.Contains(prompt, "working tree may be at a different commit") {
 		t.Fatalf("prompt does not name the range:\n%s", prompt)
 	}
 	if strings.Contains(reviewerPrompt(key, nil, "", nil), "Change under review") {

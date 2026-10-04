@@ -71,15 +71,16 @@ func (s *Service) CheckRuntime(ctx context.Context) RuntimeCheck {
 	return result
 }
 
-// SourceChecker answers, read-only, whether a local checkout's HEAD contains
-// a commit. It must not fetch, check out, or otherwise change the checkout.
+// SourceChecker answers whether a review checkout's repository holds a commit
+// so a reviewer can read it with git. It may fetch objects and
+// remote-tracking refs, but must not check out, reset, or move branches.
 type SourceChecker interface {
-	ContainsCommit(ctx context.Context, workspace string, commitSHA string) (bool, error)
+	HasCommit(ctx context.Context, workspace string, commitSHA string) (bool, error)
 }
 
 const defaultSourceGrace = 15 * time.Minute
 
-// WithSourceChecker enables the checkout-contains-commit check. grace bounds
+// WithSourceChecker enables the checkout-has-commit check. grace bounds
 // how long a submission waits for the checkout before reporting
 // source_missing; zero keeps the default.
 func WithSourceChecker(checker SourceChecker, grace time.Duration) Option {
@@ -329,9 +330,12 @@ The JSON between <den_reviewer_context> delimiters is the authoritative bounded 
 </den_reviewer_context>`, key.ProjectID, key.TaskID, key.ReviewRoundID, key.CorrelationID, manualInstructions, material)
 }
 
-// reviewSourceInstructions names the exact change under review. The checkout
-// was confirmed to contain CommitSHA at admission; it may also hold later
-// commits that belong to other work.
+// reviewSourceInstructions names the exact change under review. Admission
+// confirmed the checkout's repository holds CommitSHA, but its working tree
+// may be at another commit: behind it when the change was pushed from a
+// per-task worktree, or ahead of it with other work.
+const workingTreeNote = " The repository has this commit, but the working tree may be at a different commit, behind or ahead of it, so working-tree files and tests run there may not show the reviewed code."
+
 func reviewSourceInstructions(source *ReviewSource) string {
 	if source == nil || source.CommitSHA == "" {
 		return ""
@@ -341,11 +345,11 @@ func reviewSourceInstructions(source *ReviewSource) string {
 		where += " (" + source.Ref + ")"
 	}
 	if source.BaseCommit != "" {
-		return fmt.Sprintf("\n\nChange under review: %s, commits %s..%s. Inspect it with `git log %s..%s` and `git diff %s..%s`. The checkout contains this change and may also contain later commits from other work; judge only this range.",
-			where, source.BaseCommit, source.CommitSHA, source.BaseCommit, source.CommitSHA, source.BaseCommit, source.CommitSHA)
+		return fmt.Sprintf("\n\nChange under review: %s, commits %s..%s. Inspect it with `git log %s..%s` and `git diff %s..%s`, and read files as of the reviewed commit with `git show %s:<path>`.%s Judge only this range.",
+			where, source.BaseCommit, source.CommitSHA, source.BaseCommit, source.CommitSHA, source.BaseCommit, source.CommitSHA, source.CommitSHA, workingTreeNote)
 	}
-	return fmt.Sprintf("\n\nChange under review: %s, commit %s. Inspect it with `git show %s`; if the task spans earlier commits, use the task context to find them. The checkout contains this commit and may also contain later commits from other work; judge only this change.",
-		where, source.CommitSHA, source.CommitSHA)
+	return fmt.Sprintf("\n\nChange under review: %s, commit %s. Inspect it with `git show %s`, and read files as of the reviewed commit with `git show %s:<path>`; if the task spans earlier commits, use the task context to find them.%s Judge only this change.",
+		where, source.CommitSHA, source.CommitSHA, source.CommitSHA, workingTreeNote)
 }
 
 func (s *Service) reconcile(ctx context.Context, j Job) error {

@@ -136,14 +136,20 @@ submissions through gate waits and Den unavailability until `phase:
 "job_admitted"`, including across restarts. Den may satisfy the gate with
 checks from a later commit of the ref that contains the task commit.
 
-Before admitting a reviewer, crew-review checks read-only (`git merge-base
---is-ancestor`) that the resolved checkout contains the submitted commit. If it
-does not yet, usually because the checkout has not been pulled, the submission
-waits quietly in `source_pending`; after `-source-grace` (15 minutes by default)
-it stops as `source_missing` with `error_code: "checkout_missing_commit"`. This
-never produces a review verdict or a message to the submitter, and crew-review
-never fetches or checks out. The admitted job carries the submitted
-`base_commit..commit_sha` range, which the reviewer prompt names explicitly.
+Before admitting a reviewer, crew-review checks that the resolved checkout's
+repository holds the submitted commit (`git cat-file -e`), so the reviewer can
+read it with git. The working tree may be at another commit: agents often push
+from per-task worktrees, whose commits share the checkout's object store, and
+nothing pulls the main checkout. When the commit is absent crew-review runs one
+`git fetch`, which updates objects and remote-tracking refs but never the
+working tree, HEAD, or local branches. If the commit is still missing the
+submission waits quietly in `source_pending`; after `-source-grace` (15 minutes
+by default) it stops as `source_missing` with `error_code:
+"checkout_missing_commit"`. This never produces a review verdict or a message
+to the submitter. The admitted job carries the submitted
+`base_commit..commit_sha` range; the reviewer prompt names it, says to read
+files at the reviewed commit with `git show <sha>:<path>`, and warns that the
+working tree may not match.
 
 Repeating the same submission is an idempotent replay. While no reviewer job
 exists, a repeat with a corrected `review_summary_md` or `reviewer` revises the

@@ -3,43 +3,56 @@ package reviewden
 import (
 	"context"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestGitSourceCheckerReportsContainedAndMissingCommits(t *testing.T) {
-	repo := t.TempDir()
-	runGit := func(args ...string) string {
+func TestGitSourceCheckerFindsWorktreeAndRemoteCommits(t *testing.T) {
+	root := t.TempDir()
+	origin, checkout := filepath.Join(root, "origin"), filepath.Join(root, "checkout")
+	git := func(dir string, args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.name=test", "-c", "user.email=test@example.invalid"}, args...)...)
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=test", "-c", "user.email=test@example.invalid"}, args...)...)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %v: %v: %s", args, err, output)
 		}
 		return strings.TrimSpace(string(output))
 	}
-	runGit("init", "-q")
-	runGit("commit", "-q", "--allow-empty", "-m", "first")
-	first := runGit("rev-parse", "HEAD")
-	runGit("commit", "-q", "--allow-empty", "-m", "second")
-	second := runGit("rev-parse", "HEAD")
-	runGit("checkout", "-q", first)
+	git(root, "init", "-q", "-b", "main", origin)
+	git(origin, "commit", "-q", "--allow-empty", "-m", "first")
+	first := git(origin, "rev-parse", "HEAD")
+	git(root, "clone", "-q", origin, checkout)
+
+	// A commit made in a sibling worktree shares the clone's object store but
+	// is not reachable from the main checkout's HEAD.
+	worktree := filepath.Join(root, "task-worktree")
+	git(checkout, "worktree", "add", "-q", "-b", "task", worktree)
+	git(worktree, "commit", "-q", "--allow-empty", "-m", "task change")
+	fromWorktree := git(worktree, "rev-parse", "HEAD")
+
+	// A commit pushed to origin from elsewhere is not in the clone until a fetch.
+	git(origin, "commit", "-q", "--allow-empty", "-m", "pushed elsewhere")
+	fromRemote := git(origin, "rev-parse", "HEAD")
 
 	checker := GitSourceChecker{}
 	ctx := context.Background()
-	if contains, err := checker.ContainsCommit(ctx, repo, first); err != nil || !contains {
-		t.Fatalf("HEAD commit: contains=%v err=%v", contains, err)
+	for name, commit := range map[string]string{"HEAD": first, "worktree": fromWorktree, "remote": fromRemote} {
+		if has, err := checker.HasCommit(ctx, checkout, commit); err != nil || !has {
+			t.Fatalf("%s commit: has=%v err=%v", name, has, err)
+		}
 	}
-	if contains, err := checker.ContainsCommit(ctx, repo, second); err != nil || contains {
-		t.Fatalf("later commit: contains=%v err=%v", contains, err)
+	if has, err := checker.HasCommit(ctx, checkout, strings.Repeat("ab", 20)); err != nil || has {
+		t.Fatalf("unknown commit: has=%v err=%v", has, err)
 	}
-	if contains, err := checker.ContainsCommit(ctx, repo, strings.Repeat("ab", 20)); err != nil || contains {
-		t.Fatalf("unknown commit: contains=%v err=%v", contains, err)
-	}
-	if _, err := checker.ContainsCommit(ctx, repo, "main"); err == nil {
+	if _, err := checker.HasCommit(ctx, checkout, "main"); err == nil {
 		t.Fatal("non-SHA input was accepted")
 	}
-	if head := runGit("rev-parse", "HEAD"); head != first {
-		t.Fatalf("checker changed HEAD to %s", head)
+	if head := git(checkout, "rev-parse", "HEAD"); head != first {
+		t.Fatalf("checker moved HEAD to %s", head)
+	}
+	if branch := git(checkout, "rev-parse", "main"); branch != first {
+		t.Fatalf("checker moved main to %s", branch)
 	}
 }

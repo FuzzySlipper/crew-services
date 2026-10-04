@@ -355,8 +355,8 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 		return s.submissionStale(ctx, store, record, "Den current review context is no longer source_review_ready")
 	}
 	if s.source != nil && current.Workspace != "" {
-		contains, sourceErr := s.source.ContainsCommit(ctx, current.Workspace, record.Request.CommitSHA)
-		if sourceErr != nil || !contains {
+		has, sourceErr := s.source.HasCommit(ctx, current.Workspace, record.Request.CommitSHA)
+		if sourceErr != nil || !has {
 			return s.submissionSourcePending(ctx, store, record, gate, current.Workspace, sourceErr)
 		}
 	}
@@ -383,12 +383,12 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 	return submissionReceipt(record), nil
 }
 
-// submissionSourcePending waits quietly for the checkout to contain the
-// submitted commit. It never produces a review verdict or a message to the
+// submissionSourcePending waits quietly for the checkout's repository to hold
+// the submitted commit. It never produces a review verdict or a message to the
 // submitter; after the grace period it records the typed source_missing
 // infrastructure failure.
 func (s *Service) submissionSourcePending(ctx context.Context, store SubmissionStore, record SubmissionRecord, gate GateEvidence, workspace string, checkErr error) (SubmissionReceipt, error) {
-	message := "review checkout " + workspace + " does not contain commit " + record.Request.CommitSHA + " yet"
+	message := "review checkout " + workspace + " does not have commit " + record.Request.CommitSHA + " yet, even after a fetch"
 	if checkErr != nil {
 		message = "checking review checkout " + workspace + " for commit " + record.Request.CommitSHA + ": " + checkErr.Error()
 	}
