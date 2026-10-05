@@ -224,6 +224,7 @@ func (a *Adapter) Acquire(ctx context.Context, width, height, fps, ttl int) (map
 
 	result, err := a.call(ctx, child, "launch", map[string]any{
 		"width": width, "height": height, "headless": true, "artifact_directory": directory,
+		"audio_enabled": a.profile.BrowserAudio,
 		"user_data_dir": filepath.Join(directory, "profile"), "executable_path": a.config.Chromium,
 	})
 	if err != nil {
@@ -259,6 +260,7 @@ func (a *Adapter) Launch(ctx context.Context, leaseID string, profile session.Pr
 	result["server_http_ready"] = true
 	a.mu.Lock()
 	result["events_path"] = filepath.Join(a.directory, "events.jsonl")
+	result["audio_enabled"] = a.profile.BrowserAudio
 	a.mu.Unlock()
 	result["browser_url"] = result["url"]
 	result["game_readiness"] = "unknown; inspect the original screenshot"
@@ -279,7 +281,7 @@ func (a *Adapter) SelectLaunchProfile(leaseID string, profile session.Profile) e
 	}
 	sameHost := (a.profile.Host == nil) == (profile.Host == nil) && (a.profile.Host == nil || *a.profile.Host == *profile.Host)
 	hosted := sameHost && profile.Host != nil
-	if profile.ID != a.profile.ID || !sameHost || (profile.URL != a.profile.URL && !hosted) {
+	if profile.ID != a.profile.ID || profile.BrowserAudio != a.profile.BrowserAudio || !sameHost || (profile.URL != a.profile.URL && !hosted) {
 		return errors.New("browser profile changed after acquisition")
 	}
 	if hosted {

@@ -3,10 +3,12 @@ package browser
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -304,5 +306,74 @@ func TestHostedProfileTakesItsSessionURLAtLaunch(t *testing.T) {
 	other.Host = &session.HostSpec{Repo: "/repo/other"}
 	if err := a.SelectLaunchProfile("lease", other); err == nil {
 		t.Fatal("changed host accepted")
+	}
+}
+
+func TestBrowserAudioProfileReachesChromiumLaunch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<!doctype html><title>Audio profile fixture</title>"))
+	}))
+	defer server.Close()
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("enabled_%t", enabled), func(t *testing.T) {
+			worker, err := filepath.Abs("worker.mjs")
+			if err != nil {
+				t.Fatal(err)
+			}
+			adapter, err := New(Config{State: t.TempDir(), Worker: worker, Chromium: testChromium(t)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			profile := session.Profile{ID: "audio-fixture", Backend: "browser", Environment: "service", URL: server.URL, BrowserAudio: enabled}
+			if err := adapter.SelectProfile(profile); err != nil {
+				t.Fatal(err)
+			}
+			lease, err := adapter.Acquire(context.Background(), 1280, 720, 30, 300)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leaseID := lease["lease_id"].(string)
+			t.Cleanup(func() { _, _ = adapter.Release(context.Background(), leaseID) })
+			if lease["audio_enabled"] != enabled {
+				t.Fatalf("launch receipt: %#v", lease)
+			}
+			changed := profile
+			changed.BrowserAudio = !enabled
+			if _, err := adapter.Launch(context.Background(), leaseID, changed); err == nil {
+				t.Fatal("launch accepted an audio configuration different from the acquired browser")
+			}
+			launched, err := adapter.Launch(context.Background(), leaseID, profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if launched["audio_enabled"] != enabled {
+				t.Fatalf("public launch receipt: %#v", launched)
+			}
+			// Find this lease's main browser process by its private profile directory.
+			entries, err := os.ReadDir("/proc")
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, entry := range entries {
+				data, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+				if err != nil {
+					continue
+				}
+				command := string(data)
+				if !strings.Contains(command, "--user-data-dir="+filepath.Join(adapter.directory, "profile")) || strings.Contains(command, "--type=") {
+					continue
+				}
+				found = true
+				muted := slices.Contains(strings.Fields(strings.ReplaceAll(command, "\x00", " ")), "--mute-audio")
+				if muted == enabled {
+					t.Fatalf("audio enabled=%t, actual Chromium mute flag=%t", enabled, muted)
+				}
+			}
+			if !found {
+				t.Fatal("could not find leased Chromium process")
+			}
+
+		})
 	}
 }

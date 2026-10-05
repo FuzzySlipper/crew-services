@@ -159,6 +159,7 @@ async function launch(params) {
   const height = params.height
   if (!Number.isInteger(width) || width < 320 || width > 3840 || !Number.isInteger(height) || height < 240 || height > 2160) throw new Error('viewport must be within 320x240 through 3840x2160')
   const launchOptions = { headless: params.headless !== false, viewport: { width, height }, deviceScaleFactor: 1 }
+  if (params.audio_enabled === true) launchOptions.ignoreDefaultArgs = ['--mute-audio']
   if (typeof params.executable_path === 'string' && params.executable_path.length > 0) launchOptions.executablePath = params.executable_path
   context = await chromium.launchPersistentContext(params.user_data_dir, launchOptions)
   context.setDefaultTimeout(DEFAULT_TIMEOUT)
@@ -167,7 +168,7 @@ async function launch(params) {
   page = context.pages()[0] || await context.newPage()
   page.on('console', message => addBounded(consoleEvents, { type: message.type(), text: message.text().slice(0, 4096), truncated: message.text().length > 4096, location: message.location() }))
   page.on('pageerror', error => addBounded(pageErrors, serializeError(error).slice(0, 4096)))
-  return { headless: params.headless !== false, viewport: { width, height, device_pixel_ratio: 1 }, browser: 'chromium', renderer: 'unknown' }
+  return { headless: params.headless !== false, audio_enabled: params.audio_enabled === true, viewport: { width, height, device_pixel_ratio: 1 }, browser: 'chromium', renderer: 'unknown' }
 }
 
 async function inspect(params) {

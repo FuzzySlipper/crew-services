@@ -238,6 +238,13 @@ and don't compare them with uncapped numbers from another machine.
 - Pool: `~/.config/crew-playtest/pool.json` (`{"size": 10}` here)
 - Evidence: `~/.local/state/crew-playtest-local/` (kept 14 days after a session ends; see [Retention](#retention))
 
+Browser profiles may set `"browser_audio": true` to enable real audio output.
+The default is muted. The adapter removes only Playwright's `--mute-audio`
+default; autoplay and the product's audio controls still apply. Select this on
+an isolated audio-test profile before starting its session, then record the
+actual output as described above. A successful browser launch receipt reports
+`audio_enabled`; that configuration receipt alone is not audible-output proof.
+
 Install or update from this repository with the active sessions stopped:
 
 ```sh

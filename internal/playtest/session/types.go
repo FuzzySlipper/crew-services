@@ -17,6 +17,8 @@ type Backend interface {
 }
 
 type Profile struct {
+	// BrowserAudio enables real browser audio output; the default remains muted.
+	BrowserAudio             bool              `json:"browser_audio,omitempty"`
 	PresentationObservations bool              `json:"presentation_observations,omitempty"`
 	InteractionQueries       bool              `json:"interaction_queries,omitempty"`
 	Backend                  string            `json:"backend,omitempty"`
