@@ -53,6 +53,9 @@ type NativeThread struct {
 	CWD    string
 	Status string
 	Turns  []NativeTurn
+	// UpdatedAt is Codex's last-update time in whole Unix seconds; zero when
+	// the App Server did not report one.
+	UpdatedAt int64
 }
 
 type NativeTurn struct {
@@ -422,13 +425,23 @@ func (c *StdioAppServer) ListThreads(ctx context.Context) ([]NativeThread, error
 }
 
 func (c *StdioAppServer) ReadThread(ctx context.Context, threadID string) (NativeThread, error) {
+	return c.readThread(ctx, threadID, true)
+}
+
+// ReadThreadSummary reads a thread's metadata without its turns, which costs
+// a small fraction of a full history read.
+func (c *StdioAppServer) ReadThreadSummary(ctx context.Context, threadID string) (NativeThread, error) {
+	return c.readThread(ctx, threadID, false)
+}
+
+func (c *StdioAppServer) readThread(ctx context.Context, threadID string, includeTurns bool) (NativeThread, error) {
 	var response struct {
 		Thread nativeThreadWire `json:"thread"`
 	}
 	if err := c.awaitInitialized(ctx); err != nil {
 		return NativeThread{}, err
 	}
-	if err := c.sendRequest(ctx, "thread/read", map[string]any{"threadId": threadID, "includeTurns": true}, &response); err != nil {
+	if err := c.sendRequest(ctx, "thread/read", map[string]any{"threadId": threadID, "includeTurns": includeTurns}, &response); err != nil {
 		return NativeThread{}, err
 	}
 	return response.Thread.native(), nil
@@ -896,10 +909,11 @@ func (c *StdioAppServer) terminalErrorLocked() error {
 }
 
 type nativeThreadWire struct {
-	ID     string  `json:"id"`
-	Name   *string `json:"name"`
-	CWD    string  `json:"cwd"`
-	Status struct {
+	ID        string  `json:"id"`
+	Name      *string `json:"name"`
+	CWD       string  `json:"cwd"`
+	UpdatedAt int64   `json:"updatedAt"`
+	Status    struct {
 		Type string `json:"type"`
 	} `json:"status"`
 	Turns []nativeTurnWire `json:"turns"`
@@ -941,5 +955,5 @@ func (v nativeThreadWire) native() NativeThread {
 		}
 		turns = append(turns, NativeTurn{ID: turn.ID, Status: turn.Status, Items: items})
 	}
-	return NativeThread{ID: v.ID, Name: name, CWD: v.CWD, Status: v.Status.Type, Turns: turns}
+	return NativeThread{ID: v.ID, Name: name, CWD: v.CWD, Status: v.Status.Type, Turns: turns, UpdatedAt: v.UpdatedAt}
 }

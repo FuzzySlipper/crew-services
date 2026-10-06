@@ -152,7 +152,7 @@ func TestProjectorUpgradesAnOwnedBindingForPromptDelivery(t *testing.T) {
 	if err := projector.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !equalStrings(fabric.bindings["crew/scout"].Capabilities, codexCapabilities) {
+	if !sameCapabilities(fabric.bindings["crew/scout"].Capabilities, codexCapabilities) {
 		t.Fatalf("binding capabilities=%v", fabric.bindings["crew/scout"].Capabilities)
 	}
 }
@@ -828,4 +828,119 @@ func newProjector(fabric Fabric, native AppServer) *Projector {
 }
 func thread(id, name, status string, turns []NativeTurn) NativeThread {
 	return NativeThread{ID: id, Name: name, CWD: "/workspace", Status: status, Turns: turns}
+}
+
+// countingFabric counts appends and delivery listings that reach the fabric.
+type countingFabric struct {
+	*fakeFabric
+	appends, listings int
+}
+
+func (f *countingFabric) Append(ctx context.Context, sessionID string, request AppendRequest) error {
+	f.appends++
+	return f.fakeFabric.Append(ctx, sessionID, request)
+}
+func (f *countingFabric) Deliveries(ctx context.Context) ([]Delivery, error) {
+	f.listings++
+	return f.fakeFabric.Deliveries(ctx)
+}
+
+func TestProjectorSendsOnlyEntriesNotConfirmedInAnEarlierPass(t *testing.T) {
+	fabric := &countingFabric{fakeFabric: newFakeFabric()}
+	turn := NativeTurn{ID: "turn-1", Status: "completed", Items: []NativeItem{
+		{ID: "user-1", Type: "userMessage", Content: []NativeContent{{Type: "text", Text: "survey this"}}},
+		{ID: "agent-1", Type: "agentMessage", Text: "done"},
+	}}
+	native := &fakeAppServer{threads: []NativeThread{thread("thread-1", "Scout", "idle", []NativeTurn{turn})}}
+	projected := make(map[string]map[string]struct{})
+	pass := func() {
+		t.Helper()
+		projector := newProjector(fabric, native)
+		projector.Projected = projected
+		if err := projector.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pass()
+	if fabric.appends != 2 || fabric.listings != 1 {
+		t.Fatalf("first pass appends=%d listings=%d, want 2 and 1", fabric.appends, fabric.listings)
+	}
+	pass()
+	if fabric.appends != 2 {
+		t.Fatalf("unchanged history re-sent: appends=%d", fabric.appends)
+	}
+	turn.Items = append(turn.Items, NativeItem{ID: "agent-2", Type: "agentMessage", Text: "more"})
+	native.threads = []NativeThread{thread("thread-1", "Scout", "idle", []NativeTurn{turn})}
+	pass()
+	if fabric.appends != 3 || len(fabric.events) != 3 {
+		t.Fatalf("new entry appends=%d events=%d, want 3 and 3", fabric.appends, len(fabric.events))
+	}
+}
+
+// summaryAppServer adds metadata-only reads and counts both kinds of read.
+type summaryAppServer struct {
+	*fakeAppServer
+	fullReads, summaryReads int
+}
+
+func (s *summaryAppServer) ReadThread(ctx context.Context, id string) (NativeThread, error) {
+	s.fullReads++
+	return s.fakeAppServer.ReadThread(ctx, id)
+}
+func (s *summaryAppServer) ReadThreadSummary(ctx context.Context, id string) (NativeThread, error) {
+	s.summaryReads++
+	thread, err := s.fakeAppServer.ReadThread(ctx, id)
+	thread.Turns = nil
+	return thread, err
+}
+
+func TestProjectorReadsFullHistoryOnlyWhenThreadMetadataChanges(t *testing.T) {
+	updated := time.Now().Unix() - 10
+	turns := []NativeTurn{{ID: "turn-1", Status: "completed", Items: []NativeItem{{ID: "user-1", Type: "userMessage", Content: []NativeContent{{Type: "text", Text: "survey this"}}}}}}
+	current := thread("thread-1", "Scout", "idle", turns)
+	current.UpdatedAt = updated
+	native := &summaryAppServer{fakeAppServer: &fakeAppServer{threads: []NativeThread{current}}}
+	fabric := newFakeFabric()
+	threads := make(map[string]CachedThread)
+	pass := func() {
+		t.Helper()
+		projector := newProjector(fabric, native)
+		projector.Threads = threads
+		if err := projector.Reconcile(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pass()
+	pass()
+	if native.fullReads != 1 || native.summaryReads != 1 {
+		t.Fatalf("unchanged thread full=%d summary=%d, want 1 and 1", native.fullReads, native.summaryReads)
+	}
+	if len(fabric.events) != 1 {
+		t.Fatalf("cached history projected %d events, want 1", len(fabric.events))
+	}
+
+	current.Turns = append(current.Turns, NativeTurn{ID: "turn-2", Status: "completed", Items: []NativeItem{{ID: "agent-2", Type: "agentMessage", Text: "done"}}})
+	current.UpdatedAt = updated + 1
+	native.threads = []NativeThread{current}
+	pass()
+	if native.fullReads != 2 || len(fabric.events) != 2 {
+		t.Fatalf("changed thread full=%d events=%d, want 2 and 2", native.fullReads, len(fabric.events))
+	}
+
+	current.Status = "active"
+	native.threads = []NativeThread{current}
+	pass()
+	if native.fullReads != 3 {
+		t.Fatalf("status change did not reread history: full=%d", native.fullReads)
+	}
+
+	// An update time not before the cached read's second may hide a change made
+	// in that same second, so the history is read again.
+	current.UpdatedAt = time.Now().Unix() + 60
+	native.threads = []NativeThread{current}
+	pass()
+	pass()
+	if native.fullReads != 5 {
+		t.Fatalf("same-second update trusted the cache: full=%d", native.fullReads)
+	}
 }

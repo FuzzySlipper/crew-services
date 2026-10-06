@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -35,6 +36,20 @@ type Projector struct {
 	// UnmaterializedThreads contains only control-created native threads. Codex
 	// permits their first queued prompt before thread/read can include turns.
 	UnmaterializedThreads map[string]NativeThread
+	// Projected remembers, per public session, the entry appends the fabric
+	// already confirmed, so an unchanged history is not re-sent every pass. It
+	// is only a skip list: nil disables it and fabric idempotency stays the
+	// authority, so losing it costs one full re-send.
+	Projected map[string]map[string]struct{}
+	// Threads keeps each mapped thread's last full read so an unchanged thread
+	// costs only a metadata read. nil always reads full history.
+	Threads map[string]CachedThread
+
+	// While holdDeliveries is set (one thread's projection), dispatch
+	// reconciliation and head selection share one fabric listing; nil
+	// deliveries means list again.
+	holdDeliveries bool
+	deliveries     []Delivery
 }
 
 func (p *Projector) Reconcile(ctx context.Context) error {
@@ -44,11 +59,12 @@ func (p *Projector) Reconcile(ctx context.Context) error {
 	if strings.TrimSpace(p.Lease.LeaseToken) == "" {
 		return errors.New("adapter lease is required")
 	}
+	p.forgetUnmappedThreads()
 	for _, mapping := range p.Mappings {
 		// thread/list is paginated and intentionally not an adoption authority.
 		// The explicit mapping gives us an exact identity; thread/read is the
 		// canonical metadata/history source for that identity.
-		thread, err := p.Native.ReadThread(ctx, mapping.ThreadID)
+		thread, err := p.readThread(ctx, mapping.ThreadID)
 		unmaterialized := false
 		if err != nil {
 			seed, found := p.UnmaterializedThreads[mapping.ThreadID]
@@ -65,6 +81,61 @@ func (p *Projector) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// fullReadInterval bounds how long a cached history is trusted even when the
+// thread's metadata says nothing changed.
+const fullReadInterval = time.Minute
+
+// CachedThread is a full thread/read and the wall time its request began.
+type CachedThread struct {
+	Thread    NativeThread
+	FetchedAt time.Time
+}
+
+// threadSummaryReader is an App Server that can read metadata without turns.
+type threadSummaryReader interface {
+	ReadThreadSummary(context.Context, string) (NativeThread, error)
+}
+
+// readThread returns the canonical thread, reusing the cached history while
+// a metadata read shows the same status and update time. The cache is only
+// trusted when its read began in a later second than that update time:
+// updatedAt has whole-second resolution, so a change within the same second
+// as the read would otherwise be invisible.
+func (p *Projector) readThread(ctx context.Context, threadID string) (NativeThread, error) {
+	summaries, ok := p.Native.(threadSummaryReader)
+	if !ok || p.Threads == nil {
+		return p.Native.ReadThread(ctx, threadID)
+	}
+	started := time.Now()
+	if cached, found := p.Threads[threadID]; found && started.Sub(cached.FetchedAt) < fullReadInterval {
+		summary, err := summaries.ReadThreadSummary(ctx, threadID)
+		if err != nil {
+			delete(p.Threads, threadID)
+			return NativeThread{}, err
+		}
+		if summary.UpdatedAt != 0 && summary.UpdatedAt == cached.Thread.UpdatedAt && summary.Status == cached.Thread.Status && cached.FetchedAt.Unix() > summary.UpdatedAt {
+			thread := cached.Thread
+			thread.Name, thread.CWD = summary.Name, summary.CWD
+			return thread, nil
+		}
+	}
+	thread, err := p.Native.ReadThread(ctx, threadID)
+	if err != nil {
+		delete(p.Threads, threadID)
+		return NativeThread{}, err
+	}
+	p.Threads[threadID] = CachedThread{Thread: thread, FetchedAt: started}
+	return thread, nil
+}
+
+func (p *Projector) forgetUnmappedThreads() {
+	for threadID := range p.Threads {
+		if !slices.ContainsFunc(p.Mappings, func(mapping Mapping) bool { return mapping.ThreadID == threadID }) {
+			delete(p.Threads, threadID)
+		}
+	}
 }
 
 func (p *Projector) projectThread(ctx context.Context, mapping Mapping, thread NativeThread, unmaterialized bool) error {
@@ -87,19 +158,57 @@ func (p *Projector) projectThread(ctx context.Context, mapping Mapping, thread N
 	if p.Observed != nil {
 		p.Observed(session, mapping)
 	}
+	if err := p.projectEntries(ctx, session, thread); err != nil {
+		return err
+	}
+	p.holdDeliveries, p.deliveries = true, nil
+	defer func() { p.holdDeliveries, p.deliveries = false, nil }()
+	if err := p.reconcileDispatching(ctx, mapping, thread, binding); err != nil {
+		return err
+	}
+	return p.deliverQueuedWithCreatedThread(ctx, mapping, thread, binding, unmaterialized)
+}
+
+// projectEntries appends every normalized entry the fabric has not already
+// confirmed in an earlier pass. The remembered set is rebuilt from the current
+// history each pass, so it never outgrows the threads it mirrors.
+func (p *Projector) projectEntries(ctx context.Context, session Session, thread NativeThread) error {
+	confirmed := p.Projected[session.SessionID]
+	current := make(map[string]struct{})
 	for _, event := range normalizedEvents(thread) {
 		payload, err := json.Marshal(event)
 		if err != nil {
 			return fmt.Errorf("encode native entry %q: %w", event.EntryID, err)
 		}
-		if err := p.appendEntry(ctx, session, event, thread.ID, payload); err != nil {
-			return fmt.Errorf("append native entry %q: %w", event.EntryID, err)
+		key := contentQualifiedOperationID(event.operationID(thread.ID), payload)
+		if _, done := confirmed[key]; !done {
+			if err := p.appendEntry(ctx, session, event, thread.ID, payload); err != nil {
+				return fmt.Errorf("append native entry %q: %w", event.EntryID, err)
+			}
 		}
+		current[key] = struct{}{}
 	}
-	if err := p.reconcileDispatching(ctx, mapping, thread, binding); err != nil {
-		return err
+	if p.Projected != nil {
+		p.Projected[session.SessionID] = current
 	}
-	return p.deliverQueuedWithCreatedThread(ctx, mapping, thread, binding, unmaterialized)
+	return nil
+}
+
+// listDeliveries returns the listing held for the thread being projected, or
+// a fresh one.
+func (p *Projector) listDeliveries(ctx context.Context) ([]Delivery, error) {
+	if p.deliveries != nil {
+		return p.deliveries, nil
+	}
+	deliveries, err := p.Fabric.Deliveries(ctx)
+	if err != nil || !p.holdDeliveries {
+		return deliveries, err
+	}
+	if deliveries == nil {
+		deliveries = []Delivery{}
+	}
+	p.deliveries = deliveries
+	return deliveries, nil
 }
 
 func (p *Projector) appendEntry(ctx context.Context, session Session, event Entry, threadID string, payload json.RawMessage) error {
@@ -138,7 +247,7 @@ func (p *Projector) bind(ctx context.Context, address string, session Session) (
 		if binding.AdapterID != p.AdapterID || binding.TargetRef != session.SessionID {
 			return Binding{}, fmt.Errorf("address %q is owned by %q and cannot be rebound", address, binding.AdapterID)
 		}
-		if equalStrings(binding.Capabilities, p.Capabilities) {
+		if sameCapabilities(binding.Capabilities, p.Capabilities) {
 			return binding, nil
 		}
 	}
@@ -273,7 +382,7 @@ func isUnmaterializedThreadError(err error) bool {
 // It is deliberately an observation pass: missing proof becomes
 // outcome_unknown, never a second queue/add request.
 func (p *Projector) reconcileDispatching(ctx context.Context, mapping Mapping, thread NativeThread, binding Binding) error {
-	deliveries, err := p.Fabric.Deliveries(ctx)
+	deliveries, err := p.listDeliveries(ctx)
 	if err != nil {
 		return fmt.Errorf("list dispatching deliveries: %w", err)
 	}
@@ -281,6 +390,8 @@ func (p *Projector) reconcileDispatching(ctx context.Context, mapping Mapping, t
 		if delivery.State != "dispatching" || delivery.ClaimOwnerAdapterID != p.AdapterID || delivery.RecipientAddress != mapping.Address || delivery.RecipientGeneration != binding.Generation || delivery.NativeAttemptRef != nativeAttempt(delivery.DeliveryID) {
 			continue
 		}
+		// Settling changes the ledger, so head selection must list it afresh.
+		p.deliveries = nil
 		accepted, err := p.nativeAccepted(ctx, mapping.ThreadID, thread, clientMessageID(delivery.DeliveryID))
 		if err != nil {
 			request := ReconcileRequest{AdapterID: p.AdapterID, LeaseToken: p.Lease.LeaseToken, OperationID: deliveryOperation(delivery.DeliveryID, "unknown"), NativeAttemptRef: delivery.NativeAttemptRef}
@@ -309,7 +420,7 @@ func (p *Projector) reconcileDispatching(ctx context.Context, mapping Mapping, t
 // forming its durable claim operation identity. A claimed head may be replayed
 // only by the same adapter instance, which recovers its stored claim token.
 func (p *Projector) deliveryHead(ctx context.Context, address string, generation int64) (*Delivery, error) {
-	deliveries, err := p.Fabric.Deliveries(ctx)
+	deliveries, err := p.listDeliveries(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list delivery head %q: %w", address, err)
 	}
@@ -420,7 +531,7 @@ func threadHasClientID(thread NativeThread, clientID string) bool {
 
 func (p *Projector) updateIfChanged(ctx context.Context, session Session, thread NativeThread) (Session, error) {
 	label, location, status := threadLabel(thread), thread.CWD, threadStatus(thread.Status)
-	if session.Label == label && session.Location == location && session.Status == status && equalStrings(session.Capabilities, p.Capabilities) {
+	if session.Label == label && session.Location == location && session.Status == status && sameCapabilities(session.Capabilities, p.Capabilities) {
 		return session, nil
 	}
 	updated, err := p.Fabric.Update(ctx, UpdateRequest{
@@ -456,16 +567,16 @@ func threadStatus(status string) string {
 		return "unknown"
 	}
 }
-func equalStrings(a, b []string) bool {
+
+// sameCapabilities compares capability sets. The fabric stores them sorted,
+// so an order-sensitive comparison would rewrite every binding and session on
+// every pass.
+func sameCapabilities(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	a, b = slices.Sorted(slices.Values(a)), slices.Sorted(slices.Values(b))
+	return slices.Equal(a, b)
 }
 
 // Entry is the durable, runtime-independent projection subset. It is not a
@@ -545,6 +656,8 @@ func Run(ctx context.Context, cfg Config, fabric Fabric, open func() (AppServer,
 			}
 		}()
 	}
+	projected := make(map[string]map[string]struct{})
+	threads := make(map[string]CachedThread)
 	var native AppServer
 	defer func() {
 		if native != nil {
@@ -581,11 +694,12 @@ func Run(ctx context.Context, cfg Config, fabric Fabric, open func() (AppServer,
 			}
 		}
 		controls.Attach(native, lease, cfg.Mappings)
-		projector := Projector{Fabric: fabric, Native: native, AdapterID: cfg.AdapterID, Lease: lease, Mappings: controls.Mappings(cfg.Mappings), Capabilities: codexCapabilities, ClaimDuration: cfg.ClaimDuration, Observed: controls.Observe, UnmaterializedThreads: controls.UnmaterializedThreads()}
+		projector := Projector{Fabric: fabric, Native: native, AdapterID: cfg.AdapterID, Lease: lease, Mappings: controls.Mappings(cfg.Mappings), Capabilities: codexCapabilities, ClaimDuration: cfg.ClaimDuration, Observed: controls.Observe, UnmaterializedThreads: controls.UnmaterializedThreads(), Projected: projected, Threads: threads}
 		if err := projector.Reconcile(ctx); err != nil {
 			logf("crew-codex: reconciliation failed: %v", err)
 			_ = native.Close()
 			native = nil
+			clear(threads)
 		}
 		if !wait(ctx, cfg.PollInterval) {
 			return nil

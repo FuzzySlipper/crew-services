@@ -291,7 +291,12 @@ func (h *HTTPFabric) call(ctx context.Context, method, path string, body any, ta
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	// Reading to EOF lets the transport reuse the connection; a body closed
+	// early (the decoder stops before the trailing newline) is discarded.
+	defer func() {
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+	}()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(response.Body, 8*1024))
 		return &HTTPError{Status: response.StatusCode, Body: string(data)}

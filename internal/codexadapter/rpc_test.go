@@ -508,3 +508,56 @@ func TestTurnCompletionCarriesErrorAndLastAgentMessage(t *testing.T) {
 		t.Fatalf("agent messages retained after completion: %#v", client.agentMessages)
 	}
 }
+
+func TestStdioAppServerReadThreadSummaryOmitsTurnsAndKeepsUpdateTime(t *testing.T) {
+	writes := make(chan []byte, 1)
+	client := &StdioAppServer{
+		stdin: &testWriteCloser{write: func(value []byte) (int, error) {
+			writes <- append([]byte(nil), value...)
+			return len(value), nil
+		}},
+		pending:           map[string]chan rpcResponse{},
+		interactions:      map[string]pendingInteraction{},
+		done:              make(chan struct{}),
+		handshakeDone:     make(chan struct{}),
+		handshakeComplete: true,
+	}
+	result := make(chan struct {
+		thread NativeThread
+		err    error
+	}, 1)
+	go func() {
+		thread, err := client.ReadThreadSummary(context.Background(), "thread-1")
+		result <- struct {
+			thread NativeThread
+			err    error
+		}{thread, err}
+	}()
+	var request struct {
+		Method string `json:"method"`
+		Params struct {
+			ThreadID     string `json:"threadId"`
+			IncludeTurns *bool  `json:"includeTurns"`
+		} `json:"params"`
+	}
+	select {
+	case wire := <-writes:
+		if err := json.Unmarshal(wire, &request); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("thread/read was not written")
+	}
+	if request.Method != "thread/read" || request.Params.ThreadID != "thread-1" || request.Params.IncludeTurns == nil || *request.Params.IncludeTurns {
+		t.Fatalf("thread/read request = %+v", request)
+	}
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-1","name":"Scout","cwd":"/w","status":{"type":"idle"},"updatedAt":1788488497,"turns":[]}}}`))
+	select {
+	case value := <-result:
+		if value.err != nil || value.thread.ID != "thread-1" || value.thread.Status != "idle" || value.thread.UpdatedAt != 1788488497 {
+			t.Fatalf("thread/read result = %+v, %v", value.thread, value.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("thread/read did not receive its response")
+	}
+}
