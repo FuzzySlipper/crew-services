@@ -12,6 +12,8 @@ func TestValidateBatch(t *testing.T) {
 		`[{"kind":"point","x":1279,"y":0,"width":1280,"height":720},{"kind":"click"}]`,
 		`[{"kind":"gamepad","lx":0.5,"rt":1,"buttons":["a","lb"],"ms":500}]`,
 		`[{"kind":"wait","ms":10000}]`,
+		`[{"kind":"wheel","dy":-120}]`,
+		`[{"kind":"point","x":10,"y":10,"width":100,"height":100},{"kind":"down","button":3},{"kind":"point","x":60,"y":10,"width":100,"height":100},{"kind":"up","button":3}]`,
 	}
 	invalid := []string{
 		`[]`, `[{"ms":1}]`, `[{"kind":"unknown"}]`,
@@ -27,6 +29,9 @@ func TestValidateBatch(t *testing.T) {
 		`[{"kind":"gamepad","buttons":["z"]}]`,
 		`[{"kind":"gamepad","back":true}]`,
 		`[{"kind":"wait","extra":1}]`,
+		`[{"kind":"wheel","dy":10001}]`,
+		`[{"kind":"wheel","dz":1}]`,
+		`[{"kind":"down","button":4}]`,
 	}
 	for _, batch := range valid {
 		if err := ValidateBatch(decode(t, batch)); err != nil {

@@ -465,9 +465,16 @@ Triggers `lt/rt` range from 0 to 1. Xbox names are
 `keyboard.hold` names include letters, digits, Enter, Escape, Tab, Space, Ctrl,
 Shift, Alt, Backspace, arrows, F5, and F6. Raw CLI/MCP `input` batches carry
 Windows virtual-key codes: `[{"kind":"hold","keys":[69],"ms":100}]` holds E.
-Other kinds are `move`, `point`, `click`, `wait` and `gamepad`. Unknown fields are rejected: use
+Other kinds are `move`, `point`, `click`, `down`, `up`, `wheel`, `wait` and `gamepad`. Unknown fields are rejected: use
 `buttons: ["back"]`, not `back: true`. Invalid input is rejected before
 delivery and does not degrade an otherwise healthy session.
+
+`wheel` scrolls by integer pixel deltas at the pointer (`{"kind":"wheel","dy":-120}`; positive `dy`
+scrolls down, each axis within ±10000). `down` and `up` press and lift a button (1 left, 2 middle,
+3 right) so a drag can be composed: `down`, then `point` steps (free cursor) or `move` steps
+(pointer lock), then `up`. A button still down when the batch ends is lifted then. Browser
+sessions deliver all three; the engine backend delivers `wheel` but refuses `down`/`up`, and the
+Windows desktop refuses all three for now (`capability_unavailable`).
 
 Calls are serialized, including accidentally unawaited calls, and flushed before
 the program completes. Use a single controller state for simultaneous movement

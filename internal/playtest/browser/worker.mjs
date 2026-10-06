@@ -332,10 +332,15 @@ async function browser(params) {
   }
 }
 
+const INPUT_KINDS = 'input kind must be hold, move, point, click, down, up, wheel, wait, or gamepad'
+
 async function input(params) {
   const active = await currentPage()
   if (!Array.isArray(params.steps) || params.steps.length > 128) throw new Error('steps must contain at most 128 items')
   const checked = params.steps.map(validateInputStep)
+  // Buttons pressed with `down` and not lifted by `up` are released when the batch ends.
+  const held = new Set()
+  try {
   for (const step of checked) {
     switch (step.kind) {
       case 'wait':
@@ -366,12 +371,27 @@ async function input(params) {
         await active.mouse.down({ button: step.button })
         try { if (step.ms > 0) await new Promise(resolve => setTimeout(resolve, step.ms)) } finally { await active.mouse.up({ button: step.button }) }
         break
+      case 'down':
+        await active.mouse.down({ button: step.button }); held.add(step.button)
+        if (step.ms > 0) await new Promise(resolve => setTimeout(resolve, step.ms))
+        break
+      case 'up':
+        await active.mouse.up({ button: step.button }); held.delete(step.button)
+        if (step.ms > 0) await new Promise(resolve => setTimeout(resolve, step.ms))
+        break
+      case 'wheel':
+        await active.mouse.wheel(step.dx, step.dy)
+        if (step.ms > 0) await new Promise(resolve => setTimeout(resolve, step.ms))
+        break
       case 'gamepad':
         await setGamepad(active, step)
         try { if (step.ms > 0) await new Promise(resolve => setTimeout(resolve, step.ms)) } finally { await neutralizeGamepad(active) }
         break
-      default: throw new Error('input kind must be hold, move, point, click, wait, or gamepad')
+      default: throw new Error(INPUT_KINDS)
     }
+  }
+  } finally {
+    for (const pressed of held) await active.mouse.up({ button: pressed })
   }
   return { completed_steps: params.steps.length, cursor: { ...cursor }, ...events() }
 }
@@ -384,8 +404,14 @@ function validateInputStep(step) {
     case 'move': if (!Number.isSafeInteger(step.dx) || !Number.isSafeInteger(step.dy) || Math.abs(step.dx) > 32767 || Math.abs(step.dy) > 32767) throw new Error('move requires integer dx and dy within -32767..32767'); return step
     case 'point': return { ...step, ...pointParams(step) }
     case 'click': if (!Number.isInteger(step.ms) || step.ms < 0 || step.ms > 10_000) throw new Error('click ms must be 0..10000'); return { ...step, button: button(step.button) }
+    case 'down': case 'up': return { ...step, ms: step.ms ?? 0, button: button(step.button) }
+    case 'wheel': {
+      const dx = step.dx ?? 0, dy = step.dy ?? 0
+      if (!Number.isInteger(dx) || !Number.isInteger(dy) || Math.abs(dx) > 10_000 || Math.abs(dy) > 10_000) throw new Error('wheel requires integer dx and dy within -10000..10000')
+      return { ...step, dx, dy, ms: step.ms ?? 0 }
+    }
     case 'gamepad': return gamepadStep(step)
-    default: throw new Error('input kind must be hold, move, point, click, wait, or gamepad')
+    default: throw new Error(INPUT_KINDS)
   }
 }
 

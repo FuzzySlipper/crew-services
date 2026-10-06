@@ -470,6 +470,8 @@ func (d *Windows) Send(steps []map[string]any, window uintptr) (map[string]any, 
 			if err := d.lift("button:" + name); err != nil {
 				return map[string]any{"completed_steps": completed}, err
 			}
+		case "down", "up", "wheel":
+			return map[string]any{"completed_steps": completed}, fmt.Errorf("capability_unavailable: %v is not delivered by the Windows desktop yet", step["kind"])
 		}
 		completed++
 	}

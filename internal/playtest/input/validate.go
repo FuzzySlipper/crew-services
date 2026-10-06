@@ -13,6 +13,9 @@ import (
 // MaxBatchMS bounds the total duration of one batch.
 const MaxBatchMS = 10000
 
+// MaxWheelDelta bounds one wheel step's pixel delta on each axis.
+const MaxWheelDelta = 10000
+
 // GamepadButtons are the accepted Xbox button names.
 var GamepadButtons = map[string]bool{"up": true, "down": true, "left": true, "right": true, "start": true, "back": true, "ls": true, "rs": true, "lb": true, "rb": true, "guide": true, "a": true, "b": true, "x": true, "y": true}
 
@@ -21,6 +24,9 @@ var allowedFields = map[string]map[string]struct{}{
 	"move":    {"kind": {}, "ms": {}, "dx": {}, "dy": {}},
 	"point":   {"kind": {}, "ms": {}, "x": {}, "y": {}, "width": {}, "height": {}},
 	"click":   {"kind": {}, "ms": {}, "button": {}},
+	"down":    {"kind": {}, "ms": {}, "button": {}},
+	"up":      {"kind": {}, "ms": {}, "button": {}},
+	"wheel":   {"kind": {}, "ms": {}, "dx": {}, "dy": {}},
 	"wait":    {"kind": {}, "ms": {}},
 	"gamepad": {"kind": {}, "ms": {}, "buttons": {}, "lx": {}, "ly": {}, "rx": {}, "ry": {}, "lt": {}, "rt": {}},
 }
@@ -110,9 +116,16 @@ func validateKind(step map[string]any, kind string) error {
 		if _, err = integer(step["y"], 0, height-1, "y"); err != nil {
 			return err
 		}
-	case "click":
+	case "click", "down", "up":
 		if _, err := integer(fallback(step, "button", 1), 1, 3, "button"); err != nil {
 			return err
+		}
+	case "wheel":
+		// Pixel deltas as a wheel reports them; positive dy scrolls down.
+		for _, field := range []string{"dx", "dy"} {
+			if _, err := integer(fallback(step, field, 0), -MaxWheelDelta, MaxWheelDelta, field); err != nil {
+				return err
+			}
 		}
 	case "gamepad":
 		if raw, exists := step["buttons"]; exists {

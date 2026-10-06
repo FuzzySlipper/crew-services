@@ -384,6 +384,11 @@ func (c *claim) steps(ctx context.Context, steps []map[string]any) (map[string]a
 			}
 		case "point":
 			return fail(errors.New("capability_unavailable: absolute pointer positions need a page; use move for relative motion"))
+		case "wheel":
+			press = []fact{{"kind": "wheel", "x": number(step["dx"]), "y": number(step["dy"])}}
+		case "down", "up":
+			// Held facts are lifted after every step here, so a button cannot stay down across steps.
+			return fail(errors.New("capability_unavailable: down/up drags need a browser page; use click on the engine backend"))
 		}
 		receipt, err := c.send(ctx, press)
 		receipts = append(receipts, receipt)
