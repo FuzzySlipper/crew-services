@@ -64,6 +64,15 @@ func (s *Store) DeliveryOperation(ctx context.Context, now time.Time, r store.De
 	if err != nil {
 		return store.DeliveryOperationResult{}, err
 	}
+	// A claim that claimed nothing is an observation, not a transition, so it
+	// leaves no receipt: retrying the operation simply observes again. Any
+	// expired heads it terminalized on the way are still committed.
+	if r.Kind == "claim" && !result.Claim.Claimed {
+		if err := tx.Commit(); err != nil {
+			return store.DeliveryOperationResult{}, fmt.Errorf("commit delivery operation: %w", err)
+		}
+		return result, nil
+	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		return store.DeliveryOperationResult{}, fmt.Errorf("encode delivery operation receipt: %w", err)
@@ -75,6 +84,21 @@ func (s *Store) DeliveryOperation(ctx context.Context, now time.Time, r store.De
 		return store.DeliveryOperationResult{}, fmt.Errorf("commit delivery operation: %w", err)
 	}
 	return result, nil
+}
+
+// PruneDeliveryOperations deletes at most limit adapter operation receipts
+// recorded before cutoff and reports how many it removed. Callers loop over
+// small batches so the single connection is not held by one long delete.
+func (s *Store) PruneDeliveryOperations(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM adapter_operation_receipts WHERE rowid IN (SELECT rowid FROM adapter_operation_receipts WHERE created_at < ? LIMIT ?)`, timestamp(cutoff), limit)
+	if err != nil {
+		return 0, fmt.Errorf("prune delivery operation receipts: %w", err)
+	}
+	removed, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count pruned delivery operation receipts: %w", err)
+	}
+	return removed, nil
 }
 
 func (s *Store) claim(ctx context.Context, tx *sql.Tx, now time.Time, r store.DeliveryOperationRequest) (store.DeliveryOperationResult, error) {

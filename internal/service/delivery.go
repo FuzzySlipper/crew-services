@@ -149,3 +149,26 @@ func requireFields(values ...string) error {
 	return nil
 }
 func invalid(message string) error { return &Error{Code: CodeInvalid, Err: errors.New(message)} }
+
+// pruneBatch bounds each delete so request transactions can interleave with a
+// large backlog instead of waiting behind one long statement.
+const pruneBatch = 5000
+
+// PruneDeliveryOperations removes adapter operation receipts older than the
+// retention window. Retrying an operation after its receipt is gone runs it
+// again under current lease, binding and delivery state, so the window only
+// needs to outlast any realistic adapter retry. It never touches deliveries.
+func (s *Service) PruneDeliveryOperations(ctx context.Context) (int64, error) {
+	cutoff := s.clock.Now().UTC().Add(-s.retention)
+	var total int64
+	for {
+		removed, err := s.store.PruneDeliveryOperations(ctx, cutoff, pruneBatch)
+		total += removed
+		if err != nil {
+			return total, mapStoreError(err)
+		}
+		if removed < pruneBatch {
+			return total, nil
+		}
+	}
+}

@@ -306,6 +306,7 @@ type Store interface {
 	SettlePending(context.Context, time.Time) ([]Delivery, error)
 	LookupDeliveryOperation(context.Context, string, string) (DeliveryOperationLookup, error)
 	DeliveryOperation(context.Context, time.Time, DeliveryOperationRequest) (DeliveryOperationResult, error)
+	PruneDeliveryOperations(context.Context, time.Time, int) (int64, error)
 	AdoptSession(context.Context, time.Time, AdoptSessionRequest) (Session, error)
 	UpdateSession(context.Context, time.Time, UpdateSessionRequest) (Session, error)
 	GetSession(context.Context, string) (Session, error)

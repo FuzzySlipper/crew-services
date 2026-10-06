@@ -125,6 +125,7 @@ type Service struct {
 	clock            Clock
 	maxLeaseDuration time.Duration
 	maxTTLDuration   time.Duration
+	retention        time.Duration
 	tokens           TokenGenerator
 	ids              IDGenerator
 }
@@ -168,6 +169,17 @@ func WithMaxTTLDuration(value time.Duration) Option {
 	}
 }
 
+// WithRetention sets how long adapter operation receipts stay replayable.
+func WithRetention(value time.Duration) Option {
+	return func(s *Service) error {
+		if value <= 0 {
+			return errors.New("retention must be positive")
+		}
+		s.retention = value
+		return nil
+	}
+}
+
 func WithIDGenerator(generator IDGenerator) Option {
 	return func(s *Service) error {
 		if generator == nil {
@@ -186,7 +198,7 @@ func New(persistence store.Store, clock Clock, options ...Option) (*Service, err
 	if clock == nil {
 		return nil, errors.New("clock is required")
 	}
-	svc := &Service{store: persistence, clock: clock, maxLeaseDuration: 5 * time.Minute, maxTTLDuration: 24 * time.Hour, tokens: randomToken, ids: randomToken}
+	svc := &Service{store: persistence, clock: clock, maxLeaseDuration: 5 * time.Minute, maxTTLDuration: 24 * time.Hour, retention: 7 * 24 * time.Hour, tokens: randomToken, ids: randomToken}
 	for _, option := range options {
 		if err := option(svc); err != nil {
 			return nil, err

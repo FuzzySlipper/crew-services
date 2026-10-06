@@ -38,8 +38,8 @@ func TestOpenMigratesFreshAndExistingDatabaseIdempotently(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 6 {
-		t.Fatalf("migration count = %d, want 6", count)
+	if count != 7 {
+		t.Fatalf("migration count = %d, want 7", count)
 	}
 	var name string
 	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'service_metadata'").Scan(&name); err != nil {
@@ -89,5 +89,61 @@ func TestDeliveryProtocolMigrationPreservesV3LedgerRows(t *testing.T) {
 	}
 	if state != "queued" || attempts != 0 {
 		t.Fatalf("upgraded row = %q attempts %d", state, attempts)
+	}
+}
+
+func TestReceiptRetentionMigrationDropsOnlyNoWorkClaimReceipts(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v6.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, sqlText := range []string{migration001, migration002, migration003, migration004, migration005, migration006} {
+		if _, err := db.Exec(sqlText); err != nil {
+			t.Fatalf("apply v6 schema: %v", err)
+		}
+	}
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 6; i++ {
+		if _, err := db.Exec(`INSERT INTO schema_migrations(version,applied_at) VALUES (?,?)`, i, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, receipt := range []struct{ operation, kind, result string }{
+		{"empty", "claim", `{"claim":{"claimed":false,"reason":"no_work"}}`},
+		{"claimed", "claim", `{"claim":{"claimed":true,"claim_token":"t"}}`},
+		{"begin", "begin_dispatch", `{"claim":{"claimed":false},"delivery":{"delivery_id":"d"}}`},
+	} {
+		if _, err := db.Exec(`INSERT INTO adapter_operation_receipts(adapter_id,operation_id,kind,fingerprint,result_json,created_at) VALUES ('a',?,?,'f',?,'2026-08-20T00:00:00Z')`, receipt.operation, receipt.kind, receipt.result); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("upgrade v6: %v", err)
+	}
+	defer opened.Close()
+	rows, err := opened.db.Query(`SELECT operation_id FROM adapter_operation_receipts ORDER BY operation_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var kept []string
+	for rows.Next() {
+		var operation string
+		if err := rows.Scan(&operation); err != nil {
+			t.Fatal(err)
+		}
+		kept = append(kept, operation)
+	}
+	if len(kept) != 2 || kept[0] != "begin" || kept[1] != "claimed" {
+		t.Fatalf("kept receipts = %v, want [begin claimed]", kept)
 	}
 }

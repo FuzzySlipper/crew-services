@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"crew-services/internal/service"
+	"crew-services/internal/sqlite"
 )
 
 func deliveryFixture(t *testing.T) (*mutableClock, *service.Service, func(), service.AdapterLease, service.AdapterLease, service.Binding) {
@@ -265,4 +266,80 @@ func contains(value, part string) bool {
 		}
 		return false
 	})()
+}
+
+func TestNoWorkClaimLeavesNoReceiptSoItsRetryObservesNewWork(t *testing.T) {
+	ctx := context.Background()
+	_, svc, closeDB, alpha, beta, bob := deliveryFixture(t)
+	defer closeDB()
+	request := service.ClaimDeliveryRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "poll-claim", RecipientAddress: "agent/bob", RecipientGeneration: bob.Generation, Availability: "idle", ClaimDuration: time.Minute}
+	empty, err := svc.ClaimDelivery(ctx, request)
+	if err != nil || empty.Claimed || empty.Reason != "no_work" {
+		t.Fatalf("empty claim=%#v %v", empty, err)
+	}
+	first := submit(t, svc, alpha, "send-after-poll", "first", time.Hour)
+	// A different availability would conflict with a stored receipt's fingerprint.
+	request.Availability = "busy"
+	claim, err := svc.ClaimDelivery(ctx, request)
+	if err != nil || !claim.Claimed || claim.Replayed || claim.Delivery.DeliveryID != first.Delivery.DeliveryID {
+		t.Fatalf("retried claim=%#v %v", claim, err)
+	}
+	replay, err := svc.ClaimDelivery(ctx, request)
+	if err != nil || !replay.Replayed || replay.ClaimToken != claim.ClaimToken {
+		t.Fatalf("successful claim was not replayable: %#v %v", replay, err)
+	}
+}
+
+func TestPruneDeliveryOperationsRemovesOnlyReceiptsPastRetention(t *testing.T) {
+	ctx := context.Background()
+	clock := &mutableClock{now: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)}
+	persistence, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "retention.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer persistence.Close()
+	svc, err := service.New(persistence, clock, service.WithMaxLeaseDuration(time.Hour), service.WithMaxTTLDuration(time.Hour), service.WithRetention(7*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	alpha := register(t, svc, "adapter.alpha", "sender-1")
+	beta := register(t, svc, "adapter.beta", "recipient-1")
+	if _, err := svc.PutBinding(ctx, service.PutBindingRequest{Address: "agent/alice", ActorAdapterID: alpha.AdapterID, LeaseToken: alpha.LeaseToken, AdapterID: alpha.AdapterID, TargetRef: "sender"}); err != nil {
+		t.Fatal(err)
+	}
+	bob, err := svc.PutBinding(ctx, service.PutBindingRequest{Address: "agent/bob", ActorAdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, AdapterID: beta.AdapterID, TargetRef: "recipient", Capabilities: []string{"deliver_when_idle"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	submit(t, svc, alpha, "send-old", "old", time.Hour)
+	old := service.ClaimDeliveryRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "claim-old", RecipientAddress: "agent/bob", RecipientGeneration: bob.Generation, Availability: "idle", ClaimDuration: time.Minute}
+	claim, err := svc.ClaimDelivery(ctx, old)
+	if err != nil || !claim.Claimed {
+		t.Fatalf("old claim=%#v %v", claim, err)
+	}
+	if _, err := svc.BeginDispatch(ctx, service.BeginDispatchRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "begin-old", DeliveryID: claim.Delivery.DeliveryID, ClaimToken: claim.ClaimToken, NativeAttemptRef: "native-old"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Acknowledge(ctx, service.ReconcileDeliveryRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "ack-old", DeliveryID: claim.Delivery.DeliveryID, NativeAttemptRef: "native-old"}); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(7*24*time.Hour + time.Minute)
+	alpha = registerWithPrevious(t, svc, alpha.AdapterID, "sender-1", alpha.LeaseToken)
+	beta = registerWithPrevious(t, svc, beta.AdapterID, "recipient-1", beta.LeaseToken)
+	fresh := service.ClaimDeliveryRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "claim-fresh", RecipientAddress: "agent/bob", RecipientGeneration: bob.Generation, Availability: "idle", ClaimDuration: time.Minute}
+	submit(t, svc, alpha, "send-fresh", "fresh", time.Hour)
+	if claim, err := svc.ClaimDelivery(ctx, fresh); err != nil || !claim.Claimed {
+		t.Fatalf("fresh claim=%#v %v", claim, err)
+	}
+	removed, err := svc.PruneDeliveryOperations(ctx)
+	if err != nil || removed != 3 {
+		t.Fatalf("pruned=%d err=%v", removed, err)
+	}
+	if replay, err := svc.ClaimDelivery(ctx, fresh); err != nil || !replay.Replayed {
+		t.Fatalf("fresh receipt was pruned: %#v %v", replay, err)
+	}
+	// The pruned operation runs again under current state instead of replaying.
+	if again, err := svc.ClaimDelivery(ctx, old); err == nil && again.Replayed {
+		t.Fatalf("old receipt survived retention: %#v", again)
+	}
 }
