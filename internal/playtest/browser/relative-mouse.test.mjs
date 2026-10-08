@@ -18,6 +18,7 @@ test('trusted pointer-lock deltas survive edges, unlock, and navigation', { skip
       document.querySelector('#result').textContent=JSON.stringify(events);
     });
     document.addEventListener('keydown', e => { if(e.key==='u') document.exitPointerLock(); });
+    window.__rustyPlaytest = async () => { await document.querySelector('#lock').requestPointerLock(); return {}; };
   </script>`))
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   const dir = await mkdtemp(join(tmpdir(), 'relative-mouse-'))
@@ -66,6 +67,13 @@ test('trusted pointer-lock deltas survive edges, unlock, and navigation', { skip
     await lock()
     await input([move(-9, 11)])
     assert.deepEqual(await events(), [[-9, 11, true]])
+    // A lock taken without a mouse event, as the Engine's assisted capture
+    // takes it, still moves by exact deltas.
+    await rpc('navigate', { url })
+    await rpc('browser', { op: 'playtest', request: { op: 'lock' } })
+    assert.equal((await rpc('status')).pointer_lock, true)
+    await input([move(12, -4), move(-3, 8)])
+    assert.deepEqual((await events()).filter(([x, y]) => x !== 0 || y !== 0), [[12, -4, true], [-3, 8, true]])
   } finally {
     await rpc('release')
     worker.stdin.end()

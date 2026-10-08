@@ -52,9 +52,14 @@ See [local service](/home/agent/dev/crew-services/docs/playtest.md#local-service
 
 This backend supplies browser keyboard/pointer actions and virtual gamepad
 input, including relative `move` while the main document holds pointer lock.
-Acquire lock with an ordinary click first. Use integer `dx`/`dy` in
--32767..32767; unlocking rejects subsequent relative movement. These are
-trusted Chromium events, not OS mouse injection.
+Acquire lock with an ordinary click first, or on a Rusty Engine page with
+`playtest assist SESSION --json '{"op":"focus","mode":"capture"}'` (`"release"`
+lets go), which takes the lock or confined cursor the way a click does without
+clicking anything; its answer says whether the browser granted it. Engine
+products never deliver the click that takes the lock, so neither path fires or
+uses anything in the game. Use integer `dx`/`dy` in -32767..32767; unlocking
+rejects subsequent relative movement. These are trusted Chromium events, not
+OS mouse injection.
 
 ## Discover the execution environment
 
@@ -191,7 +196,8 @@ Holds release afterward. Batches are bounded to 10 seconds. These are real-time
 inputs, not admitted simulation-update counts or deterministic replay; in held
 time use `assist act`, or advance explicitly after input. A delivered movement
 does not establish pointer lock or game consumption: use ordinary
-click/Escape/refocus controls and observations when testing acquisition/loss.
+click/Escape/refocus controls and observations when testing acquisition/loss
+(assisted capture is not evidence that clicking takes the lock).
 
 For a browser-capable session:
 

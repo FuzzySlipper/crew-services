@@ -17,7 +17,10 @@ const POINTER_INIT_SCRIPT = `(() => {
   Object.defineProperty(window, '${POINTER_STATE_KEY}', { value: state });
   window.addEventListener('mousemove', event => {
     if (!event.isTrusted) return;
-    if (document.pointerLockElement && state.observed) {
+    if (document.pointerLockElement) {
+      // A locked clientX/Y is frozen, so only a known position can follow
+      // the deltas; a lock taken without a mouse event leaves it to the worker.
+      if (!state.observed) return;
       state.x += event.movementX;
       state.y += event.movementY;
     } else {
@@ -166,6 +169,9 @@ async function launch(params) {
   await context.addInitScript({ content: GAMEPAD_INIT_SCRIPT })
   await context.addInitScript({ content: POINTER_INIT_SCRIPT })
   page = context.pages()[0] || await context.newPage()
+  // A headless persistent context's first page is not the focused one, and
+  // Chromium refuses it pointer lock (WrongDocumentError) until it is.
+  await page.bringToFront()
   page.on('console', message => addBounded(consoleEvents, { type: message.type(), text: message.text().slice(0, 4096), truncated: message.text().length > 4096, location: message.location() }))
   page.on('pageerror', error => addBounded(pageErrors, serializeError(error).slice(0, 4096)))
   return { headless: params.headless !== false, audio_enabled: params.audio_enabled === true, viewport: { width, height, device_pixel_ratio: 1 }, browser: 'chromium', renderer: 'unknown' }
@@ -355,13 +361,19 @@ async function input(params) {
       case 'move': {
         // Read the browser-observed position: locator clicks also move the
         // pointer, and pointer lock freezes clientX/Y while deltas continue.
-        const position = await active.evaluate(key => {
+        const observed = await active.evaluate(key => {
           const state = window[key];
           if (!document.pointerLockElement) throw new Error('relative mouse move requires pointer lock');
-          if (!state?.observed) throw new Error('relative mouse position is unavailable; click to acquire pointer lock');
-          return { x: state.x, y: state.y };
+          return state?.observed ? { x: state.x, y: state.y } : null;
         }, POINTER_STATE_KEY)
-        await active.mouse.move(position.x + step.dx, position.y + step.dy)
+        // A lock taken without a mouse event (assisted capture) has seen no
+        // position: the mouse is still where this worker last put it. Chromium
+        // gives a page's first locked move no movement, so a move in place
+        // goes first.
+        if (observed === null) await active.mouse.move(cursor.x, cursor.y)
+        const position = observed ?? cursor
+        cursor = { x: position.x + step.dx, y: position.y + step.dy }
+        await active.mouse.move(cursor.x, cursor.y)
         break
       }
       case 'point':
