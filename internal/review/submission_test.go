@@ -19,6 +19,8 @@ type submissionDen struct {
 	watchGate   GateEvidence
 	readGates   []GateEvidence
 	contextNext string
+	taskContext *TaskContext
+	taskErr     error
 
 	requestCalls int
 	watchCalls   int
@@ -30,6 +32,18 @@ type submissionDen struct {
 	watchErr   error
 	readErr    error
 	contextErr error
+}
+
+func (d *submissionDen) GetTaskContext(_ context.Context, key TaskKey) (TaskContext, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.taskErr != nil {
+		return TaskContext{}, d.taskErr
+	}
+	if d.taskContext != nil {
+		return *d.taskContext, nil
+	}
+	return TaskContext{ProjectID: key.ProjectID, TaskID: key.TaskID, Status: "review", CurrentReviewRoundID: d.roundID}, nil
 }
 
 func (d *submissionDen) GetReviewContext(_ context.Context, key Key) (Context, error) {
@@ -537,6 +551,67 @@ func TestSubmitTaskForReviewRejectsInvalidExactSHA(t *testing.T) {
 	}
 	if den.requestCalls != 0 {
 		t.Fatalf("invalid request reached Den request_review: %d", den.requestCalls)
+	}
+}
+
+func TestGateTimeoutRetryRetiresClosedOrDecidedReview(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		status  string
+		round   int64
+		verdict string
+	}{
+		{"human completion", "done", 7, ""},
+		{"cancelled", "cancelled", 7, ""},
+		{"approved but reopened", "review", 7, "looks_good"},
+		{"changes requested", "in_progress", 7, "changes_requested"},
+		{"superseded", "review", 8, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			den := &submissionDen{watchErr: errors.New("response lost after gate registration")}
+			service, store, _ := submissionFixture(t, den)
+			request := submissionRequestForTest()
+			first, _, err := service.SubmitTaskForReview(ctx, request)
+			if err != nil || first.Phase != SubmissionUnavailable || den.watchCalls != 1 {
+				t.Fatalf("first receipt=%+v err=%v watches=%d", first, err, den.watchCalls)
+			}
+			den.taskContext = &TaskContext{ProjectID: request.ProjectID, TaskID: request.TaskID, Status: test.status, CurrentReviewRoundID: test.round, CurrentReviewVerdict: test.verdict}
+			if _, err := service.AdvanceSubmissions(ctx); err != nil {
+				t.Fatal(err)
+			}
+			record, err := store.GetSubmission(ctx, first.SubmissionID)
+			if err != nil || record.Phase != SubmissionStale || record.JobID != "" {
+				t.Fatalf("reconciled record=%+v err=%v", record, err)
+			}
+			if examined, err := service.AdvanceSubmissions(ctx); err != nil || examined {
+				t.Fatalf("terminal submission was retried: examined=%v err=%v", examined, err)
+			}
+			if _, _, err := service.SubmitTaskForReview(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+			if den.watchCalls != 1 || den.readCalls != 0 || den.contextCalls != 0 || den.requestCalls != 1 {
+				t.Fatalf("closed review caused external work: %+v", den)
+			}
+		})
+	}
+}
+
+func TestGateRetryWaitsForAuthoritativeTaskRead(t *testing.T) {
+	ctx := context.Background()
+	den := &submissionDen{watchErr: errors.New("response lost")}
+	service, store, _ := submissionFixture(t, den)
+	first, _, err := service.SubmitTaskForReview(ctx, submissionRequestForTest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	den.taskErr = errors.New("Den task read unavailable")
+	if _, err := service.AdvanceSubmissions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.GetSubmission(ctx, first.SubmissionID)
+	if err != nil || record.Phase != SubmissionUnavailable || den.watchCalls != 1 {
+		t.Fatalf("unavailable task read advanced gate: record=%+v err=%v watches=%d", record, err, den.watchCalls)
 	}
 }
 

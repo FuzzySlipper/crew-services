@@ -163,6 +163,7 @@ type TaskContext struct {
 	TaskID               int64
 	Status               string
 	CurrentReviewRoundID int64
+	CurrentReviewVerdict string
 }
 
 // SubmissionRequest is the runtime-neutral managed review entry point. It is
@@ -454,6 +455,7 @@ type FinalizationValidator interface {
 // and alternate Den adapters do not need to implement submission orchestration
 // until they opt into that route.
 type SubmissionDenClient interface {
+	GetTaskContext(context.Context, TaskKey) (TaskContext, error)
 	RequestReview(context.Context, SubmissionRequest) (ReviewRoundRef, error)
 	WatchGitHubChecks(context.Context, GateRequest) (GateEvidence, error)
 	GetGitHubCheckGate(context.Context, GateRequest) (GateEvidence, error)
@@ -467,6 +469,7 @@ type (
 		Close() error
 	}
 )
+
 type (
 	Clock       interface{ Now() time.Time }
 	SystemClock struct{}

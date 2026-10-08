@@ -273,6 +273,12 @@ type taskContextResponse struct {
 	Task           json.RawMessage     `json:"task"`
 	RecentMessages json.RawMessage     `json:"recent_messages"`
 	Workflow       taskContextWorkflow `json:"workflow"`
+	SourceStatus   []taskContextSource `json:"source_status"`
+}
+
+type taskContextSource struct {
+	Source string `json:"source"`
+	State  string `json:"state"`
 }
 
 type taskContextTask struct {
@@ -283,6 +289,7 @@ type taskContextTask struct {
 
 type taskContextWorkflow struct {
 	CurrentReviewRound json.RawMessage `json:"current_review_round"`
+	CurrentVerdict     string          `json:"current_verdict"`
 }
 
 type taskContextReviewRound struct {
@@ -360,6 +367,11 @@ func decodeTaskContext(data json.RawMessage, key review.TaskKey) (review.TaskCon
 	if err := json.Unmarshal(data, &response); err != nil {
 		return review.TaskContext{}, nil, nil, fmt.Errorf("decode Den task context: %w", err)
 	}
+	for _, source := range response.SourceStatus {
+		if (source.Source == "task" || source.Source == "workflow") && source.State != "ok" {
+			return review.TaskContext{}, nil, nil, fmt.Errorf("Den task context source %s is %s", source.Source, source.State)
+		}
+	}
 	var task taskContextTask
 	if len(response.Task) > 0 && string(response.Task) != "null" {
 		if err := json.Unmarshal(response.Task, &task); err != nil {
@@ -381,7 +393,7 @@ func decodeTaskContext(data json.RawMessage, key review.TaskKey) (review.TaskCon
 	if err != nil {
 		return review.TaskContext{}, nil, nil, err
 	}
-	return review.TaskContext{ProjectID: projectID, TaskID: taskID, Status: strings.TrimSpace(task.Status), CurrentReviewRoundID: currentRoundID}, append(json.RawMessage(nil), response.Task...), append(json.RawMessage(nil), response.RecentMessages...), nil
+	return review.TaskContext{ProjectID: projectID, TaskID: taskID, Status: strings.TrimSpace(task.Status), CurrentReviewRoundID: currentRoundID, CurrentReviewVerdict: strings.TrimSpace(response.Workflow.CurrentVerdict)}, append(json.RawMessage(nil), response.Task...), append(json.RawMessage(nil), response.RecentMessages...), nil
 }
 
 func taskContextCurrentReviewRoundID(raw json.RawMessage) (int64, error) {
