@@ -252,7 +252,7 @@ func TestManualReviewMethodsUseCanonicalTaskAndNoInventedSourceSHA(t *testing.T)
 				"schema_version": "1", "project_id": "dsh-crew", "task_id": 7416,
 				"task":            map[string]any{"id": 7416, "project_id": "dsh-crew", "status": "review", "description": "review this"},
 				"recent_messages": []map[string]any{{"id": 5, "content": "ready"}},
-				"workflow":        map[string]any{"current_review_round": map[string]any{"id": 19}},
+				"workflow":        map[string]any{"current_review_round": map[string]any{"id": 19}, "current_verdict": "looks_good"},
 			})
 		case "request_review":
 			writeToolResult(w, map[string]any{"id": 19, "project_id": "dsh-crew", "task_id": 7416, "review_round_id": 19})
@@ -266,7 +266,7 @@ func TestManualReviewMethodsUseCanonicalTaskAndNoInventedSourceSHA(t *testing.T)
 		t.Fatal(err)
 	}
 	task, err := client.GetTaskContext(context.Background(), review.TaskKey{ProjectID: "dsh-crew", TaskID: 7416})
-	if err != nil || task.Status != "review" || task.CurrentReviewRoundID != 19 {
+	if err != nil || task.Status != "review" || task.CurrentReviewRoundID != 19 || task.CurrentReviewVerdict != "looks_good" {
 		t.Fatalf("task=%+v err=%v", task, err)
 	}
 	request := review.ManualReviewRequest{ProjectID: "dsh-crew", TaskID: 7416, Ref: "main", Reviewer: "@reviewer", Preamble: "review current code on main"}
@@ -484,5 +484,17 @@ func TestReviewContextDiscoversProjectCheckoutAndPreservesMetadata(t *testing.T)
 	}
 	if material.Task.RootPath != "" || material.Task.ResolvedWorkspace != workspace || material.Task.RepositoryURL != "https://github.com/owner/project" {
 		t.Fatalf("material=%s", got.Material)
+	}
+}
+
+func TestTaskContextRejectsUnavailableLifecycleAuthority(t *testing.T) {
+	for _, source := range []string{"task", "workflow"} {
+		t.Run(source, func(t *testing.T) {
+			data := []byte(`{"project_id":"project","task_id":1,"task":{"id":1,"project_id":"project","status":"review"},"source_status":[{"source":"` + source + `","state":"unavailable"}]}`)
+			_, _, _, err := decodeTaskContext(data, review.TaskKey{ProjectID: "project", TaskID: 1})
+			if err == nil {
+				t.Fatal("degraded lifecycle read was accepted as authoritative")
+			}
+		})
 	}
 }

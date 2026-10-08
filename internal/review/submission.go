@@ -258,8 +258,17 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 		}
 	}
 
+	// Reconcile authority before any gate registration/retry. A response may
+	// have been lost while a human or direct reviewer completed this round.
+	task, err := den.GetTaskContext(ctx, TaskKey{ProjectID: record.Request.ProjectID, TaskID: record.Request.TaskID})
+	if err != nil {
+		return s.submissionUnavailable(ctx, store, record, "den_task_context_unavailable", err.Error(), true)
+	}
+	if task.CurrentReviewRoundID != record.ReviewRoundID || task.CurrentReviewVerdict != "" || task.Status == "done" || task.Status == "cancelled" {
+		return s.submissionStale(ctx, store, record, "Den review round was decided, superseded, or its task was closed")
+	}
+
 	gate := record.Gate
-	var err error
 	if len(record.Request.RequiredChecks) == 0 {
 		gate = noRequiredChecksGate(record.Request)
 		if record.Gate != gate || record.Phase != SubmissionGatePassed {
