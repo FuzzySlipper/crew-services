@@ -326,7 +326,10 @@ async function resize(params) {
   if (!Number.isInteger(width) || width < 320 || width > 3840 || !Number.isInteger(height) || height < 240 || height > 2160) throw new Error('viewport must be within 320x240 through 3840x2160')
   const before = await pageMetadata(active)
   await active.setViewportSize({ width, height })
-  tokens.clear() // Coordinates from a former layout no longer name the same target.
+  // Coordinates from a former layout no longer name the same target. Release
+  // the retained element handles as well as the tokens that referred to them.
+  for (const saved of tokens.values()) await saved.handle.dispose()
+  tokens.clear()
   await active.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
   return { before_viewport: before.viewport, ...await pageMetadata(active), ...events() }
 }
