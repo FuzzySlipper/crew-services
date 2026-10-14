@@ -523,6 +523,7 @@ same service, CLI/MCP and supervised JS worker:
 
 ```sh
 playtest browser SESSION --json '{"op":"inspect"}'
+playtest browser SESSION --json '{"op":"resize","width":1920,"height":1080}'
 playtest browser SESSION --json '{"op":"fill","selector":"input[name=title]","value":"Example"}'
 playtest browser SESSION --json '{"op":"near","x":300,"y":200,"max_distance":80}'
 playtest capture SESSION --json '{"label":"before","viewpoint":{"name":"entrance"}}'
@@ -535,6 +536,14 @@ await browser({op: 'click', selector: 'button[type=submit]'});
 const before = await capture({label: 'submitted'});
 checkpoint('Inspect this original capture', before);
 ```
+
+`resize` changes the existing browser viewport without reloading the page or
+replacing its host/session. The same operation is available through MCP and
+supervised `browser(...)`. It returns the previous and actual new viewport plus
+canvas sizes; the Engine surface may need a subsequent observation to settle.
+Captures retain their actual dimensions. Use 1920×1080 and 2560×1440 for ordinary
+desktop UI checks, with 4K/ultrawide only when the product needs those comparisons.
+Old coordinate-target tokens are invalidated by a resize; inspect targets again.
 
 Gamepad input is one private virtual `mapping: "standard"` device through
 `navigator.getGamepads()`: a browser API injection, not a hardware emulator.
