@@ -2,6 +2,7 @@ package reviewden
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -100,6 +101,28 @@ func TestClassifySourceRefusalThroughMCPWrapper(t *testing.T) {
 		var rejected *review.SubmissionError
 		if !errors.As(err, &rejected) || rejected.Code != code {
 			t.Fatalf("code=%s err=%v", code, err)
+		}
+	}
+}
+
+func TestClassifyLiveEscapedSourceRefusal(t *testing.T) {
+	data, err := os.ReadFile("testdata/review-source-refusal.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope toolEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	for _, structured := range []bool{true, false} {
+		candidate := envelope
+		if !structured {
+			candidate.StructuredContent = nil
+		}
+		err := classifyToolError("request_review", candidate)
+		var refusal *review.SubmissionError
+		if !errors.As(err, &refusal) || refusal.Code != "unknown_commit" || refusal.Retryable {
+			t.Fatalf("structured=%v err=%v", structured, err)
 		}
 	}
 }
