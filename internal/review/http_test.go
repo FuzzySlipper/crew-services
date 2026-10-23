@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -58,5 +59,24 @@ func TestRetryFailedHTTPContract(t *testing.T) {
 				t.Fatalf("error response=%v", errorBody)
 			}
 		})
+	}
+}
+
+func TestSubmissionHTTPReturnsNamedSourceRefusalWithoutGate(t *testing.T) {
+	den := &submissionDen{requestErr: &SubmissionError{Code: "unknown_commit", Message: "Commit not found"}}
+	service, store, _ := submissionFixture(t, den)
+	defer store.Close()
+	body, err := json.Marshal(submissionRequestForTest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	NewHandler(service).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/review-submissions", bytes.NewReader(body)))
+	var failure map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusBadRequest || failure["code"] != "unknown_commit" || den.watchCalls != 0 {
+		t.Fatalf("HTTP %d body=%s gates=%d", response.Code, response.Body, den.watchCalls)
 	}
 }

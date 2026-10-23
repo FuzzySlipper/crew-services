@@ -213,6 +213,11 @@ func classifyToolError(operation string, envelope toolEnvelope) error {
 func classifyCode(operation, code, message string) error {
 	text := strings.TrimSpace(strings.TrimSpace(code) + ": " + strings.TrimSpace(message))
 	lower := strings.ToLower(text)
+	for _, sourceCode := range []string{"unknown_commit", "base_not_ancestor", "invalid_review_source", "invalid_supersedes_round", "round_not_supersedable"} {
+		if code == sourceCode || strings.Contains(lower, `"code":"`+sourceCode+`"`) || strings.Contains(lower, `"code": "`+sourceCode+`"`) {
+			return &review.SubmissionError{Code: sourceCode, Message: message}
+		}
+	}
 	if strings.TrimSpace(strings.ToLower(code)) == "task_not_reviewable" {
 		return fmt.Errorf("%w: %s", review.ErrTaskNotReviewable, text)
 	}
@@ -471,12 +476,15 @@ type requestReviewResponse struct {
 // second review lifecycle into crew-services.
 func (c *Client) RequestReview(ctx context.Context, request review.SubmissionRequest) (review.ReviewRoundRef, error) {
 	data, err := c.call(ctx, "request_review", map[string]any{
-		"task_id":      request.TaskID,
-		"requested_by": request.Reviewer,
-		"branch":       request.Ref,
-		"base_branch":  request.Ref,
-		"tests_run":    []string{},
-		"notes":        reviewRequestNotes(request),
+		"task_id":          request.TaskID,
+		"requested_by":     request.Reviewer,
+		"branch":           request.Ref,
+		"base_branch":      request.Ref,
+		"tests_run":        []string{},
+		"notes":            reviewRequestNotes(request),
+		"source":           map[string]string{"repository": request.Repository, "commit_sha": request.CommitSHA, "base_commit": request.BaseCommit},
+		"supersedes_round": request.SupersedesRound,
+		"supersede_reason": request.SupersedeReason,
 	})
 	if err != nil {
 		return review.ReviewRoundRef{}, err

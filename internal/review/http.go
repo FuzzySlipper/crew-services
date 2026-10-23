@@ -166,6 +166,13 @@ func write(w http.ResponseWriter, status int, v any) {
 func errJSON(w http.ResponseWriter, e error) {
 	status := 400
 	code := "invalid"
+	var submissionErr *SubmissionError
+	if errors.As(e, &submissionErr) {
+		code = submissionErr.Code
+		if submissionErr.Retryable {
+			status = http.StatusServiceUnavailable
+		}
+	}
 	if errors.Is(e, ErrNotFound) {
 		status = 404
 		code = "not_found"

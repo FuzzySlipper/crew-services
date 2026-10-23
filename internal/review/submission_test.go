@@ -12,6 +12,60 @@ import (
 
 const submissionTestSHA = "0123456789abcdef0123456789abcdef01234567"
 
+type resolvingSubmissionDen struct {
+	*submissionDen
+	source ReviewSource
+	err    error
+	calls  int
+}
+
+func (d *resolvingSubmissionDen) ResolveSubmissionSource(context.Context, SubmissionRequest) (ReviewSource, error) {
+	d.calls++
+	return d.source, d.err
+}
+
+func TestSubmitTaskForReviewRecordsAutomaticallyResolvedSHAs(t *testing.T) {
+	request := submissionRequestForTest()
+	den := &resolvingSubmissionDen{submissionDen: &submissionDen{}, source: ReviewSource{CommitSHA: request.CommitSHA, BaseCommit: request.BaseCommit}}
+	service, store, _ := submissionFixture(t, den)
+	defer store.Close()
+	request.CommitSHA, request.BaseCommit = "", ""
+	request.RequiredChecks = []string{}
+	receipt, _, err := service.SubmitTaskForReview(context.Background(), request)
+	if err != nil || !receipt.OK || receipt.CommitSHA != den.source.CommitSHA || receipt.BaseCommit != den.source.BaseCommit || den.calls != 1 {
+		t.Fatalf("receipt=%+v err=%v resolver calls=%d", receipt, err, den.calls)
+	}
+	den.err = &SubmissionError{Code: "task_commits_not_found", Message: "no matching task"}
+	_, _, err = service.SubmitTaskForReview(context.Background(), request)
+	if err == nil || den.requestCalls != 1 {
+		t.Fatalf("derivation refusal err=%v rounds=%d", err, den.requestCalls)
+	}
+}
+
+func TestSubmitTaskForReviewRefusesBadRangeWithoutGateAndDoesNotRetryIt(t *testing.T) {
+	for _, code := range []string{"unknown_commit", "base_not_ancestor", "round_not_supersedable"} {
+		t.Run(code, func(t *testing.T) {
+			den := &submissionDen{requestErr: &SubmissionError{Code: code, Message: "Bad source"}}
+			service, store, _ := submissionFixture(t, den)
+			defer store.Close()
+			request := submissionRequestForTest()
+			for range 2 {
+				receipt, _, err := service.SubmitTaskForReview(context.Background(), request)
+				var rejected *SubmissionError
+				if !errors.As(err, &rejected) || rejected.Code != code || receipt.OK || receipt.ReviewRoundID != 0 {
+					t.Fatalf("receipt=%+v err=%v", receipt, err)
+				}
+			}
+			if den.requestCalls != 1 || den.watchCalls != 0 {
+				t.Fatalf("requests=%d gates=%d", den.requestCalls, den.watchCalls)
+			}
+			if pending, err := store.ListUnfinishedSubmissions(context.Background()); err != nil || len(pending) != 0 {
+				t.Fatalf("pending=%+v err=%v", pending, err)
+			}
+		})
+	}
+}
+
 type submissionDen struct {
 	mu sync.Mutex
 

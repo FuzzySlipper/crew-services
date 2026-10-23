@@ -171,15 +171,17 @@ type TaskContext struct {
 // reviews; the service derives retry identity when no transport idempotency
 // key is available.
 type SubmissionRequest struct {
-	ProjectID      string   `json:"project_id"`
-	TaskID         int64    `json:"task_id"`
-	Repository     string   `json:"repository"`
-	CommitSHA      string   `json:"commit_sha"`
-	Ref            string   `json:"ref"`
-	RequiredChecks []string `json:"required_checks"`
-	BaseCommit     string   `json:"base_commit,omitempty"`
-	ReviewSummary  string   `json:"review_summary_md"`
-	Reviewer       string   `json:"reviewer,omitempty"`
+	ProjectID       string   `json:"project_id"`
+	TaskID          int64    `json:"task_id"`
+	Repository      string   `json:"repository"`
+	CommitSHA       string   `json:"commit_sha"`
+	Ref             string   `json:"ref"`
+	RequiredChecks  []string `json:"required_checks"`
+	BaseCommit      string   `json:"base_commit,omitempty"`
+	ReviewSummary   string   `json:"review_summary_md"`
+	Reviewer        string   `json:"reviewer,omitempty"`
+	SupersedesRound *int64   `json:"supersedes_round,omitempty"`
+	SupersedeReason string   `json:"supersede_reason,omitempty"`
 
 	// IdempotencyKey is transport metadata, not part of the public MCP tool
 	// schema. A direct HTTP caller may supply Idempotency-Key; the Den gateway
@@ -214,6 +216,7 @@ const (
 	SubmissionJobAdmitted   SubmissionPhase = "job_admitted"
 	SubmissionUnavailable   SubmissionPhase = "unavailable"
 	SubmissionStale         SubmissionPhase = "stale"
+	SubmissionRejected      SubmissionPhase = "rejected"
 	// SubmissionSourcePending waits for the review checkout to contain the
 	// submitted commit, usually until the checkout is pulled. It is bounded by
 	// the service's source grace period.
@@ -225,7 +228,7 @@ const (
 )
 
 func (p SubmissionPhase) Terminal() bool {
-	return p == SubmissionGateFailed || p == SubmissionJobAdmitted || p == SubmissionStale || p == SubmissionSourceMissing
+	return p == SubmissionGateFailed || p == SubmissionJobAdmitted || p == SubmissionStale || p == SubmissionSourceMissing || p == SubmissionRejected
 }
 
 // SubmissionRecord is the durable handoff ledger between the caller, Den's
@@ -280,6 +283,7 @@ type SubmissionReceipt struct {
 	Ref                string          `json:"ref"`
 	RequiredChecks     []string        `json:"required_checks"`
 	BaseCommit         string          `json:"base_commit,omitempty"`
+	SupersedesRound    *int64          `json:"supersedes_round,omitempty"`
 	Reviewer           string          `json:"reviewer"`
 	Phase              SubmissionPhase `json:"phase"`
 	ReviewRoundID      int64           `json:"review_round_id,omitempty"`
@@ -460,6 +464,21 @@ type SubmissionDenClient interface {
 	WatchGitHubChecks(context.Context, GateRequest) (GateEvidence, error)
 	GetGitHubCheckGate(context.Context, GateRequest) (GateEvidence, error)
 }
+
+// SubmissionSourceResolver resolves omitted SHAs before durable admission.
+// Explicit source overrides still pass through Den's repository validation.
+type SubmissionSourceResolver interface {
+	ResolveSubmissionSource(context.Context, SubmissionRequest) (ReviewSource, error)
+}
+
+type SubmissionError struct {
+	Code      string
+	Message   string
+	Retryable bool
+}
+
+func (e *SubmissionError) Error() string { return e.Code + ": " + e.Message }
+
 type (
 	Worker          interface{}
 	ReviewerRuntime interface {
