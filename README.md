@@ -81,7 +81,7 @@ profile environment:
 go run ./cmd/crew-review \
   -listen 127.0.0.1:8413 \
   -db "$HOME/.local/state/crew-review/crew-review.sqlite" \
-  -den-mcp-url "${DEN_MCP_URL:-http://192.168.1.10:5199/mcp}" \
+  -den-mcp-url "${DEN_MCP_URL:-http://192.168.1.5:5199/mcp}" \
   -review-profile "${CREW_REVIEW_PROFILE:-/home/system/crew-services/reviewer.md}" \
   -codex-model "${CREW_REVIEW_MODEL:-}" \
   -codex-effort "${CREW_REVIEW_REASONING_EFFORT:-}" \

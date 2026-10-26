@@ -1,7 +1,7 @@
 # Windows playtest box
 
 Agents test Windows desktop builds of Engine products on a bare-metal Windows
-machine (task #8884): products run in native DX12 windows, the playtest
+machine (task #8884): products run in native Vulkan windows, the playtest
 service drives them over the LAN, and the box's one foreground is lent out for
 real keyboard and mouse input.
 
