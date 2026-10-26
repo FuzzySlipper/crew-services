@@ -55,7 +55,7 @@ func (s *SQLiteStore) LatestReusableSubmission(ctx context.Context, projectID st
 	if projectID == "" || taskID <= 0 {
 		return SubmissionRecord{}, false, errors.New("project_id and task_id are required")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM crew_review_submissions WHERE json_extract(request_json,'$.project_id')=? AND json_extract(request_json,'$.task_id')=? AND phase NOT IN (?,?) ORDER BY updated_at DESC, created_at DESC, id DESC`, projectID, taskID, SubmissionGateFailed, SubmissionStale)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM crew_review_submissions WHERE json_extract(request_json,'$.project_id')=? AND json_extract(request_json,'$.task_id')=? AND phase NOT IN (?,?,?) ORDER BY updated_at DESC, created_at DESC, id DESC`, projectID, taskID, SubmissionGateFailed, SubmissionStale, SubmissionRejected)
 	if err != nil {
 		return SubmissionRecord{}, false, err
 	}
@@ -136,8 +136,8 @@ func (s *SQLiteStore) RetireSubmission(ctx context.Context, id string, idempoten
 // terminal phase, oldest update first. All are returned so a long-waiting
 // submission is never starved or aged out of the background advance.
 func (s *SQLiteStore) ListUnfinishedSubmissions(ctx context.Context) ([]SubmissionRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM crew_review_submissions WHERE phase NOT IN (?,?,?,?) ORDER BY updated_at, id`,
-		SubmissionGateFailed, SubmissionJobAdmitted, SubmissionStale, SubmissionSourceMissing)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM crew_review_submissions WHERE phase NOT IN (?,?,?,?,?) ORDER BY updated_at, id`,
+		SubmissionGateFailed, SubmissionJobAdmitted, SubmissionStale, SubmissionSourceMissing, SubmissionRejected)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,9 @@ func boolInt(value bool) int {
 	return 0
 }
 
-var _ SubmissionStore = (*SQLiteStore)(nil)
-var _ ManualReviewSubmissionStore = (*SQLiteStore)(nil)
-var _ SubmissionRevisionStore = (*SQLiteStore)(nil)
-var _ SubmissionAdvanceStore = (*SQLiteStore)(nil)
+var (
+	_ SubmissionStore             = (*SQLiteStore)(nil)
+	_ ManualReviewSubmissionStore = (*SQLiteStore)(nil)
+	_ SubmissionRevisionStore     = (*SQLiteStore)(nil)
+	_ SubmissionAdvanceStore      = (*SQLiteStore)(nil)
+)

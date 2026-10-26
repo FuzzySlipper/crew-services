@@ -324,6 +324,22 @@ async function select(params) {
   }
 }
 
+async function resize(params) {
+  const active = await currentPage()
+  const { width, height } = params
+  // Reuse launch bounds. Refuse invalid dimensions rather than capture a size
+  // different from the one the caller believes it requested.
+  if (!Number.isInteger(width) || width < 320 || width > 3840 || !Number.isInteger(height) || height < 240 || height > 2160) throw new Error('viewport must be within 320x240 through 3840x2160')
+  const before = await pageMetadata(active)
+  await active.setViewportSize({ width, height })
+  // Coordinates from a former layout no longer name the same target. Release
+  // the retained element handles as well as the tokens that referred to them.
+  for (const saved of tokens.values()) await saved.handle.dispose()
+  tokens.clear()
+  await active.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  return { before_viewport: before.viewport, ...await pageMetadata(active), ...events() }
+}
+
 async function browser(params) {
   if (!params || typeof params !== 'object' || Array.isArray(params)) throw new Error('browser request must be an object')
   switch (params.op) {
@@ -334,7 +350,8 @@ async function browser(params) {
     case 'press': return press(params)
     case 'near': return near(params)
     case 'select': return select(params)
-    default: throw new Error('browser op must be inspect, click, fill, press, near, or select')
+    case 'resize': return resize(params)
+    default: throw new Error('browser op must be inspect, click, fill, press, near, select, or resize')
   }
 }
 

@@ -29,6 +29,29 @@ func (s *Service) SubmitTaskForReview(ctx context.Context, request SubmissionReq
 	if err != nil {
 		return SubmissionReceipt{}, false, err
 	}
+	if normalized.CommitSHA == "" || normalized.BaseCommit == "" {
+		resolver, ok := s.den.(SubmissionSourceResolver)
+		if !ok {
+			return SubmissionReceipt{}, false, &SubmissionError{Code: "source_resolution_unavailable", Message: "the configured Den adapter cannot resolve review SHAs", Retryable: true}
+		}
+		source, err := resolver.ResolveSubmissionSource(ctx, normalized)
+		if err != nil {
+			var refusal *SubmissionError
+			if errors.As(err, &refusal) || errors.Is(err, ErrWorkspaceRequired) || errors.Is(err, ErrWorkspaceAmbiguous) {
+				return SubmissionReceipt{}, false, err
+			}
+			return SubmissionReceipt{}, false, &SubmissionError{Code: "source_resolution_unavailable", Message: err.Error(), Retryable: true}
+		}
+		if normalized.CommitSHA == "" {
+			normalized.CommitSHA = source.CommitSHA
+		}
+		if normalized.BaseCommit == "" {
+			normalized.BaseCommit = source.BaseCommit
+		}
+		if !githubCommitPattern.MatchString(normalized.CommitSHA) || !githubCommitPattern.MatchString(normalized.BaseCommit) {
+			return SubmissionReceipt{}, false, &SubmissionError{Code: "source_resolution_unavailable", Message: "source resolver did not return full commit and base SHAs", Retryable: true}
+		}
+	}
 	store, ok := s.store.(SubmissionStore)
 	if !ok {
 		return SubmissionReceipt{}, false, ErrSubmissionStore
@@ -162,7 +185,7 @@ func normalizeSubmissionRequest(request SubmissionRequest) (SubmissionRequest, e
 	if !validRepository(request.Repository) {
 		return SubmissionRequest{}, errors.New("repository must be owner/name")
 	}
-	if !githubCommitPattern.MatchString(request.CommitSHA) {
+	if request.CommitSHA != "" && !githubCommitPattern.MatchString(request.CommitSHA) {
 		return SubmissionRequest{}, errors.New("commit_sha must be a full 40-character SHA")
 	}
 	if request.BaseCommit != "" && !githubCommitPattern.MatchString(request.BaseCommit) {
@@ -171,6 +194,10 @@ func normalizeSubmissionRequest(request SubmissionRequest) (SubmissionRequest, e
 	if request.Ref == "" {
 		return SubmissionRequest{}, errors.New("ref is required")
 	}
+	if request.SupersedesRound != nil && *request.SupersedesRound <= 0 {
+		return SubmissionRequest{}, &SubmissionError{Code: "invalid_supersedes_round", Message: "supersedes_round must be positive"}
+	}
+	request.SupersedeReason = strings.TrimSpace(request.SupersedeReason)
 	checks := make([]string, 0, len(request.RequiredChecks))
 	seen := make(map[string]struct{}, len(request.RequiredChecks))
 	for _, raw := range request.RequiredChecks {
@@ -202,14 +229,15 @@ func validRepository(repository string) bool {
 
 func submissionTargetKey(request SubmissionRequest) string {
 	identity, _ := json.Marshal(struct {
-		ProjectID      string   `json:"project_id"`
-		TaskID         int64    `json:"task_id"`
-		Repository     string   `json:"repository"`
-		CommitSHA      string   `json:"commit_sha"`
-		Ref            string   `json:"ref"`
-		RequiredChecks []string `json:"required_checks"`
-		BaseCommit     string   `json:"base_commit,omitempty"`
-	}{request.ProjectID, request.TaskID, request.Repository, request.CommitSHA, request.Ref, request.RequiredChecks, request.BaseCommit})
+		ProjectID       string   `json:"project_id"`
+		TaskID          int64    `json:"task_id"`
+		Repository      string   `json:"repository"`
+		CommitSHA       string   `json:"commit_sha"`
+		Ref             string   `json:"ref"`
+		RequiredChecks  []string `json:"required_checks"`
+		BaseCommit      string   `json:"base_commit,omitempty"`
+		SupersedesRound *int64   `json:"supersedes_round,omitempty"`
+	}{request.ProjectID, request.TaskID, request.Repository, request.CommitSHA, request.Ref, request.RequiredChecks, request.BaseCommit, request.SupersedesRound})
 	digest := sha256.Sum256(identity)
 	return "crew-review-target:" + hex.EncodeToString(digest[:])
 }
@@ -232,6 +260,10 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 	recheck := explicit && (record.Phase == SubmissionGateFailed || record.Phase == SubmissionSourceMissing ||
 		(record.Phase == SubmissionStale && record.ReviewRoundID == 0))
 	if record.Phase.Terminal() && !recheck {
+		if record.Phase == SubmissionRejected {
+			code, message, _ := strings.Cut(record.Failure, ": ")
+			return submissionReceipt(record), &SubmissionError{Code: code, Message: message}
+		}
 		return submissionReceipt(record), nil
 	}
 	den, ok := s.den.(SubmissionDenClient)
@@ -242,6 +274,15 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 	if record.ReviewRoundID == 0 {
 		round, err := den.RequestReview(ctx, record.Request)
 		if err != nil {
+			var rejected *SubmissionError
+			if errors.As(err, &rejected) && !rejected.Retryable {
+				message := rejected.Error()
+				updated, storeErr := s.transitionSubmission(ctx, store, record, SubmissionTransition{Phase: SubmissionRejected, Failure: &message})
+				if storeErr != nil {
+					return SubmissionReceipt{}, storeErr
+				}
+				return submissionReceipt(updated), rejected
+			}
 			if errors.Is(err, ErrStaleRound) {
 				return s.submissionStale(ctx, store, record, err.Error())
 			}
@@ -508,23 +549,24 @@ func (s *Service) submissionGateFailed(ctx context.Context, store SubmissionStor
 
 func submissionReceipt(record SubmissionRecord) SubmissionReceipt {
 	receipt := SubmissionReceipt{
-		Schema:         submissionSchema,
-		SchemaVersion:  1,
-		OK:             record.Phase != SubmissionGateFailed && record.Phase != SubmissionStale && record.Phase != SubmissionUnavailable && record.Phase != SubmissionSourceMissing,
-		SubmissionID:   record.ID,
-		ProjectID:      record.Request.ProjectID,
-		TaskID:         record.Request.TaskID,
-		Repository:     record.Request.Repository,
-		CommitSHA:      record.Request.CommitSHA,
-		Ref:            record.Request.Ref,
-		RequiredChecks: append([]string(nil), record.Request.RequiredChecks...),
-		BaseCommit:     record.Request.BaseCommit,
-		Reviewer:       record.Request.Reviewer,
-		Phase:          record.Phase,
-		ReviewRoundID:  record.ReviewRoundID,
-		JobID:          record.JobID,
-		Error:          record.Failure,
-		Summary:        submissionSummary(record),
+		Schema:          submissionSchema,
+		SchemaVersion:   1,
+		OK:              record.Phase != SubmissionGateFailed && record.Phase != SubmissionStale && record.Phase != SubmissionUnavailable && record.Phase != SubmissionSourceMissing,
+		SubmissionID:    record.ID,
+		ProjectID:       record.Request.ProjectID,
+		TaskID:          record.Request.TaskID,
+		Repository:      record.Request.Repository,
+		CommitSHA:       record.Request.CommitSHA,
+		Ref:             record.Request.Ref,
+		RequiredChecks:  append([]string(nil), record.Request.RequiredChecks...),
+		BaseCommit:      record.Request.BaseCommit,
+		SupersedesRound: record.Request.SupersedesRound,
+		Reviewer:        record.Request.Reviewer,
+		Phase:           record.Phase,
+		ReviewRoundID:   record.ReviewRoundID,
+		JobID:           record.JobID,
+		Error:           record.Failure,
+		Summary:         submissionSummary(record),
 	}
 	if record.Gate.Handle != "" {
 		receipt.GateID = record.Gate.Handle
@@ -538,6 +580,10 @@ func submissionReceipt(record SubmissionRecord) SubmissionReceipt {
 		receipt.Error = record.Gate.FailureSummary
 	}
 	switch record.Phase {
+	case SubmissionRejected:
+		receipt.OK = false
+		receipt.ErrorCode, _, _ = strings.Cut(record.Failure, ": ")
+		receipt.Summary = record.Failure
 	case SubmissionGateFailed:
 		receipt.OK = false
 		receipt.Retryable = false

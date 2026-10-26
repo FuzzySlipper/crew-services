@@ -203,6 +203,7 @@ func TestRequestReviewAndGitHubGateMethodsMapDenAuthority(t *testing.T) {
 	request := review.SubmissionRequest{
 		ProjectID: "dsh-crew", TaskID: 7416, Repository: "owner/repo", CommitSHA: reviewDenTestSHA,
 		Ref: "main", RequiredChecks: []string{"lint"}, ReviewSummary: "Please review this exact commit.", Reviewer: "@reviewer",
+		BaseCommit: strings.Repeat("b", 40), SupersedesRound: func() *int64 { id := int64(11); return &id }(), SupersedeReason: "Corrected range",
 	}
 	round, err := client.RequestReview(context.Background(), request)
 	if err != nil || round.ID != 12 || round.ProjectID != request.ProjectID || round.TaskID != request.TaskID {
@@ -221,6 +222,10 @@ func TestRequestReviewAndGitHubGateMethodsMapDenAuthority(t *testing.T) {
 		t.Fatalf("calls=%v", calls)
 	}
 	requestArgs := calls[0]["arguments"].(map[string]any)
+	source, ok := requestArgs["source"].(map[string]any)
+	if !ok || source["repository"] != request.Repository || source["commit_sha"] != request.CommitSHA || source["base_commit"] != request.BaseCommit || requestArgs["supersedes_round"] != float64(11) || requestArgs["supersede_reason"] != "Corrected range" {
+		t.Fatalf("source or supersession fields lost: %#v", requestArgs)
+	}
 	if requestArgs["task_id"] != float64(7416) || requestArgs["requested_by"] != "@reviewer" || !strings.Contains(requestArgs["notes"].(string), reviewDenTestSHA) {
 		t.Fatalf("request args=%#v", requestArgs)
 	}

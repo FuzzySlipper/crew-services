@@ -222,7 +222,7 @@ of the tunnel. This topology requires the service account's existing key-only
 SSH route to `den-services` and remote forwarding support.
 
 The Den MCP facade's `submit_task_for_review` tool forwards the public
-project/task/repository/exact-SHA/checks/summary envelope to
+project/task/repository/ref/checks/summary envelope to
 `POST /v1/review-submissions` on the loopback `crew-review` backend. Configure
 that backend in the MCP route/config files before enabling the tool. The
 receipt is immediately `gate_pending` when checks are not terminal; crew-review
@@ -232,6 +232,24 @@ round. Resend the same envelope only after re-running a failed check or after
 fixing `changes_requested` findings. If the backend is down, the MCP response is a
 retryable `den_backend_unavailable` result; the route never falls back to
 Rusty or dispatches a second review authority.
+
+Callers normally omit `commit_sha` and `base_commit`. The review host discovers
+the checkout matching `repository`, fetches objects without changing its local
+branches or working files, selects the latest task commit on the pushed `ref`
+(subject containing `(#<task_id>)`), and derives the parent of the earliest
+matching task commit as the diff base. Both exact SHAs are recorded in the
+receipt and passed unchanged to the gate and reviewer. Explicit overrides
+remain available. Den validates existence and ancestry with GitHub before
+recording a round; `unknown_commit` and `base_not_ancestor` refusals are terminal
+and do not start gates or background retries. Missing markers and ambiguous
+merge paths are reported before admission. If a task spans merge paths, an
+explicit containing merge commit can select the complete history.
+
+Optional `supersedes_round` and `supersede_reason` are forwarded to Den's
+atomic replacement path. The old round must belong to this task and have no
+review findings, finalization, or verdict; Den records the correction reason
+in the replacement request and closes the earlier round. The local runner
+continues to rely on Den's current round before job admission and finalization.
 
 With an ordinary logged-in local Codex CLI, an opt-in scratch-DB smoke reads one
 existing native thread and projects it without mutating Codex:

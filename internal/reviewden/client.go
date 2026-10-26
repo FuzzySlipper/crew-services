@@ -167,9 +167,12 @@ func (c *Client) call(ctx context.Context, operation string, arguments any) (jso
 
 func classifyToolError(operation string, envelope toolEnvelope) error {
 	message := "operation returned an error"
-	if len(envelope.Content) > 0 && strings.TrimSpace(envelope.Content[0].Text) != "" {
+	if len(envelope.StructuredContent) > 0 {
+		message = string(envelope.StructuredContent)
+	} else if len(envelope.Content) > 0 && strings.TrimSpace(envelope.Content[0].Text) != "" {
 		message = boundedText([]byte(envelope.Content[0].Text), 4096)
 	}
+	message = unwrapToolErrorJSON(message)
 	// The MCP facade normally returns a den_backend_request_failed object whose
 	// message contains the review service's {error:{code,message}} body. Accept
 	// both that wrapper and direct error objects so the adapter remains useful
@@ -179,11 +182,7 @@ func classifyToolError(operation string, envelope toolEnvelope) error {
 		Message json.RawMessage `json:"message"`
 	}
 	if json.Unmarshal([]byte(message), &outer) == nil {
-		inner := string(outer.Message)
-		var quoted string
-		if json.Unmarshal(outer.Message, &quoted) == nil {
-			inner = quoted
-		}
+		inner := unwrapToolErrorJSON(string(outer.Message))
 		var body struct {
 			Error struct {
 				Code    string `json:"code"`
@@ -192,7 +191,7 @@ func classifyToolError(operation string, envelope toolEnvelope) error {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		}
-		if json.Unmarshal(outer.Message, &body) == nil {
+		if json.Unmarshal([]byte(inner), &body) == nil {
 			if body.Error.Code != "" {
 				return classifyCode(operation, body.Error.Code, body.Error.Message)
 			}
@@ -210,9 +209,34 @@ func classifyToolError(operation string, envelope toolEnvelope) error {
 	return classifyCode(operation, "", message)
 }
 
+// The facade can put a JSON body in a quoted or escaped message string.
+// Decode those transport layers before classifying domain error codes, so a
+// permanent refusal does not become a background retry. Three unwraps cover
+// the content-text wrapper, the message string, and its escaped JSON body.
+func unwrapToolErrorJSON(value string) string {
+	for range 3 {
+		var decoded string
+		if err := json.Unmarshal([]byte(value), &decoded); err != nil {
+			if json.Valid([]byte(value)) || json.Unmarshal([]byte(`"`+value+`"`), &decoded) != nil {
+				break
+			}
+		}
+		if decoded == value {
+			break
+		}
+		value = decoded
+	}
+	return value
+}
+
 func classifyCode(operation, code, message string) error {
 	text := strings.TrimSpace(strings.TrimSpace(code) + ": " + strings.TrimSpace(message))
 	lower := strings.ToLower(text)
+	for _, sourceCode := range []string{"unknown_commit", "base_not_ancestor", "invalid_review_source", "invalid_supersedes_round", "round_not_supersedable"} {
+		if code == sourceCode || strings.Contains(lower, `"code":"`+sourceCode+`"`) || strings.Contains(lower, `"code": "`+sourceCode+`"`) {
+			return &review.SubmissionError{Code: sourceCode, Message: message}
+		}
+	}
 	if strings.TrimSpace(strings.ToLower(code)) == "task_not_reviewable" {
 		return fmt.Errorf("%w: %s", review.ErrTaskNotReviewable, text)
 	}
@@ -471,12 +495,15 @@ type requestReviewResponse struct {
 // second review lifecycle into crew-services.
 func (c *Client) RequestReview(ctx context.Context, request review.SubmissionRequest) (review.ReviewRoundRef, error) {
 	data, err := c.call(ctx, "request_review", map[string]any{
-		"task_id":      request.TaskID,
-		"requested_by": request.Reviewer,
-		"branch":       request.Ref,
-		"base_branch":  request.Ref,
-		"tests_run":    []string{},
-		"notes":        reviewRequestNotes(request),
+		"task_id":          request.TaskID,
+		"requested_by":     request.Reviewer,
+		"branch":           request.Ref,
+		"base_branch":      request.Ref,
+		"tests_run":        []string{},
+		"notes":            reviewRequestNotes(request),
+		"source":           map[string]string{"repository": request.Repository, "commit_sha": request.CommitSHA, "base_commit": request.BaseCommit},
+		"supersedes_round": request.SupersedesRound,
+		"supersede_reason": request.SupersedeReason,
 	})
 	if err != nil {
 		return review.ReviewRoundRef{}, err
