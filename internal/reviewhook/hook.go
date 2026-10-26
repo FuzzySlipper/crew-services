@@ -154,11 +154,17 @@ func (r *Runner) run(key review.Key, source review.ReviewSource, path string) {
 	}
 }
 
+// runExecutable runs the hook in its own process group and kills the whole
+// group when the hook returns or times out, so no child of a timed-out hook
+// keeps running while the next hook starts.
 func runExecutable(ctx context.Context, path string, env []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, path)
 	cmd.Env = env
+	ownProcessGroup(cmd)
 	cmd.WaitDelay = 10 * time.Second
-	return cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
+	killProcessGroup(cmd)
+	return output, err
 }
 
 func writeLog(path string, output []byte) error {
