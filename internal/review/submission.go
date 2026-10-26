@@ -243,6 +243,11 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 			if errors.Is(err, ErrStaleRound) {
 				return s.submissionStale(ctx, store, record, err.Error())
 			}
+			// A task Den will not open a round for (for example one already
+			// done) stays that way; retrying it every pass only floods Den.
+			if errors.Is(err, ErrTaskNotReviewable) {
+				return s.submissionStale(ctx, store, record, "Den task is no longer reviewable: "+err.Error())
+			}
 			return s.submissionUnavailable(ctx, store, record, "den_request_review_unavailable", err.Error(), true)
 		}
 		if round.ID <= 0 {

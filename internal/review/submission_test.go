@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -496,6 +497,43 @@ func TestSubmitTaskForReviewStaleRoundDoesNotAdmitJob(t *testing.T) {
 	replayedReceipt, replayed, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
 	if err != nil || !replayed || replayedReceipt.ErrorCode != "stale_review_round" || replayedReceipt.Retryable || replayedReceipt.Summary != receipt.Summary {
 		t.Fatalf("stale replay receipt=%+v replayed=%v err=%v", replayedReceipt, replayed, err)
+	}
+}
+
+func TestAdvanceSubmissionsRetiresTaskDenNoLongerReviews(t *testing.T) {
+	den := &submissionDen{requestErr: errors.New("Den MCP request_review: connection refused")}
+	service, store, runtime := submissionFixture(t, den)
+	defer store.Close()
+	first, _, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil || first.Phase != SubmissionUnavailable || !first.Retryable {
+		t.Fatalf("first receipt=%+v err=%v", first, err)
+	}
+
+	// The task was finished elsewhere before any round was opened, so Den now
+	// refuses the request. One background pass retires the submission and
+	// later passes neither list it nor ask Den again.
+	den.mu.Lock()
+	den.requestErr = fmt.Errorf("%w: task_not_reviewable: task is not reviewable for packet kind: done", ErrTaskNotReviewable)
+	den.mu.Unlock()
+	if examined, err := service.AdvanceSubmissions(context.Background()); err != nil || !examined {
+		t.Fatalf("advance examined=%v err=%v", examined, err)
+	}
+	record, err := store.GetSubmission(context.Background(), first.SubmissionID)
+	if err != nil || record.Phase != SubmissionStale || record.ReviewRoundID != 0 || !strings.Contains(record.Failure, "task_not_reviewable") {
+		t.Fatalf("retired record=%+v err=%v", record, err)
+	}
+	if examined, err := service.AdvanceSubmissions(context.Background()); err != nil || examined {
+		t.Fatalf("stale submission still listed: examined=%v err=%v", examined, err)
+	}
+	den.mu.Lock()
+	calls := den.requestCalls
+	den.mu.Unlock()
+	if calls != 2 || runtime.acquired != 0 {
+		t.Fatalf("request_review calls=%d acquired=%d, want 2 and 0", calls, runtime.acquired)
+	}
+	replay, replayed, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil || !replayed || replay.OK || replay.Retryable || replay.ErrorCode != "stale_review_round" {
+		t.Fatalf("replay receipt=%+v replayed=%v err=%v", replay, replayed, err)
 	}
 }
 
