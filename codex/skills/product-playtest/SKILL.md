@@ -189,6 +189,11 @@ playtest input SESSION --json '[{"kind":"move","dx":35,"dy":-15}]'
 playtest input SESSION --json '[{"kind":"point","x":640,"y":460,"width":1280,"height":720},{"kind":"click","button":1,"ms":100}]'
 ```
 
+`wheel` scrolls by pixel deltas (`{"kind":"wheel","dy":-120}`), and `down`/`up` hold a button so
+a drag composes as `down`, `point` (free cursor) or `move` (pointer lock) steps, then `up`. A button
+left down is released when its batch ends. Browser sessions deliver all three; the engine backend
+delivers `wheel` but refuses `down`/`up`, and the Windows desktop refuses all three.
+
 Raw keyboard holds use Windows virtual-key integers; the JS helper accepts
 named keys. Controller sticks range -1..1, positive X right and positive Y up;
 triggers range 0..1. Buttons use `buttons: ["a"]`, not `a: true`.
