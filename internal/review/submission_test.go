@@ -535,6 +535,16 @@ func TestAdvanceSubmissionsRetiresTaskDenNoLongerReviews(t *testing.T) {
 	if err != nil || !replayed || replay.OK || replay.Retryable || replay.ErrorCode != "stale_review_round" {
 		t.Fatalf("replay receipt=%+v replayed=%v err=%v", replay, replayed, err)
 	}
+
+	// A caller who submitted too early, for example while the task was still
+	// planned, resubmits the same envelope once Den will review it.
+	den.mu.Lock()
+	den.requestErr = nil
+	den.mu.Unlock()
+	resubmitted, replayed, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil || !replayed || resubmitted.Phase == SubmissionStale || resubmitted.ReviewRoundID != 7 {
+		t.Fatalf("resubmitted receipt=%+v replayed=%v err=%v", resubmitted, replayed, err)
+	}
 }
 
 func TestAdmitRoundConcurrentDistinctKeysShareOneRoundJob(t *testing.T) {

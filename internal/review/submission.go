@@ -225,10 +225,12 @@ func submissionMaterialHash(request SubmissionRequest) (string, error) {
 
 // advanceSubmission moves one submission as far as current Den and checkout
 // state allow. explicit is true for a caller's submit: only then are a failed
-// gate and a missing checkout re-checked, so the background advance never
-// re-polls a terminal outcome on its own.
+// gate, a missing checkout, and a request Den refused before opening a round
+// re-checked, so the background advance never re-polls a terminal outcome on
+// its own.
 func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, record SubmissionRecord, explicit bool) (SubmissionReceipt, error) {
-	recheck := explicit && (record.Phase == SubmissionGateFailed || record.Phase == SubmissionSourceMissing)
+	recheck := explicit && (record.Phase == SubmissionGateFailed || record.Phase == SubmissionSourceMissing ||
+		(record.Phase == SubmissionStale && record.ReviewRoundID == 0))
 	if record.Phase.Terminal() && !recheck {
 		return submissionReceipt(record), nil
 	}
