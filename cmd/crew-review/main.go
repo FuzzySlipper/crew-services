@@ -20,6 +20,7 @@ import (
 	"crew-services/internal/reviewcodex"
 	"crew-services/internal/reviewden"
 	"crew-services/internal/reviewdsh"
+	"crew-services/internal/reviewhook"
 )
 
 const defaultReviewProfile = "/home/system/crew-services/reviewer.md"
@@ -45,6 +46,10 @@ type commandConfig struct {
 	// sourceGrace bounds how long a submission waits for the review checkout
 	// to contain its commit before reporting source_missing.
 	sourceGrace time.Duration
+	// looksGoodHooks maps a repository ("owner/name") to an executable run
+	// after Den records a looks_good review of one of its managed submissions.
+	looksGoodHooks map[string]string
+	hookTimeout    time.Duration
 }
 
 type repeatString []string
@@ -91,6 +96,25 @@ func run(args []string) error {
 	if cfg.backend == "codex" {
 		options = append(options, review.WithRuntimeChecker(reviewcodex.SandboxCheck{Command: cfg.codexCommand}))
 	}
+	var hooks *reviewhook.Runner
+	if len(cfg.looksGoodHooks) > 0 {
+		dbPath, err := filepath.Abs(cfg.db)
+		if err != nil {
+			_ = runtime.Close()
+			return err
+		}
+		hooks, err = reviewhook.New(reviewhook.Config{
+			Commands: cfg.looksGoodHooks,
+			Timeout:  cfg.hookTimeout,
+			LogDir:   filepath.Join(filepath.Dir(dbPath), "hooks"),
+			Notes:    den,
+		})
+		if err != nil {
+			_ = runtime.Close()
+			return err
+		}
+		options = append(options, review.WithFinalizedHook(hooks))
+	}
 	svc, err := review.New(store, den, runtime, cfg.profile, options...)
 	if err != nil {
 		_ = runtime.Close()
@@ -121,6 +145,9 @@ func run(args []string) error {
 	<-loopDone
 	<-submissionsDone
 	closeErr := svc.Close()
+	if hooks != nil {
+		hooks.Wait()
+	}
 	if errors.Is(serverErr, http.ErrServerClosed) {
 		return closeErr
 	}
@@ -150,6 +177,7 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 
 		submissionInterval: 30 * time.Second,
 		sourceGrace:        15 * time.Minute,
+		hookTimeout:        45 * time.Minute,
 	}
 	if raw := strings.TrimSpace(getenv("CREW_REVIEW_RUN_INTERVAL")); raw != "" {
 		interval, err := time.ParseDuration(raw)
@@ -164,6 +192,7 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	}{
 		{"CREW_REVIEW_SUBMISSION_INTERVAL", &cfg.submissionInterval},
 		{"CREW_REVIEW_SOURCE_GRACE", &cfg.sourceGrace},
+		{"CREW_REVIEW_HOOK_TIMEOUT", &cfg.hookTimeout},
 	} {
 		if raw := strings.TrimSpace(getenv(setting.name)); raw != "" {
 			value, err := time.ParseDuration(raw)
@@ -182,6 +211,7 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	}
 	var codexArgs repeatString
 	var workspaceRoots repeatString
+	var looksGoodHooks repeatString
 	flags := flag.NewFlagSet("crew-review", flag.ContinueOnError)
 	flags.StringVar(&cfg.listen, "listen", cfg.listen, "loopback listen address")
 	flags.StringVar(&cfg.db, "db", cfg.db, "separate review SQLite database")
@@ -199,6 +229,8 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	flags.DurationVar(&cfg.runInterval, "run-interval", cfg.runInterval, "delay between bounded single-job runner passes")
 	flags.DurationVar(&cfg.submissionInterval, "submission-interval", cfg.submissionInterval, "delay between background passes over unfinished review submissions")
 	flags.DurationVar(&cfg.sourceGrace, "source-grace", cfg.sourceGrace, "how long a submission waits for the review checkout to contain its commit")
+	flags.Var(&looksGoodHooks, "looks-good-hook", "owner/name=/absolute/executable run after a looks_good review of that repository; repeatable; overrides CREW_REVIEW_LOOKS_GOOD_HOOKS")
+	flags.DurationVar(&cfg.hookTimeout, "hook-timeout", cfg.hookTimeout, "time limit for one looks_good hook run")
 	if err := flags.Parse(args); err != nil {
 		return commandConfig{}, err
 	}
@@ -214,6 +246,15 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	if len(codexArgs) > 0 {
 		cfg.codexArgs = append([]string(nil), codexArgs...)
 	}
+	hookSpecs := strings.FieldsFunc(getenv("CREW_REVIEW_LOOKS_GOOD_HOOKS"), func(r rune) bool { return r == ';' || r == '\n' })
+	if len(looksGoodHooks) > 0 {
+		hookSpecs = []string(looksGoodHooks)
+	}
+	hooks, err := parseLooksGoodHooks(hookSpecs)
+	if err != nil {
+		return commandConfig{}, err
+	}
+	cfg.looksGoodHooks = hooks
 	if strings.TrimSpace(cfg.listen) == "" {
 		return commandConfig{}, errors.New("listen address is required")
 	}
@@ -248,7 +289,35 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	if cfg.sourceGrace <= 0 {
 		return commandConfig{}, errors.New("source grace must be positive")
 	}
+	if cfg.hookTimeout <= 0 {
+		return commandConfig{}, errors.New("hook timeout must be positive")
+	}
 	return cfg, nil
+}
+
+// parseLooksGoodHooks reads "owner/name=/absolute/executable" entries.
+func parseLooksGoodHooks(specs []string) (map[string]string, error) {
+	hooks := map[string]string{}
+	for _, spec := range specs {
+		spec = strings.TrimSpace(spec)
+		if spec == "" {
+			continue
+		}
+		repository, path, ok := strings.Cut(spec, "=")
+		repository, path = strings.TrimSpace(repository), strings.TrimSpace(path)
+		owner, name, hasSlash := strings.Cut(repository, "/")
+		if !ok || !hasSlash || owner == "" || name == "" || strings.Contains(name, "/") {
+			return nil, fmt.Errorf("looks_good hook must be owner/name=/absolute/executable: %q", spec)
+		}
+		if !filepath.IsAbs(path) {
+			return nil, fmt.Errorf("looks_good hook for %s must be an absolute path: %q", repository, path)
+		}
+		if _, exists := hooks[strings.ToLower(repository)]; exists {
+			return nil, fmt.Errorf("duplicate looks_good hook for %s", repository)
+		}
+		hooks[strings.ToLower(repository)] = path
+	}
+	return hooks, nil
 }
 
 func newRuntime(ctx context.Context, cfg commandConfig) (review.ReviewerRuntime, error) {

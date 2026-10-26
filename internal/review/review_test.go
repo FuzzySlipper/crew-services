@@ -1143,3 +1143,41 @@ func TestCheckRuntimeUsesLatestReviewWorkspace(t *testing.T) {
 		t.Fatalf("checks = %+v, %+v", first, second)
 	}
 }
+
+type recordingFinalizedHook struct{ jobs []Job }
+
+func (h *recordingFinalizedHook) Finalized(j Job) { h.jobs = append(h.jobs, j) }
+
+func TestFinalizedHookSeesOnlyStoredReceipts(t *testing.T) {
+	svc, store, den, _, a := fixture(t, 1)
+	defer store.Close()
+	hook := &recordingFinalizedHook{}
+	WithFinalizedHook(hook)(svc)
+	den.fail = true
+	j, _, e := svc.Admit(context.Background(), a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = store.Claim(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = store.PutFinalization(context.Background(), j.ID, Finalization{Key: a.Key, Reviewer: a.Reviewer, Completion: Completion{Verdict: "looks_good"}}); e != nil {
+		t.Fatal(e)
+	}
+	if e = store.ReleaseFinalization(context.Background(), j.ID); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = svc.RunOne(context.Background()); e == nil {
+		t.Fatal("response loss must remain retryable")
+	}
+	if len(hook.jobs) != 0 {
+		t.Fatalf("hook ran before Den's receipt was stored: %+v", hook.jobs)
+	}
+	den.fail = false
+	if _, e = svc.RunOne(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	if len(hook.jobs) != 1 || hook.jobs[0].ID != j.ID || hook.jobs[0].State != Succeeded || hook.jobs[0].Receipt == nil {
+		t.Fatalf("hook jobs = %+v, want the succeeded job once", hook.jobs)
+	}
+}

@@ -530,6 +530,18 @@ func (c *Client) RequestManualReview(ctx context.Context, request review.ManualR
 	return review.ReviewRoundRef{ID: roundID, ProjectID: request.ProjectID, TaskID: request.TaskID}, nil
 }
 
+// PostTaskNote posts a short status note from crew-review on a task thread.
+func (c *Client) PostTaskNote(ctx context.Context, key review.TaskKey, content string) error {
+	_, err := c.call(ctx, "send_message", map[string]any{
+		"project_id": key.ProjectID,
+		"task_id":    key.TaskID,
+		"sender":     "crew-review",
+		"intent":     "status_update",
+		"content":    content,
+	})
+	return err
+}
+
 type gateResponse struct {
 	ID             int64    `json:"id"`
 	GateID         int64    `json:"gate_id"`

@@ -24,6 +24,9 @@ type Service struct {
 	source      SourceChecker
 	sourceGrace time.Duration
 
+	// finalized, when set, observes each job after Den's receipt is stored.
+	finalized FinalizedHook
+
 	// runtimeCheck, when set, probes the reviewer runtime on operator request.
 	runtimeCheck RuntimeChecker
 	// lastWorkspace is the checkout of the most recently started review, the
@@ -99,6 +102,17 @@ type affinity struct {
 	busy      bool
 }
 type Option func(*Service)
+
+// FinalizedHook observes a job after Den's receipt for it is stored. The job
+// and its Den round are already settled; the hook must not block.
+type FinalizedHook interface {
+	Finalized(Job)
+}
+
+// WithFinalizedHook calls hook once for each job whose Den receipt is stored.
+func WithFinalizedHook(hook FinalizedHook) Option {
+	return func(s *Service) { s.finalized = hook }
+}
 
 func WithClock(clock Clock) Option {
 	return func(s *Service) {
@@ -375,7 +389,10 @@ func (s *Service) reconcile(ctx context.Context, j Job) error {
 		_ = s.store.ReleaseFinalization(ctx, j.ID)
 		return e
 	}
-	_, e = s.store.Complete(ctx, j.ID, r)
+	completed, e := s.store.Complete(ctx, j.ID, r)
+	if e == nil && s.finalized != nil {
+		s.finalized.Finalized(completed)
+	}
 	return e
 }
 func (s *Service) terminal(ctx context.Context, j Job, state State, why string) error {

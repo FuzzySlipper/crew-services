@@ -175,3 +175,33 @@ func TestWorkspaceRootsConfig(t *testing.T) {
 		t.Fatal("relative root accepted")
 	}
 }
+
+func TestLooksGoodHooksConfig(t *testing.T) {
+	env := map[string]string{
+		"CREW_REVIEW_LOOKS_GOOD_HOOKS": "FuzzySlipper/den-services=/home/system/crew-services/hooks/den-services-deploy; owner/other=/usr/local/bin/other",
+		"CREW_REVIEW_HOOK_TIMEOUT":     "20m",
+	}
+	cfg, err := parseConfig(nil, func(name string) string { return env[name] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.looksGoodHooks) != 2 || cfg.looksGoodHooks["fuzzyslipper/den-services"] != "/home/system/crew-services/hooks/den-services-deploy" || cfg.hookTimeout != 20*time.Minute {
+		t.Fatalf("hooks = %#v timeout = %s", cfg.looksGoodHooks, cfg.hookTimeout)
+	}
+	cfg, err = parseConfig([]string{"-looks-good-hook", "owner/repo=/bin/true"}, func(name string) string { return env[name] })
+	if err != nil || len(cfg.looksGoodHooks) != 1 || cfg.looksGoodHooks["owner/repo"] != "/bin/true" {
+		t.Fatalf("flag hooks = %#v, err = %v", cfg.looksGoodHooks, err)
+	}
+	cfg, err = parseConfig(nil, func(string) string { return "" })
+	if err != nil || len(cfg.looksGoodHooks) != 0 || cfg.hookTimeout != 45*time.Minute {
+		t.Fatalf("default hooks = %#v timeout = %s err = %v", cfg.looksGoodHooks, cfg.hookTimeout, err)
+	}
+	for _, spec := range []string{"den-services=/bin/true", "owner/repo=relative/path", "owner/repo", "owner/a/b=/bin/true"} {
+		if _, err := parseConfig([]string{"-looks-good-hook", spec}, func(string) string { return "" }); err == nil {
+			t.Fatalf("parseConfig accepted hook %q", spec)
+		}
+	}
+	if _, err := parseConfig([]string{"-looks-good-hook", "o/r=/bin/true", "-looks-good-hook", "O/R=/bin/false"}, func(string) string { return "" }); err == nil {
+		t.Fatal("parseConfig accepted duplicate hooks")
+	}
+}

@@ -107,6 +107,18 @@ in the same turn. Deterministic Den validation failures become one terminal
 job failure, while ambiguous transport failures retain the exact request for
 idempotent retry.
 
+A repository can have a post-review hook: `-looks-good-hook
+owner/name=/absolute/executable` (repeatable, or `CREW_REVIEW_LOOKS_GOOD_HOOKS`
+with entries separated by `;`). After Den stores a `looks_good` receipt for a
+managed submission of that repository, crew-review runs the executable once,
+one hook at a time, within `-hook-timeout` (45 minutes by default). It passes
+`CREW_REVIEW_REPOSITORY`, `CREW_REVIEW_COMMIT`, `CREW_REVIEW_REF`,
+`CREW_REVIEW_PROJECT`, `CREW_REVIEW_TASK` and `CREW_REVIEW_ROUND` in the
+environment, writes the output to `hooks/` beside the database, and posts the
+outcome with the output's tail on the task thread. A hook never changes the job
+or its Den round, and manual best-effort reviews, which have no commit, run no
+hook. The installed service uses this to deploy reviewed den-services commits.
+
 An operator may deliberately retry one terminal failed job with `POST
 /v1/review-jobs/{id}/retry`. The action preserves the exact durable job and
 Den round, releases any idle retained worker for that task before requeueing,
