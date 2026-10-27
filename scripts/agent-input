@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""agent-input: real keyboard, mouse and gamepad input into the desktop session, for agents on a Linux box.
+
+The agent user may open /dev/uinput (a udev uaccess ACL), so no root and no approval are needed. One daemon per
+user owns a virtual keyboard+mouse and a virtual Xbox 360 pad; every other command talks to it over a Unix socket
+and returns once the input has been delivered and released. See docs/linux-desktop-input.md.
+
+  agent-input start | stop | status
+  agent-input key NAME [MS]             press a named key, held MS (default 80)
+  agent-input chord NAME+NAME... [MS]   several keys held together (control-left+s)
+  agent-input type TEXT                 type ASCII text on a US layout
+  agent-input button NAME [MS]          pad: a b x y lb rb back start guide ls rs up down left right
+  agent-input stick NAME VALUE [MS]     pad: lx ly rx ry (-1..1, +y up), lt rt (0..1); back to rest after MS (0 holds)
+  agent-input move DX DY                relative pointer motion
+  agent-input click [BUTTON] [MS]       left (default), right, middle
+  agent-input wheel N                   wheel notches (+ up)
+  agent-input held                      keys held down on every input device, to find a stuck key
+  agent-input focus TEXT [--fullscreen] activate the window whose title contains TEXT (KWin)
+  agent-input shot FILE [--screen]      PNG of the active window (or the whole screen)
+  agent-input unlock                    unlock the graphical session if the screen locker took it
+"""
+import fcntl, json, os, socket, socketserver, struct, subprocess, sys, tempfile, threading, time
+
+RUNTIME = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
+STATE = os.path.join(RUNTIME, 'agent-input')
+SOCKET = os.path.join(STATE, 'socket')
+PIDFILE = os.path.join(STATE, 'pid')
+LOG = os.path.join(STATE, 'log')
+
+EV_SYN, EV_KEY, EV_REL, EV_ABS = 0, 1, 2, 3
+UI_SET_EVBIT, UI_SET_KEYBIT, UI_SET_RELBIT, UI_SET_ABSBIT = 0x40045564, 0x40045565, 0x40045566, 0x40045567
+UI_DEV_CREATE, UI_DEV_DESTROY, UI_DEV_SETUP, UI_ABS_SETUP = 0x5501, 0x5502, 0x405C5503, 0x401C5504
+
+# Linux input-event codes (linux/input-event-codes.h), by the names the commands take.
+KEYS = {'escape': 1, 'minus': 12, 'equal': 13, 'backspace': 14, 'tab': 15, 'enter': 28, 'control-left': 29,
+        'semicolon': 39, 'apostrophe': 40, 'grave': 41, 'shift-left': 42, 'backslash': 43, 'comma': 51, 'period': 52,
+        'slash': 53, 'shift-right': 54, 'alt-left': 56, 'space': 57, 'capslock': 58, 'bracket-left': 26,
+        'bracket-right': 27, 'control-right': 97, 'alt-right': 100, 'home': 102, 'arrow-up': 103, 'page-up': 104,
+        'arrow-left': 105, 'arrow-right': 106, 'end': 107, 'arrow-down': 108, 'page-down': 109, 'insert': 110,
+        'delete': 111, 'meta': 125, 'f11': 87, 'f12': 88}
+KEYS.update({f'f{n}': 58 + n for n in range(1, 11)})
+KEYS.update({str(n): 1 + n for n in range(1, 10)}, **{'0': 11})
+KEYS.update(dict(zip('qwertyuiop', range(16, 26))), **dict(zip('asdfghjkl', range(30, 39))), **dict(zip('zxcvbnm', range(44, 51))))
+KEYS.update({'esc': 1, 'return': 28, 'up': 103, 'down': 108, 'left': 105, 'right': 106, 'shift': 42, 'ctrl': 29, 'alt': 56})
+SHIFTED = dict(zip('!@#$%^&*()_+{}|:"~<>?', '1234567890-=[]\\;\'`,./'))
+TYPED = {' ': 'space', '-': 'minus', '=': 'equal', '[': 'bracket-left', ']': 'bracket-right', '\\': 'backslash',
+         ';': 'semicolon', "'": 'apostrophe', '`': 'grave', ',': 'comma', '.': 'period', '/': 'slash', '\n': 'enter', '\t': 'tab'}
+BUTTONS = {'a': 0x130, 'b': 0x131, 'x': 0x133, 'y': 0x134, 'lb': 0x136, 'rb': 0x137, 'back': 0x13A, 'start': 0x13B,
+           'guide': 0x13C, 'ls': 0x13D, 'rs': 0x13E}
+HAT = {'up': (0x11, -1), 'down': (0x11, 1), 'left': (0x10, -1), 'right': (0x10, 1)}
+AXES = {'lx': (0x00, False), 'ly': (0x01, True), 'rx': (0x03, False), 'ry': (0x04, True), 'lt': (0x02, None), 'rt': (0x05, None)}
+MOUSE = {'left': 0x110, 'right': 0x111, 'middle': 0x112}
+
+
+def session_env():
+    """The desktop session's environment, so KWin, spectacle and loginctl reach it from any agent shell."""
+    env = dict(os.environ, XDG_RUNTIME_DIR=RUNTIME)
+    env.setdefault('WAYLAND_DISPLAY', 'wayland-0')
+    env.setdefault('DBUS_SESSION_BUS_ADDRESS', f'unix:path={RUNTIME}/bus')
+    return env
+
+
+# ---- daemon -------------------------------------------------------------------------------------------------
+
+def create(name, vendor, product, setup):
+    fd = os.open('/dev/uinput', os.O_WRONLY | os.O_NONBLOCK)
+    setup(fd)
+    fcntl.ioctl(fd, UI_DEV_SETUP, struct.pack('HHHH80sI', 3, vendor, product, 0x0114, name.encode(), 0))
+    fcntl.ioctl(fd, UI_DEV_CREATE)
+    return fd
+
+
+def keyboard_setup(fd):
+    fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
+    for code in list(range(1, 249)) + list(MOUSE.values()):
+        fcntl.ioctl(fd, UI_SET_KEYBIT, code)
+    fcntl.ioctl(fd, UI_SET_EVBIT, EV_REL)
+    for code in (0, 1, 8):
+        fcntl.ioctl(fd, UI_SET_RELBIT, code)
+
+
+def pad_setup(fd):
+    fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
+    for code in BUTTONS.values():
+        fcntl.ioctl(fd, UI_SET_KEYBIT, code)
+    fcntl.ioctl(fd, UI_SET_EVBIT, EV_ABS)
+    for code, low, high, flat in [(0, -32768, 32767, 128), (1, -32768, 32767, 128), (3, -32768, 32767, 128),
+                                  (4, -32768, 32767, 128), (2, 0, 255, 0), (5, 0, 255, 0), (0x10, -1, 1, 0), (0x11, -1, 1, 0)]:
+        fcntl.ioctl(fd, UI_SET_ABSBIT, code)
+        fcntl.ioctl(fd, UI_ABS_SETUP, struct.pack('HHiiiiii', code, 0, 0, low, high, 16 if high > 1 else 0, flat, 0))
+
+
+class Devices:
+    def __init__(self):
+        self.keyboard = create('agent-input keyboard mouse', 0x1209, 0x0001, keyboard_setup)
+        self.pad = create('Microsoft X-Box 360 pad', 0x045E, 0x028E, pad_setup)
+        self.lock = threading.Lock()
+        time.sleep(1)  # let the compositor and SDL see the new devices before the first event
+
+    def emit(self, fd, kind, code, value, sync=True):
+        os.write(fd, struct.pack('llHHi', 0, 0, kind, code, value))
+        if sync:
+            os.write(fd, struct.pack('llHHi', 0, 0, EV_SYN, 0, 0))
+
+    def hold(self, fd, codes, ms):
+        for code in codes:
+            self.emit(fd, EV_KEY, code, 1)
+        time.sleep(ms / 1000)
+        for code in reversed(codes):
+            self.emit(fd, EV_KEY, code, 0)
+
+    def run(self, op, args):
+        with self.lock:
+            if op in ('key', 'chord'):
+                codes = [key_code(name) for name in args[0].split('+')]
+                self.hold(self.keyboard, codes, int(args[1]) if len(args) > 1 else 80)
+            elif op == 'type':
+                for char in args[0]:
+                    shift = char.isupper() or char in SHIFTED
+                    name = TYPED.get(SHIFTED.get(char, char), SHIFTED.get(char, char).lower())
+                    self.hold(self.keyboard, ([KEYS['shift-left']] if shift else []) + [key_code(name)], 30)
+                    time.sleep(0.03)
+            elif op == 'button':
+                ms = int(args[1]) if len(args) > 1 else 90
+                if args[0] in HAT:
+                    code, value = HAT[args[0]]
+                    self.emit(self.pad, EV_ABS, code, value); time.sleep(ms / 1000); self.emit(self.pad, EV_ABS, code, 0)
+                else:
+                    self.hold(self.pad, [require(BUTTONS, args[0], 'pad button')], ms)
+            elif op == 'stick':
+                code, invert = require(AXES, args[0], 'stick')
+                value = float(args[1])
+                raw = int(max(0, min(1, value)) * 255) if invert is None else int(max(-1, min(1, -value if invert else value)) * 32767)
+                self.emit(self.pad, EV_ABS, code, raw)
+                ms = int(args[2]) if len(args) > 2 else 0
+                if ms > 0:
+                    time.sleep(ms / 1000); self.emit(self.pad, EV_ABS, code, 0)
+            elif op == 'move':
+                self.emit(self.keyboard, EV_REL, 0, int(args[0]), False); self.emit(self.keyboard, EV_REL, 1, int(args[1]))
+            elif op == 'click':
+                button = require(MOUSE, args[0] if args else 'left', 'mouse button')
+                self.hold(self.keyboard, [button], int(args[1]) if len(args) > 1 else 80)
+            elif op == 'wheel':
+                self.emit(self.keyboard, EV_REL, 8, int(args[0]))
+            else:
+                raise ValueError(f'unknown command {op}')
+
+
+def require(table, name, what):
+    if name not in table:
+        raise ValueError(f'unknown {what} {name!r}; known: {", ".join(sorted(table))}')
+    return table[name]
+
+
+def key_code(name):
+    name = name.lower()
+    return int(name[5:]) if name.startswith('code:') else require(KEYS, name, 'key')
+
+
+def serve():
+    os.makedirs(STATE, mode=0o700, exist_ok=True)
+    devices = Devices()
+
+    class Handler(socketserver.StreamRequestHandler):
+        def handle(self):
+            request = json.loads(self.rfile.readline())
+            try:
+                devices.run(request['op'], request['args'])
+                reply = {'ok': True}
+            except Exception as error:  # keep the devices alive through a bad request
+                reply = {'ok': False, 'error': str(error)}
+            self.wfile.write((json.dumps(reply) + '\n').encode())
+
+    if os.path.exists(SOCKET):
+        os.unlink(SOCKET)
+    server = socketserver.ThreadingUnixStreamServer(SOCKET, Handler)
+    os.chmod(SOCKET, 0o600)
+    with open(PIDFILE, 'w') as pid:
+        pid.write(str(os.getpid()))
+    server.serve_forever()
+
+
+# ---- client -------------------------------------------------------------------------------------------------
+
+def running():
+    try:
+        pid = int(open(PIDFILE).read())
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError):
+        return None
+
+
+def start():
+    if running():
+        return print(f'agent-input: running (pid {running()}), socket {SOCKET}')
+    os.makedirs(STATE, mode=0o700, exist_ok=True)
+    with open(LOG, 'a') as log:
+        subprocess.Popen([sys.executable, os.path.abspath(__file__), '--serve'], stdout=log, stderr=log,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(50):
+        if os.path.exists(SOCKET) and running():
+            return print(f'agent-input: started (pid {running()}); virtual keyboard+mouse and Xbox 360 pad are live')
+        time.sleep(0.1)
+    sys.exit(f'agent-input: the daemon did not start; see {LOG}')
+
+
+def send(op, args):
+    if not running():
+        start()
+    with socket.socket(socket.AF_UNIX) as client:
+        client.connect(SOCKET)
+        client.sendall((json.dumps({'op': op, 'args': args}) + '\n').encode())
+        reply = json.loads(client.makefile().readline())
+    if not reply['ok']:
+        sys.exit(f'agent-input: {reply["error"]}')
+
+
+def held():
+    """Every input device's held keys (EVIOCGKEY), so a key stuck down on another virtual device is visible."""
+    names = {code: name for name, code in KEYS.items()}
+    for entry in sorted(os.listdir('/dev/input')):
+        if not entry.startswith('event'):
+            continue
+        try:
+            fd = os.open(f'/dev/input/{entry}', os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            continue
+        try:
+            name = fcntl.ioctl(fd, 0x80000000 | (256 << 16) | (0x45 << 8) | 0x06, bytes(256)).split(b'\0')[0].decode(errors='replace')
+            state = fcntl.ioctl(fd, 0x80000000 | (96 << 16) | (0x45 << 8) | 0x18, bytes(96))
+        finally:
+            os.close(fd)
+        down = [code for code in range(768) if state[code // 8] >> (code % 8) & 1]
+        if down:
+            print(f'{entry} {name}: ' + ', '.join(names.get(code, f'code:{code}') for code in down))
+    print('held: done')
+
+
+def kwin_script(source):
+    env = session_env()
+    with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as script:
+        script.write(source)
+    try:
+        number = subprocess.run(['qdbus6', 'org.kde.KWin', '/Scripting', 'org.kde.kwin.Scripting.loadScript', script.name, 'agentinput'],
+                                env=env, capture_output=True, text=True, check=True).stdout.strip()
+        subprocess.run(['qdbus6', 'org.kde.KWin', f'/Scripting/Script{number}', 'org.kde.kwin.Script.run'], env=env, check=True, capture_output=True)
+        time.sleep(0.5)
+    finally:
+        subprocess.run(['qdbus6', 'org.kde.KWin', '/Scripting', 'org.kde.kwin.Scripting.unloadScript', 'agentinput'], env=env, capture_output=True)
+        os.unlink(script.name)
+
+
+def focus(text, fullscreen):
+    kwin_script('for (const w of workspace.windowList()) { if (w.caption.indexOf(%s) >= 0) { %s workspace.activeWindow = w; } }'
+                % (json.dumps(text), 'w.fullScreen = true;' if fullscreen else ''))
+
+
+def shot(path, screen):
+    subprocess.run(['spectacle', '-b', '-n', '-f' if screen else '-a', '-o', os.path.abspath(path)], env=session_env(),
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    print(os.path.abspath(path))
+
+
+def unlock():
+    sessions = subprocess.run(['loginctl', 'list-sessions', '--no-legend'], capture_output=True, text=True).stdout.split('\n')
+    for line in filter(None, sessions):
+        session = line.split()[0]
+        kind = subprocess.run(['loginctl', 'show-session', session, '-p', 'Type', '--value'], capture_output=True, text=True).stdout.strip()
+        if kind in ('wayland', 'x11'):
+            subprocess.run(['loginctl', 'unlock-session', session], check=True)
+            print(f'agent-input: unlocked session {session}')
+
+
+def main(argv):
+    if not argv or argv[0] in ('-h', '--help', 'help'):
+        return print(__doc__)
+    op, args = argv[0], argv[1:]
+    if op == '--serve':
+        return serve()
+    if op == 'start':
+        return start()
+    if op == 'status':
+        return print(f'agent-input: running (pid {running()})' if running() else 'agent-input: stopped')
+    if op == 'stop':
+        pid = running()
+        if pid:
+            os.kill(pid, 15)
+        return print('agent-input: stopped')
+    if op == 'held':
+        return held()
+    if op == 'focus':
+        return focus(args[0], '--fullscreen' in args)
+    if op == 'shot':
+        return shot(args[0], '--screen' in args)
+    if op == 'unlock':
+        return unlock()
+    if op == 'type':
+        args = [' '.join(args)]
+    send(op, args)
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

@@ -390,7 +390,8 @@ os-input` sends real keyboard and mouse input under the box's one foreground
 lease. With `"desktop": true` both work on the whole screen instead, for
 dialogs and other windows. See [Windows playtest box](playtest-windows.md#two-tiers-of-input),
 and [when something is in the way](playtest-windows.md#when-something-is-in-the-way)
-for the other ways onto the box.
+for the other ways onto the box. On the Linux agent box, `agent-input` sends real keyboard, mouse and
+pad input to any desktop window without root: see [desktop input on the Linux agent box](linux-desktop-input.md).
 
 ## Agent entry point
 
