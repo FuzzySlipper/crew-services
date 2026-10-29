@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"crew-services/internal/crewcli"
 	"crew-services/internal/fabricclient"
 )
 
@@ -132,6 +133,7 @@ type fakeFabric struct {
 	acked     []string
 	unknown   []string
 	released  []string
+	submitted []fabricclient.MessageRequest
 }
 
 func newFakeFabric() *fakeFabric {
@@ -208,6 +210,13 @@ func (f *fakeFabric) Unknown(_ context.Context, id string, _ fabricclient.Reconc
 	defer f.mu.Unlock()
 	f.unknown = append(f.unknown, id)
 	return fabricclient.Delivery{DeliveryID: id, State: "outcome_unknown"}, nil
+}
+
+func (f *fakeFabric) Submit(_ context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.submitted = append(f.submitted, request)
+	return fabricclient.SubmittedMessage{Message: fabricclient.Message{MessageID: "m-" + request.OperationID, SenderAddress: request.SenderAddress, RecipientAddress: request.RecipientAddress}}, nil
 }
 
 func claimFor(address, deliveryID, action string) fabricclient.Claim {
@@ -528,5 +537,35 @@ func TestSessionStartHookReturnsTheAddress(t *testing.T) {
 	}
 	if out := RunHook(context.Background(), "http://127.0.0.1:1", "session-start", HookInput{SessionID: "thread-1"}); out != nil {
 		t.Fatalf("hook printed %q with the driver down", out)
+	}
+}
+
+func TestSendGoesOutFromTheThreadsOwnAddressAndWhoListsIt(t *testing.T) {
+	fabric := newFakeFabric()
+	native := newFakeNative()
+	d := testDriver(t, fabric, native)
+	address := loadedThread(t, d, native, "thread-send", "idle")
+	native.threads["thread-send"] = NativeThread{ID: "thread-send", CWD: "/work", Status: "idle", AcceptsInput: true}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := d.Send(context.Background(), crewcli.SendRequest{From: "thread-send", To: "s/other", Body: "hello", Policy: "next_step", OperationID: "op-1"})
+	if err != nil || result.From != address || result.To != "s/other" {
+		t.Fatalf("send=%#v %v", result, err)
+	}
+	if got := fabric.submitted; len(got) != 1 || got[0].SenderAddress != address || got[0].ProducerID != d.cfg.AdapterID || got[0].ActivationPolicy != "next_step" || got[0].OperationID != "op-1" {
+		t.Fatalf("submitted=%#v", got)
+	}
+	var found bool
+	for _, s := range d.Sessions() {
+		if s.NativeID == "thread-send" {
+			found = s.Address == address && s.Cwd == "/work" && s.State == "idle" && s.Runtime == "codex"
+		}
+	}
+	if !found {
+		t.Fatalf("who=%#v", d.Sessions())
+	}
+	if _, err := d.Send(context.Background(), crewcli.SendRequest{From: "thread-send", To: "s/other", OperationID: "op-2"}); err == nil {
+		t.Fatal("empty body accepted")
 	}
 }

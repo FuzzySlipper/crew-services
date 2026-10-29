@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"crew-services/internal/crewcli"
 	"crew-services/internal/fabricclient"
 )
 
@@ -55,6 +56,7 @@ type Fabric interface {
 	Release(ctx context.Context, deliveryID string, request fabricclient.ClaimTokenRequest) (fabricclient.Delivery, error)
 	Acknowledge(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
 	Unknown(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
+	Submit(ctx context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error)
 }
 
 // target is one fabric address the driver delivers to and the thread behind it.
@@ -87,6 +89,7 @@ type Driver struct {
 	targets map[string]*target      // address -> target
 	skipped map[string]struct{}     // threads that cannot take input
 	started []string                // threads announced by thread/started
+	read    map[string]NativeThread // latest read of each thread, for who
 	passes  int
 	pumpMu  sync.Mutex
 	wake    chan struct{}
@@ -102,7 +105,7 @@ const notLoadedEvery = 15
 const forgetAfter = 14 * 24 * time.Hour
 
 func NewDriver(fabric Fabric, now func() time.Time, cfg Config, log *slog.Logger) (*Driver, error) {
-	d := &Driver{fabric: fabric, now: now, cfg: cfg, log: log, known: map[string]*knownThread{}, targets: map[string]*target{}, skipped: map[string]struct{}{}, wake: make(chan struct{}, 1)}
+	d := &Driver{fabric: fabric, now: now, cfg: cfg, log: log, known: map[string]*knownThread{}, read: map[string]NativeThread{}, targets: map[string]*target{}, skipped: map[string]struct{}{}, wake: make(chan struct{}, 1)}
 	if err := d.load(); err != nil {
 		return nil, err
 	}
@@ -202,6 +205,52 @@ func (d *Driver) RegisterThread(ctx context.Context, threadID string) (string, e
 	}
 	d.Poke()
 	return binding.Address, err
+}
+
+// Sessions lists the threads this driver delivers to, with what the last
+// pass read about them.
+func (d *Driver) Sessions() []crewcli.SessionInfo {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := []crewcli.SessionInfo{}
+	for _, t := range d.targets {
+		info := crewcli.SessionInfo{Address: t.Address, Runtime: "codex", NativeID: t.ThreadID, State: "unknown"}
+		if known, ok := d.known[t.ThreadID]; ok {
+			info.SeenAt = known.SeenAt
+		}
+		if thread, ok := d.read[t.ThreadID]; ok {
+			info.Cwd = thread.CWD
+			info.State = map[string]string{"active": "busy", "idle": "idle", "notLoaded": "not loaded", "systemError": "error"}[thread.Status]
+			if info.State == "" {
+				info.State = thread.Status
+			}
+		}
+		out = append(out, info)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Address < out[j].Address })
+	return out
+}
+
+// Send submits a message from a thread's own session address. The policy
+// defaults to next_turn; operationID makes retries of one send idempotent.
+func (d *Driver) Send(ctx context.Context, request crewcli.SendRequest) (crewcli.SendResult, error) {
+	from, ok := d.Address(request.From)
+	if !ok {
+		// A thread the daemon has but the driver has not reached yet.
+		address, err := d.RegisterThread(ctx, request.From)
+		if err != nil {
+			return crewcli.SendResult{}, fmt.Errorf("thread %s has no crew address: %w", request.From, err)
+		}
+		from = address
+	}
+	if request.To == "" || strings.TrimSpace(request.Body) == "" || request.OperationID == "" {
+		return crewcli.SendResult{}, errors.New("to, body and operation_id are required")
+	}
+	submitted, err := d.fabric.Submit(ctx, fabricclient.MessageRequest{ProducerID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), OperationID: request.OperationID, SenderAddress: from, RecipientAddress: request.To, Body: request.Body, ActivationPolicy: request.Policy, TTL: "24h"})
+	if err != nil {
+		return crewcli.SendResult{}, err
+	}
+	return crewcli.SendResult{MessageID: submitted.Message.MessageID, From: from, To: request.To, Replayed: submitted.Replayed}, nil
 }
 
 // Address returns a registered thread's session address.
@@ -427,6 +476,9 @@ func (d *Driver) Pump(ctx context.Context) error {
 			}
 			status = thread.Status
 			statuses[t.ThreadID] = status
+			d.mu.Lock()
+			d.read[t.ThreadID] = thread
+			d.mu.Unlock()
 		}
 		availability := availabilityOf(status)
 		if availability == "" {

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"crew-services/internal/crewcli"
 	"crew-services/internal/fabricclient"
 )
 
@@ -32,6 +33,7 @@ type Fabric interface {
 	Release(ctx context.Context, deliveryID string, request fabricclient.ClaimTokenRequest) (fabricclient.Delivery, error)
 	Acknowledge(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
 	Unknown(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
+	Submit(ctx context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error)
 }
 
 type Config struct {
@@ -145,6 +147,36 @@ func (d *Driver) Address(sessionID string) (string, bool) {
 		return "", false
 	}
 	return s.Address, true
+}
+
+// Sessions lists the sessions this driver has registered.
+func (d *Driver) Sessions() []crewcli.SessionInfo {
+	out := []crewcli.SessionInfo{}
+	for _, s := range d.snapshot() {
+		state := d.availability(s)
+		if state == "inactive" {
+			state = "exited"
+		}
+		out = append(out, crewcli.SessionInfo{Address: s.Address, Runtime: "claude-code", NativeID: s.SessionID, Cwd: s.Cwd, State: state, SeenAt: s.SeenAt})
+	}
+	return out
+}
+
+// Send submits a message from a registered session's own address. The policy
+// defaults to next_turn; operationID makes retries of one send idempotent.
+func (d *Driver) Send(ctx context.Context, request crewcli.SendRequest) (crewcli.SendResult, error) {
+	from, ok := d.Address(request.From)
+	if !ok {
+		return crewcli.SendResult{}, fmt.Errorf("session %s is not registered with crew-claude; it registers when it starts or resumes", request.From)
+	}
+	if request.To == "" || strings.TrimSpace(request.Body) == "" || request.OperationID == "" {
+		return crewcli.SendResult{}, errors.New("to, body and operation_id are required")
+	}
+	submitted, err := d.fabric.Submit(ctx, fabricclient.MessageRequest{ProducerID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), OperationID: request.OperationID, SenderAddress: from, RecipientAddress: request.To, Body: request.Body, ActivationPolicy: request.Policy, TTL: "24h"})
+	if err != nil {
+		return crewcli.SendResult{}, err
+	}
+	return crewcli.SendResult{MessageID: submitted.Message.MessageID, From: from, To: request.To, Replayed: submitted.Replayed}, nil
 }
 
 // Poke asks the run loop for an immediate delivery pass.

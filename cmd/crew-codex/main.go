@@ -4,6 +4,9 @@
 //
 //	crew-codex [serve] [flags]   run the driver
 //	crew-codex hook EVENT        run as a Codex hook (session-start, fill-notify)
+//	crew-codex send [--policy P] --to ADDRESS TEXT...
+//	                             send a crew message from this Codex thread
+//	crew-codex who               list Claude and Codex sessions with crew addresses
 package main
 
 import (
@@ -20,6 +23,7 @@ import (
 	"time"
 
 	"crew-services/internal/codexadapter"
+	"crew-services/internal/crewcli"
 	"crew-services/internal/fabricclient"
 )
 
@@ -30,6 +34,9 @@ func main() {
 		// A hook must never break the thread: always exit 0.
 		hook(os.Args[2:])
 		return
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "send" || os.Args[1] == "who") {
+		os.Exit(crewcli.Main(context.Background(), os.Args[1:], os.Getenv("CODEX_THREAD_ID"), driverURL(), os.Stdin, os.Stdout, os.Stderr))
 	}
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "serve" {
@@ -53,13 +60,16 @@ func hook(args []string) {
 	if json.Unmarshal(data, &in) != nil {
 		return
 	}
-	driverURL := os.Getenv("CREW_CODEX_URL")
-	if driverURL == "" {
-		driverURL = defaultDriverURL
-	}
-	if out := codexadapter.RunHook(context.Background(), driverURL, args[0], in); len(out) > 0 {
+	if out := codexadapter.RunHook(context.Background(), driverURL(), args[0], in); len(out) > 0 {
 		_, _ = os.Stdout.Write(out)
 	}
+}
+
+func driverURL() string {
+	if url := os.Getenv("CREW_CODEX_URL"); url != "" {
+		return url
+	}
+	return defaultDriverURL
 }
 
 func serve(args []string) error {

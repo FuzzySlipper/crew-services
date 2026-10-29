@@ -3,6 +3,9 @@
 //
 //	crew-claude serve [flags]   run the driver
 //	crew-claude hook EVENT      run as a Claude Code hook (session-start, busy, idle, fill-notify)
+//	crew-claude send [--policy P] --to ADDRESS TEXT...
+//	                            send a crew message from this Claude session
+//	crew-claude who             list Claude and Codex sessions with crew addresses
 package main
 
 import (
@@ -22,6 +25,7 @@ import (
 	"time"
 
 	"crew-services/internal/claudedriver"
+	"crew-services/internal/crewcli"
 	"crew-services/internal/fabricclient"
 )
 
@@ -32,6 +36,9 @@ func main() {
 		// A hook must never break the session: always exit 0.
 		hook(os.Args[2:])
 		return
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "send" || os.Args[1] == "who") {
+		os.Exit(crewcli.Main(context.Background(), os.Args[1:], os.Getenv("CLAUDE_CODE_SESSION_ID"), driverURL(), os.Stdin, os.Stdout, os.Stderr))
 	}
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "serve" {
@@ -55,14 +62,17 @@ func hook(args []string) {
 	if json.Unmarshal(data, &in) != nil {
 		return
 	}
-	driverURL := os.Getenv("CREW_CLAUDE_URL")
-	if driverURL == "" {
-		driverURL = defaultDriverURL
-	}
-	out := claudedriver.RunHook(context.Background(), driverURL, args[0], in, claudedriver.HookEnv{Socket: os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"), Token: os.Getenv("CLAUDE_CODE_MESSAGING_TOKEN")})
+	out := claudedriver.RunHook(context.Background(), driverURL(), args[0], in, claudedriver.HookEnv{Socket: os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"), Token: os.Getenv("CLAUDE_CODE_MESSAGING_TOKEN")})
 	if len(out) > 0 {
 		_, _ = os.Stdout.Write(out)
 	}
+}
+
+func driverURL() string {
+	if url := os.Getenv("CREW_CLAUDE_URL"); url != "" {
+		return url
+	}
+	return defaultDriverURL
 }
 
 func serve(args []string) error {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"crew-services/internal/claudedriver"
+	"crew-services/internal/crewcli"
 	"crew-services/internal/fabricclient"
 	"crew-services/internal/httpapi"
 	"crew-services/internal/service"
@@ -250,5 +251,48 @@ func TestHooksRegisterAndFillNotifyAddress(t *testing.T) {
 	}
 	if out := claudedriver.RunHook(h.ctx, "http://127.0.0.1:1", "session-start", claudedriver.HookInput{SessionID: "x"}, claudedriver.HookEnv{Socket: sock}); len(out) != 0 {
 		t.Fatalf("unreachable driver produced output: %s", out)
+	}
+}
+
+func TestSendFromASessionReachesAnotherSession(t *testing.T) {
+	h := newHarness(t)
+	alice, err := h.driver.RegisterSession(h.ctx, "alice", h.socket(t, "alice"), "", "/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobSock := h.socket(t, "bob")
+	bob, err := h.driver.RegisterSession(h.ctx, "bob", bobSock, "", "/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(claudedriver.Handler(h.driver))
+	defer api.Close()
+	sessions, skipped := crewcli.Who(h.ctx, map[string]string{"claude-code": api.URL})
+	if len(skipped) != 0 || len(sessions) != 2 {
+		t.Fatalf("who=%#v skipped=%v", sessions, skipped)
+	}
+	to, err := crewcli.Resolve("bo", sessions)
+	if err != nil || to != bob {
+		t.Fatalf("resolve=%q %v, want %q", to, err, bob)
+	}
+	if _, err := crewcli.Resolve("s/", sessions); err == nil {
+		t.Fatal("an ambiguous prefix resolved")
+	}
+	result, err := crewcli.Send(h.ctx, api.URL, crewcli.SendRequest{From: "alice", To: to, Body: "your turn", Policy: "next_step", OperationID: "a-1"})
+	if err != nil || result.From != alice {
+		t.Fatalf("send=%#v %v", result, err)
+	}
+	again, err := crewcli.Send(h.ctx, api.URL, crewcli.SendRequest{From: "alice", To: to, Body: "your turn", Policy: "next_step", OperationID: "a-1"})
+	if err != nil || !again.Replayed || again.MessageID != result.MessageID {
+		t.Fatalf("retry=%#v %v", again, err)
+	}
+	h.driver.SetBusy("bob", true)
+	h.driver.Pump(h.ctx)
+	sent := h.inbox.sent()
+	if len(sent) != 1 || sent[0].socket != bobSock || sent[0].priority != claudedriver.PriorityNext || !strings.Contains(sent[0].text, "Crew message from "+alice) {
+		t.Fatalf("delivered=%#v", sent)
+	}
+	if _, err := crewcli.Send(h.ctx, api.URL, crewcli.SendRequest{From: "stranger", To: to, Body: "x", OperationID: "s-1"}); err == nil {
+		t.Fatal("an unregistered session sent a message")
 	}
 }

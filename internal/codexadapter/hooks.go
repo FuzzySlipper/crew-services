@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"crew-services/internal/crewcli"
 )
 
 // Handler is the driver's loopback API for its Codex hooks.
@@ -31,6 +33,22 @@ func Handler(d *Driver) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"address": address})
+	})
+	mux.HandleFunc("GET /v1/sessions", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"sessions": d.Sessions()})
+	})
+	mux.HandleFunc("POST /v1/send", func(w http.ResponseWriter, r *http.Request) {
+		var body crewcli.SendRequest
+		if err := json.NewDecoder(io.LimitReader(r.Body, 512*1024)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+			return
+		}
+		result, err := d.Send(r.Context(), body)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /v1/threads/{threadID}/address", func(w http.ResponseWriter, r *http.Request) {
 		address, ok := d.Address(r.PathValue("threadID"))
