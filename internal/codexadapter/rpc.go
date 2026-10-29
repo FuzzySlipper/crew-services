@@ -16,22 +16,6 @@ import (
 	"time"
 )
 
-// AppServer is the small Codex protocol surface owned by this adapter. It is
-// injectable so delivery behavior can be proven without Codex.
-type AppServer interface {
-	Initialize(context.Context) error
-	ListThreads(context.Context) ([]NativeThread, error)
-	ReadThread(context.Context, string) (NativeThread, error)
-	StartTurn(context.Context, string, string, string) (StartedTurn, error)
-	QueueAdd(context.Context, string, string, string) (QueuedSubmission, error)
-	QueueList(context.Context, string) ([]QueuedSubmission, error)
-	StartThread(context.Context, string) (NativeThread, error)
-	Interrupt(context.Context, string, string) error
-	Interactions() []NativeInteraction
-	RespondInteraction(context.Context, string, string, json.RawMessage) error
-	Close() error
-}
-
 // NativeInteraction is an ephemeral server-to-client request. It is valid
 // only for this App Server child and is deliberately never projected as a
 // durable recoverable fact.
@@ -44,43 +28,28 @@ type NativeInteraction struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
-// NativeThread is the canonical history shape consumed by the projector.
-// It accepts only fields this adapter owns; omitted native item types stay out
-// of the durable projection rather than becoming an accidental transcript API.
+// NativeThread is the thread metadata this package reads from Codex.
 type NativeThread struct {
 	ID     string
 	Name   string
 	CWD    string
 	Status string
-	Turns  []NativeTurn
-	// UpdatedAt is Codex's last-update time in whole Unix seconds; zero when
-	// the App Server did not report one.
-	UpdatedAt int64
+	// Ephemeral threads are never written to disk and cannot take queued input.
+	Ephemeral bool
+	// AcceptsInput is false for threads such as subagents that refuse direct
+	// user input.
+	AcceptsInput bool
 }
 
-type NativeTurn struct {
-	ID     string
-	Status string
-	Items  []NativeItem
-}
-
-type NativeItem struct {
-	ID       string
-	Type     string
-	Text     string
-	ClientID string
-	Content  []NativeContent
-}
-
-// QueuedSubmission is the durable non-interrupting native admission receipt.
-// ClientUserMessageID is adapter-owned and survives App Server restarts.
+// QueuedSubmission is Codex's receipt for one queued turn. The app-server
+// keeps its queue on disk and starts queued items itself once the thread is
+// idle; ClientUserMessageID is the caller's own identity for the item.
 type QueuedSubmission struct {
 	ID                  string
 	ClientUserMessageID string
 }
 
-// StartedTurn is the native acceptance receipt for the one first turn that
-// materializes a control-created thread.
+// StartedTurn is the native acceptance receipt for an ephemeral review turn.
 type StartedTurn struct{ ID string }
 
 type EphemeralThreadOptions struct {
@@ -114,17 +83,16 @@ type EphemeralServer interface {
 	Close() error
 }
 
-type NativeContent struct {
-	Type string
-	Text string
-}
-
-// StdioAppServer supervises one child and a line-delimited JSON-RPC 2.0
-// connection. Notifications are read and intentionally ignored: canonical
-// thread/read history is the replayable projection authority.
+// StdioAppServer is one JSON-RPC 2.0 connection to a Codex app-server: either
+// a child it started over stdio (crew-review's ephemeral workers) or the
+// shared daemon's control socket (DialDaemon), which it never supervises.
 type StdioAppServer struct {
 	command *exec.Cmd
-	stdin   io.WriteCloser
+	// stdin writes one JSON-RPC message per Write call.
+	stdin io.WriteCloser
+	// notify, when set, sees every server notification. It runs on the read
+	// loop and must not block.
+	notify func(method string, params json.RawMessage)
 
 	mu               sync.Mutex
 	writeMu          sync.Mutex
@@ -199,32 +167,24 @@ func StartStdioAppServer(command string, args []string) (*StdioAppServer, error)
 		_ = cmd.Process.Kill()
 		return nil, fmt.Errorf("random interaction prefix: %w", err)
 	}
-	toolContext, toolCancel := context.WithCancel(context.Background())
-	client := &StdioAppServer{command: cmd, stdin: stdin, pending: make(map[string]chan rpcResponse), interactions: make(map[string]pendingInteraction), turnWaiters: make(map[string]chan TurnCompletion), completedTurns: make(map[string]TurnCompletion), ephemeralThreads: make(map[string]struct{}), done: make(chan struct{}), handshakeDone: make(chan struct{}), instancePrefix: hex.EncodeToString(prefix), toolContext: toolContext, toolCancel: toolCancel}
+	client := newAppServerClient(stdin, hex.EncodeToString(prefix))
+	client.command = cmd
 	go client.read(stdout)
 	go client.wait()
 	return client, nil
 }
 
-// StartThread creates a new native Codex thread. The current protocol has no
-// client operation identity for this effect, so a lost response is surfaced to
-// the caller rather than retried into a duplicate thread.
-func (c *StdioAppServer) StartThread(ctx context.Context, cwd string) (NativeThread, error) {
-	var response struct {
-		Thread nativeThreadWire `json:"thread"`
-	}
-	if err := c.awaitInitialized(ctx); err != nil {
-		return NativeThread{}, err
-	}
-	params := map[string]any{}
-	params["dynamicTools"] = crewDynamicTools()
-	if cwd != "" {
-		params["cwd"] = cwd
-	}
-	if err := c.sendRequest(ctx, "thread/start", params, &response); err != nil {
-		return NativeThread{}, err
-	}
-	return response.Thread.native(), nil
+func newAppServerClient(writer io.WriteCloser, instancePrefix string) *StdioAppServer {
+	toolContext, toolCancel := context.WithCancel(context.Background())
+	return &StdioAppServer{stdin: writer, pending: make(map[string]chan rpcResponse), interactions: make(map[string]pendingInteraction), turnWaiters: make(map[string]chan TurnCompletion), completedTurns: make(map[string]TurnCompletion), ephemeralThreads: make(map[string]struct{}), done: make(chan struct{}), handshakeDone: make(chan struct{}), instancePrefix: instancePrefix, toolContext: toolContext, toolCancel: toolCancel}
+}
+
+// SetNotificationHandler installs a non-blocking observer for server
+// notifications.
+func (c *StdioAppServer) SetNotificationHandler(handler func(method string, params json.RawMessage)) {
+	c.mu.Lock()
+	c.notify = handler
+	c.mu.Unlock()
 }
 
 func (c *StdioAppServer) StartEphemeralThread(ctx context.Context, options EphemeralThreadOptions) (NativeThread, error) {
@@ -314,10 +274,6 @@ func (c *StdioAppServer) ForgetThread(threadID string) {
 	}
 }
 
-func crewDynamicTools() []map[string]any {
-	return []map[string]any{{"type": "function", "name": "crew_directory", "description": "List routable Crew addresses.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{}}}, {"type": "function", "name": "crew_message", "description": "Send one Crew message to a routable address.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"recipient": map[string]any{"type": "string"}, "text": map[string]any{"type": "string"}, "reply_to_message_id": map[string]any{"type": "string"}}, "required": []string{"recipient", "text"}}}}
-}
-
 // Interrupt requests cancellation of one exact active native turn.
 func (c *StdioAppServer) Interrupt(ctx context.Context, threadID, turnID string) error {
 	if err := c.awaitInitialized(ctx); err != nil {
@@ -336,43 +292,6 @@ func (c *StdioAppServer) Interactions() []NativeInteraction {
 		values = append(values, value.value)
 	}
 	return values
-}
-
-// RespondInteraction settles one exact pending server request with its native
-// response payload. A stale, resolved, or wrong-type interaction is rejected.
-func (c *StdioAppServer) RespondInteraction(ctx context.Context, id, method string, response json.RawMessage) error {
-	c.responseMu.Lock()
-	defer c.responseMu.Unlock()
-	c.mu.Lock()
-	pending, found := c.interactions[id]
-	if !found || pending.method != method {
-		c.mu.Unlock()
-		return errors.New("Codex interaction is no longer pending")
-	}
-	c.mu.Unlock()
-	if !json.Valid(response) {
-		return errors.New("Codex interaction response must be JSON")
-	}
-	message, err := json.Marshal(struct {
-		JSONRPC string          `json:"jsonrpc"`
-		ID      json.RawMessage `json:"id"`
-		Result  json.RawMessage `json:"result"`
-	}{JSONRPC: "2.0", ID: pending.id, Result: response})
-	if err != nil {
-		return err
-	}
-	c.writeMu.Lock()
-	err = writeFrame(c.stdin, append(message, '\n'))
-	c.writeMu.Unlock()
-	if err != nil {
-		return fmt.Errorf("write %s interaction response: %w", method, err)
-	}
-	c.mu.Lock()
-	if current, found := c.interactions[id]; found && rpcIDKey(current.id) == rpcIDKey(pending.id) && current.method == method {
-		delete(c.interactions, id)
-	}
-	c.mu.Unlock()
-	return nil
 }
 
 func (c *StdioAppServer) Initialize(ctx context.Context) error {
@@ -405,53 +324,6 @@ func (c *StdioAppServer) Initialize(ctx context.Context) error {
 	}
 	c.completeHandshake(err)
 	return err
-}
-
-func (c *StdioAppServer) ListThreads(ctx context.Context) ([]NativeThread, error) {
-	var response struct {
-		Data []nativeThreadWire `json:"data"`
-	}
-	if err := c.awaitInitialized(ctx); err != nil {
-		return nil, err
-	}
-	if err := c.sendRequest(ctx, "thread/list", map[string]any{}, &response); err != nil {
-		return nil, err
-	}
-	threads := make([]NativeThread, 0, len(response.Data))
-	for _, thread := range response.Data {
-		threads = append(threads, thread.native())
-	}
-	return threads, nil
-}
-
-func (c *StdioAppServer) ReadThread(ctx context.Context, threadID string) (NativeThread, error) {
-	return c.readThread(ctx, threadID, true)
-}
-
-// ReadThreadSummary reads a thread's metadata without its turns, which costs
-// a small fraction of a full history read.
-func (c *StdioAppServer) ReadThreadSummary(ctx context.Context, threadID string) (NativeThread, error) {
-	return c.readThread(ctx, threadID, false)
-}
-
-func (c *StdioAppServer) readThread(ctx context.Context, threadID string, includeTurns bool) (NativeThread, error) {
-	var response struct {
-		Thread nativeThreadWire `json:"thread"`
-	}
-	if err := c.awaitInitialized(ctx); err != nil {
-		return NativeThread{}, err
-	}
-	if err := c.sendRequest(ctx, "thread/read", map[string]any{"threadId": threadID, "includeTurns": includeTurns}, &response); err != nil {
-		return NativeThread{}, err
-	}
-	return response.Thread.native(), nil
-}
-
-// StartTurn materializes one control-created thread. Its caller supplies an
-// adapter-owned clientUserMessageId so a lost RPC response can be reconciled
-// from canonical thread history without replaying the prompt.
-func (c *StdioAppServer) StartTurn(ctx context.Context, threadID, text, clientUserMessageID string) (StartedTurn, error) {
-	return c.startTurn(ctx, threadID, text, clientUserMessageID, EphemeralTurnOptions{})
 }
 
 func (c *StdioAppServer) startTurn(ctx context.Context, threadID, text, clientUserMessageID string, options EphemeralTurnOptions) (StartedTurn, error) {
@@ -671,7 +543,7 @@ func (c *StdioAppServer) Close() error {
 	c.closing = true
 	c.mu.Unlock()
 	_ = c.stdin.Close()
-	if c.command.Process != nil {
+	if c.command != nil && c.command.Process != nil {
 		_ = c.command.Process.Kill()
 	}
 	select {
@@ -692,6 +564,14 @@ func (c *StdioAppServer) handleFrame(frame []byte) {
 	}
 	if err := json.Unmarshal(frame, &envelope); err != nil {
 		return
+	}
+	if envelope.Method != "" && len(envelope.ID) == 0 {
+		c.mu.Lock()
+		notify := c.notify
+		c.mu.Unlock()
+		if notify != nil {
+			notify(envelope.Method, envelope.Params)
+		}
 	}
 	if envelope.Method == "item/completed" {
 		var completed struct {
@@ -909,33 +789,14 @@ func (c *StdioAppServer) terminalErrorLocked() error {
 }
 
 type nativeThreadWire struct {
-	ID        string  `json:"id"`
-	Name      *string `json:"name"`
-	CWD       string  `json:"cwd"`
-	UpdatedAt int64   `json:"updatedAt"`
-	Status    struct {
+	ID                   string  `json:"id"`
+	Name                 *string `json:"name"`
+	CWD                  string  `json:"cwd"`
+	Ephemeral            bool    `json:"ephemeral"`
+	CanAcceptDirectInput *bool   `json:"canAcceptDirectInput"`
+	Status               struct {
 		Type string `json:"type"`
 	} `json:"status"`
-	Turns []nativeTurnWire `json:"turns"`
-}
-
-type nativeTurnWire struct {
-	ID     string           `json:"id"`
-	Status string           `json:"status"`
-	Items  []nativeItemWire `json:"items"`
-}
-
-type nativeItemWire struct {
-	ID       string              `json:"id"`
-	Type     string              `json:"type"`
-	Text     string              `json:"text"`
-	ClientID string              `json:"clientId"`
-	Content  []nativeContentWire `json:"content"`
-}
-
-type nativeContentWire struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
 }
 
 func (v nativeThreadWire) native() NativeThread {
@@ -943,17 +804,6 @@ func (v nativeThreadWire) native() NativeThread {
 	if v.Name != nil {
 		name = *v.Name
 	}
-	turns := make([]NativeTurn, 0, len(v.Turns))
-	for _, turn := range v.Turns {
-		items := make([]NativeItem, 0, len(turn.Items))
-		for _, item := range turn.Items {
-			content := make([]NativeContent, 0, len(item.Content))
-			for _, part := range item.Content {
-				content = append(content, NativeContent{Type: part.Type, Text: part.Text})
-			}
-			items = append(items, NativeItem{ID: item.ID, Type: item.Type, Text: item.Text, ClientID: item.ClientID, Content: content})
-		}
-		turns = append(turns, NativeTurn{ID: turn.ID, Status: turn.Status, Items: items})
-	}
-	return NativeThread{ID: v.ID, Name: name, CWD: v.CWD, Status: v.Status.Type, Turns: turns, UpdatedAt: v.UpdatedAt}
+	accepts := v.CanAcceptDirectInput == nil || *v.CanAcceptDirectInput
+	return NativeThread{ID: v.ID, Name: name, CWD: v.CWD, Status: v.Status.Type, Ephemeral: v.Ephemeral, AcceptsInput: accepts}
 }

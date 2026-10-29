@@ -47,7 +47,7 @@ func TestStdioAppServerChildExitFailsRequest(t *testing.T) {
 	if err := client.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ListThreads(ctx); err == nil {
+	if _, err := client.LoadedThreads(ctx); err == nil {
 		t.Fatal("request succeeded after close")
 	}
 }
@@ -238,92 +238,6 @@ func TestStdioAppServerInitializedNotificationRejectsFailedAndShortWrites(t *tes
 	}
 }
 
-func TestStdioAppServerInteractionResponseRejectsFailedAndShortWrites(t *testing.T) {
-	tests := []struct {
-		name  string
-		write func([]byte) (int, error)
-	}{
-		{name: "write error", write: func([]byte) (int, error) { return 0, errors.New("stdin closed") }},
-		{name: "short write", write: func(p []byte) (int, error) { return len(p) - 1, nil }},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			client := &StdioAppServer{
-				stdin:         &testWriteCloser{write: test.write},
-				pending:       map[string]chan rpcResponse{},
-				interactions:  map[string]pendingInteraction{},
-				done:          make(chan struct{}),
-				handshakeDone: make(chan struct{}),
-			}
-			client.interactions["interaction-1"] = pendingInteraction{id: json.RawMessage(`7`), method: "item/approval"}
-			if err := client.RespondInteraction(context.Background(), "interaction-1", "item/approval", json.RawMessage(`{"decision":"accept"}`)); err == nil {
-				t.Fatal("interaction response accepted incomplete write")
-			}
-			if len(client.Interactions()) != 1 {
-				t.Fatal("failed interaction response removed the pending interaction")
-			}
-		})
-	}
-}
-
-func TestStdioAppServerStartTurnUsesClientMessageIdentity(t *testing.T) {
-	writes := make(chan []byte, 1)
-	client := &StdioAppServer{
-		stdin: &testWriteCloser{write: func(value []byte) (int, error) {
-			writes <- append([]byte(nil), value...)
-			return len(value), nil
-		}},
-		pending:           map[string]chan rpcResponse{},
-		interactions:      map[string]pendingInteraction{},
-		done:              make(chan struct{}),
-		handshakeDone:     make(chan struct{}),
-		handshakeComplete: true,
-	}
-	result := make(chan struct {
-		turn StartedTurn
-		err  error
-	}, 1)
-	go func() {
-		turn, err := client.StartTurn(context.Background(), "thread-1", "first prompt", "crew-delivery:delivery-1")
-		result <- struct {
-			turn StartedTurn
-			err  error
-		}{turn, err}
-	}()
-
-	var request struct {
-		Method string `json:"method"`
-		Params struct {
-			ThreadID            string `json:"threadId"`
-			ClientUserMessageID string `json:"clientUserMessageId"`
-			Input               []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"input"`
-		} `json:"params"`
-	}
-	select {
-	case wire := <-writes:
-		if err := json.Unmarshal(wire, &request); err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("turn/start was not written")
-	}
-	if request.Method != "turn/start" || request.Params.ThreadID != "thread-1" || request.Params.ClientUserMessageID != "crew-delivery:delivery-1" || len(request.Params.Input) != 1 || request.Params.Input[0].Type != "text" || request.Params.Input[0].Text != "first prompt" {
-		t.Fatalf("turn/start request = %+v", request)
-	}
-	client.handleFrame([]byte(`{"jsonrpc":"2.0","id":1,"result":{"turn":{"id":"turn-1"}}}`))
-	select {
-	case value := <-result:
-		if value.err != nil || value.turn.ID != "turn-1" {
-			t.Fatalf("turn/start result = %+v, %v", value.turn, value.err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("turn/start did not receive its response")
-	}
-}
-
 func TestStdioAppServerEphemeralTurnUsesConfiguredModelAndEffort(t *testing.T) {
 	writes := make(chan []byte, 1)
 	client := &StdioAppServer{
@@ -400,7 +314,7 @@ done`})
 	go func() { initialized <- client.Initialize(ctx) }()
 	waitForHandshakeStart(t, client)
 	listed := make(chan error, 1)
-	go func() { _, err := client.ListThreads(ctx); listed <- err }()
+	go func() { _, err := client.LoadedThreads(ctx); listed <- err }()
 	select {
 	case err := <-listed:
 		t.Fatalf("thread/list completed before initialized notification: %v", err)
@@ -506,58 +420,5 @@ func TestTurnCompletionCarriesErrorAndLastAgentMessage(t *testing.T) {
 	}
 	if len(client.agentMessages) != 0 {
 		t.Fatalf("agent messages retained after completion: %#v", client.agentMessages)
-	}
-}
-
-func TestStdioAppServerReadThreadSummaryOmitsTurnsAndKeepsUpdateTime(t *testing.T) {
-	writes := make(chan []byte, 1)
-	client := &StdioAppServer{
-		stdin: &testWriteCloser{write: func(value []byte) (int, error) {
-			writes <- append([]byte(nil), value...)
-			return len(value), nil
-		}},
-		pending:           map[string]chan rpcResponse{},
-		interactions:      map[string]pendingInteraction{},
-		done:              make(chan struct{}),
-		handshakeDone:     make(chan struct{}),
-		handshakeComplete: true,
-	}
-	result := make(chan struct {
-		thread NativeThread
-		err    error
-	}, 1)
-	go func() {
-		thread, err := client.ReadThreadSummary(context.Background(), "thread-1")
-		result <- struct {
-			thread NativeThread
-			err    error
-		}{thread, err}
-	}()
-	var request struct {
-		Method string `json:"method"`
-		Params struct {
-			ThreadID     string `json:"threadId"`
-			IncludeTurns *bool  `json:"includeTurns"`
-		} `json:"params"`
-	}
-	select {
-	case wire := <-writes:
-		if err := json.Unmarshal(wire, &request); err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("thread/read was not written")
-	}
-	if request.Method != "thread/read" || request.Params.ThreadID != "thread-1" || request.Params.IncludeTurns == nil || *request.Params.IncludeTurns {
-		t.Fatalf("thread/read request = %+v", request)
-	}
-	client.handleFrame([]byte(`{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-1","name":"Scout","cwd":"/w","status":{"type":"idle"},"updatedAt":1788488497,"turns":[]}}}`))
-	select {
-	case value := <-result:
-		if value.err != nil || value.thread.ID != "thread-1" || value.thread.Status != "idle" || value.thread.UpdatedAt != 1788488497 {
-			t.Fatalf("thread/read result = %+v, %v", value.thread, value.err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("thread/read did not receive its response")
 	}
 }

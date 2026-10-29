@@ -33,6 +33,17 @@ type Binding struct {
 	Capabilities []string `json:"capabilities"`
 }
 
+// BindRequest points a named address at a target the adapter drives.
+// ExpectedRevision is required to change an existing binding.
+type BindRequest struct {
+	ActorAdapterID   string   `json:"actor_adapter_id"`
+	LeaseToken       string   `json:"lease_token"`
+	AdapterID        string   `json:"adapter_id"`
+	TargetRef        string   `json:"target_ref"`
+	Capabilities     []string `json:"capabilities"`
+	ExpectedRevision *int64   `json:"expected_revision,omitempty"`
+}
+
 type SessionAddressRequest struct {
 	AdapterID    string   `json:"adapter_id"`
 	LeaseToken   string   `json:"lease_token"`
@@ -73,13 +84,17 @@ type Delivery struct {
 	State               string `json:"state"`
 	DispatchAction      string `json:"dispatch_action"`
 	NativeAttemptRef    string `json:"native_attempt_ref"`
+	ClaimOwnerAdapterID string `json:"claim_owner_adapter_id,omitempty"`
 }
 
 type Claim struct {
-	Claimed        bool      `json:"claimed"`
-	Reason         string    `json:"reason,omitempty"`
-	Message        *Message  `json:"message,omitempty"`
-	Delivery       *Delivery `json:"delivery,omitempty"`
+	Claimed  bool      `json:"claimed"`
+	Reason   string    `json:"reason,omitempty"`
+	Message  *Message  `json:"message,omitempty"`
+	Delivery *Delivery `json:"delivery,omitempty"`
+	// Head is the address's blocking head delivery when nothing was claimed,
+	// for example one still dispatching after a driver crash.
+	Head           *Delivery `json:"head,omitempty"`
 	ClaimToken     string    `json:"claim_token,omitempty"`
 	DispatchAction string    `json:"dispatch_action,omitempty"`
 }
@@ -145,6 +160,12 @@ func (c *Client) Renew(ctx context.Context, adapterID, token string, duration ti
 func (c *Client) RegisterSessionAddress(ctx context.Context, request SessionAddressRequest) (Binding, error) {
 	var binding Binding
 	err := c.call(ctx, http.MethodPost, "/v1/session-addresses", request, &binding)
+	return binding, err
+}
+
+func (c *Client) Bind(ctx context.Context, address string, request BindRequest) (Binding, error) {
+	var binding Binding
+	err := c.call(ctx, http.MethodPut, "/v1/addresses/"+url.PathEscape(address)+"/binding", request, &binding)
 	return binding, err
 }
 

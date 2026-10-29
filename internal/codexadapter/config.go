@@ -1,20 +1,21 @@
-// Package codexadapter contains the Codex-specific edge adapter. It deliberately
-// depends on the runtime-neutral HTTP boundary rather than on the hub's stores.
+// Package codexadapter is the Codex edge of the crew messaging fabric. Its
+// driver delivers fabric messages into threads of the shared Codex app-server
+// daemon (the one the TUI attaches to) and never owns a Codex process; its
+// stdio client also runs crew-review's ephemeral reviewer workers.
 package codexadapter
 
 import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 )
 
 const defaultAdapterID = "crew-codex"
 
-// Config is the intentionally small runtime configuration for crew-codex.
-// Mappings are explicit because discovering every thread would make an
-// observational adapter unexpectedly adopt native runtime state.
+// Config is crew-codex's runtime configuration.
 type Config struct {
 	FabricURL     string
 	AdapterID     string
@@ -22,23 +23,26 @@ type Config struct {
 	LeaseDuration time.Duration
 	PollInterval  time.Duration
 	ClaimDuration time.Duration
+	// ControlListen is the loopback address of the hook API.
 	ControlListen string
-	// StatePath persists only successful browser-created thread mappings. It is
-	// adapter state, never fabric/core state; leave empty for ephemeral tests.
-	StatePath   string
-	Command     string
-	CommandArgs []string
-	Mappings    []Mapping
+	// StatePath remembers which threads have session addresses, so mail can
+	// still wake a thread after the daemon has unloaded it. Empty keeps it in
+	// memory only.
+	StatePath string
+	// DaemonSocket is the shared Codex daemon's control socket.
+	DaemonSocket string
+	// Mappings pin named addresses to threads, in addition to the per-thread
+	// s/... session addresses.
+	Mappings []Mapping
 }
 
-// Mapping binds one public fabric address to one existing Codex thread.
+// Mapping binds one named fabric address to one Codex thread.
 type Mapping struct {
 	Address  string
 	ThreadID string
 }
 
-// Defaults returns ordinary local development values. The child is the current
-// Codex CLI App Server command and deliberately has no version constraint.
+// Defaults returns ordinary local values.
 func Defaults() Config {
 	return Config{
 		FabricURL:     "http://127.0.0.1:8787",
@@ -48,8 +52,7 @@ func Defaults() Config {
 		PollInterval:  2 * time.Second,
 		ClaimDuration: 45 * time.Second,
 		ControlListen: "127.0.0.1:8788",
-		Command:       "codex",
-		CommandArgs:   []string{"app-server", "--stdio"},
+		DaemonSocket:  DefaultDaemonSocket(),
 	}
 }
 
@@ -57,24 +60,19 @@ func Defaults() Config {
 func Parse(args []string) (Config, error) {
 	cfg := Defaults()
 	var mappings mappingFlags
-	var commandArgs stringList
 	flags := flag.NewFlagSet("crew-codex", flag.ContinueOnError)
-	flags.StringVar(&cfg.FabricURL, "fabric-url", cfg.FabricURL, "crew-services base URL")
+	flags.StringVar(&cfg.FabricURL, "fabric-url", cfg.FabricURL, "crew-messaging base URL")
 	flags.StringVar(&cfg.AdapterID, "adapter-id", cfg.AdapterID, "stable fabric adapter ID")
 	flags.StringVar(&cfg.InstanceID, "instance-id", cfg.InstanceID, "stable fabric adapter instance ID")
 	flags.DurationVar(&cfg.LeaseDuration, "lease-duration", cfg.LeaseDuration, "fabric adapter lease duration")
-	flags.DurationVar(&cfg.PollInterval, "poll-interval", cfg.PollInterval, "canonical thread reconciliation interval")
+	flags.DurationVar(&cfg.PollInterval, "poll-interval", cfg.PollInterval, "delivery pass interval")
 	flags.DurationVar(&cfg.ClaimDuration, "claim-duration", cfg.ClaimDuration, "fabric delivery claim duration")
-	flags.StringVar(&cfg.ControlListen, "control-listen", cfg.ControlListen, "loopback control API listen address")
-	flags.StringVar(&cfg.StatePath, "state", cfg.StatePath, "adapter state JSON path for created Codex threads")
-	flags.StringVar(&cfg.Command, "codex-command", cfg.Command, "Codex App Server executable")
-	flags.Var(&commandArgs, "codex-arg", "override App Server arguments; repeatable")
-	flags.Var(&mappings, "address", "explicit ADDRESS=THREAD_ID mapping; repeatable")
+	flags.StringVar(&cfg.ControlListen, "control-listen", cfg.ControlListen, "loopback address of the hook API")
+	flags.StringVar(&cfg.StatePath, "state", cfg.StatePath, "driver state JSON path (threads with session addresses)")
+	flags.StringVar(&cfg.DaemonSocket, "codex-socket", cfg.DaemonSocket, "shared Codex daemon control socket")
+	flags.Var(&mappings, "address", "pin a named ADDRESS=THREAD_ID; repeatable")
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
-	}
-	if len(commandArgs) > 0 {
-		cfg.CommandArgs = append([]string(nil), commandArgs...)
 	}
 	cfg.Mappings = append([]Mapping(nil), mappings...)
 	if err := cfg.Validate(); err != nil {
@@ -93,8 +91,8 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.InstanceID) == "" {
 		return errors.New("instance ID is required")
 	}
-	if strings.TrimSpace(c.Command) == "" {
-		return errors.New("Codex command is required")
+	if strings.TrimSpace(c.DaemonSocket) == "" {
+		return errors.New("Codex daemon socket is required")
 	}
 	if c.LeaseDuration <= 0 {
 		return errors.New("lease duration must be greater than zero")
@@ -105,11 +103,12 @@ func (c Config) Validate() error {
 	if c.ClaimDuration <= 0 {
 		return errors.New("claim duration must be greater than zero")
 	}
-	if strings.TrimSpace(c.ControlListen) == "" {
-		return errors.New("control listen address is required")
+	host, _, err := net.SplitHostPort(c.ControlListen)
+	if err != nil {
+		return fmt.Errorf("invalid control listen address: %w", err)
 	}
-	if len(c.Mappings) == 0 {
-		return errors.New("at least one -address ADDRESS=THREAD_ID mapping is required")
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return errors.New("control listen address must be a loopback address")
 	}
 	addresses := make(map[string]struct{}, len(c.Mappings))
 	threads := make(map[string]struct{}, len(c.Mappings))
@@ -139,16 +138,5 @@ func (m *mappingFlags) Set(value string) error {
 		return errors.New("address must have the form ADDRESS=THREAD_ID")
 	}
 	*m = append(*m, Mapping{Address: address, ThreadID: threadID})
-	return nil
-}
-
-type stringList []string
-
-func (s *stringList) String() string { return strings.Join(*s, " ") }
-func (s *stringList) Set(value string) error {
-	if strings.TrimSpace(value) == "" {
-		return errors.New("Codex argument must not be empty")
-	}
-	*s = append(*s, value)
 	return nil
 }
