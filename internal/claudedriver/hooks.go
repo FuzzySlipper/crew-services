@@ -26,12 +26,15 @@ func Handler(d *Driver) http.Handler {
 			Socket    string `json:"socket"`
 			Token     string `json:"token"`
 			Cwd       string `json:"cwd"`
+			// Transcript is the session's JSONL transcript, where the driver
+			// confirms that a posted message reached the conversation.
+			Transcript string `json:"transcript"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 			return
 		}
-		address, err := d.RegisterSession(r.Context(), body.SessionID, body.Socket, body.Token, body.Cwd)
+		address, err := d.RegisterSession(r.Context(), Registration{SessionID: body.SessionID, Socket: body.Socket, Token: body.Token, Cwd: body.Cwd, Transcript: body.Transcript})
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
@@ -84,10 +87,11 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 // HookInput is the part of Claude Code's hook stdin the driver reads.
 type HookInput struct {
-	SessionID string          `json:"session_id"`
-	Cwd       string          `json:"cwd"`
-	ToolName  string          `json:"tool_name"`
-	ToolInput json.RawMessage `json:"tool_input"`
+	SessionID      string          `json:"session_id"`
+	Cwd            string          `json:"cwd"`
+	TranscriptPath string          `json:"transcript_path"`
+	ToolName       string          `json:"tool_name"`
+	ToolInput      json.RawMessage `json:"tool_input"`
 }
 
 // HookEnv carries the session's own inbox, which Claude Code exports to hooks.
@@ -111,7 +115,7 @@ func RunHook(ctx context.Context, driverURL, event string, in HookInput, env Hoo
 		var out struct {
 			Address string `json:"address"`
 		}
-		if err := client.do(ctx, http.MethodPost, "/v1/sessions", map[string]string{"session_id": in.SessionID, "socket": env.Socket, "token": env.Token, "cwd": in.Cwd}, &out); err != nil || out.Address == "" {
+		if err := client.do(ctx, http.MethodPost, "/v1/sessions", map[string]string{"session_id": in.SessionID, "socket": env.Socket, "token": env.Token, "cwd": in.Cwd, "transcript": in.TranscriptPath}, &out); err != nil || out.Address == "" {
 			return nil
 		}
 		return hookOutput("SessionStart", map[string]any{"additionalContext": fmt.Sprintf("Your crew messaging address is %s. Crew services (for example crew-review, when a review check gate fails) send messages to this session there; pass it as notify_address where a tool accepts one.", out.Address)})

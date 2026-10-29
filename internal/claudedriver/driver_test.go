@@ -2,12 +2,14 @@ package claudedriver_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -23,20 +25,40 @@ import (
 
 type posted struct{ socket, msgID, text, priority string }
 
-// fakeInbox records posts. A socket listed in gone refuses connections, and
-// one in failPost accepts the connection but fails the write.
+// Session behaviours after a frame is written, as the transcript shows them.
+const (
+	// takes: the message is queued and enters the conversation at once.
+	takes = ""
+	// queues: queued in memory but not yet in the conversation.
+	queues = "queues"
+	// ignores: the write succeeds but the session holds, refuses or drops it.
+	ignores = "ignores"
+)
+
+// fakeInbox records posts and writes what Claude Code would write to the
+// session transcript. A socket listed in gone refuses connections, and one in
+// failPost accepts the connection but fails the write.
 type fakeInbox struct {
-	mu       sync.Mutex
-	posts    []posted
-	gone     map[string]bool
-	failPost map[string]bool
+	mu          sync.Mutex
+	posts       []posted
+	gone        map[string]bool
+	failPost    map[string]bool
+	behaviour   map[string]string
+	transcripts map[string]string
+	// onDial runs after a connection opens, standing in for a hook that
+	// arrives between the claim and the write.
+	onDial func(socket string)
 }
 
 func (f *fakeInbox) Dial(_ context.Context, socket, _ string) (claudedriver.Conn, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.gone[socket] {
+	gone, onDial := f.gone[socket], f.onDial
+	f.mu.Unlock()
+	if gone {
 		return nil, claudedriver.ErrInboxGone
+	}
+	if onDial != nil {
+		onDial(socket)
 	}
 	return &fakeConn{inbox: f, socket: socket}, nil
 }
@@ -59,14 +81,61 @@ func (c *fakeConn) Post(msgID, text, priority string) error {
 		return errors.New("broken pipe")
 	}
 	c.inbox.posts = append(c.inbox.posts, posted{c.socket, msgID, text, priority})
+	path := c.inbox.transcripts[c.socket]
+	switch c.inbox.behaviour[c.socket] {
+	case takes:
+		appendTranscript(path, enqueueLine(text), insertedLine(msgID, text))
+	case queues:
+		appendTranscript(path, enqueueLine(text))
+	}
 	return nil
 }
 func (c *fakeConn) Close() error { return nil }
 
+func enqueueLine(text string) string {
+	line, _ := json.Marshal(map[string]any{"type": "queue-operation", "operation": "enqueue", "content": text})
+	return string(line)
+}
+
+func insertedLine(msgID, text string) string {
+	line, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]string{"role": "user", "content": text}, "origin": map[string]string{"kind": "peer", "from": "unknown", "msg_id": msgID}})
+	return string(line)
+}
+
+func appendTranscript(path string, lines ...string) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	for _, line := range lines {
+		_, _ = f.WriteString(line + "\n")
+	}
+}
+
+type clock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *clock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *clock) Advance(d time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(d)
+	c.mu.Unlock()
+}
+
 type harness struct {
 	ctx      context.Context
+	svc      *service.Service
 	fabric   *fabricclient.Client
 	inbox    *fakeInbox
+	clock    *clock
 	driver   *claudedriver.Driver
 	producer fabricclient.Lease
 	dir      string
@@ -91,7 +160,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{ctx: ctx, fabric: fabric, inbox: &fakeInbox{gone: map[string]bool{}, failPost: map[string]bool{}}, dir: dir}
+	h := &harness{ctx: ctx, svc: svc, fabric: fabric, clock: &clock{now: time.Now()}, inbox: &fakeInbox{gone: map[string]bool{}, failPost: map[string]bool{}, behaviour: map[string]string{}, transcripts: map[string]string{}}, dir: dir}
 	h.driver = h.newDriver(t)
 	if err := h.driver.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -108,7 +177,7 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) newDriver(t *testing.T) *claudedriver.Driver {
 	t.Helper()
-	d, err := claudedriver.New(h.fabric, h.inbox, time.Now, claudedriver.Config{AdapterID: "claude-code", InstanceID: "test", StatePath: filepath.Join(h.dir, "state.json"), LeaseDuration: time.Minute}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	d, err := claudedriver.New(h.fabric, h.inbox, h.clock.Now, claudedriver.Config{AdapterID: "claude-code", InstanceID: "test", StatePath: filepath.Join(h.dir, "state.json"), LeaseDuration: time.Minute, AcceptTimeout: time.Minute, QueuedTimeout: time.Hour}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +195,25 @@ func (h *harness) socket(t *testing.T, name string) string {
 	return path
 }
 
+// register registers a session whose transcript is <session>.jsonl, written
+// by the fake inbox for posts to sock.
+func (h *harness) register(t *testing.T, d *claudedriver.Driver, sessionID, sock string) string {
+	t.Helper()
+	transcript := h.transcript(sessionID)
+	h.inbox.mu.Lock()
+	h.inbox.transcripts[sock] = transcript
+	h.inbox.mu.Unlock()
+	address, err := d.RegisterSession(h.ctx, claudedriver.Registration{SessionID: sessionID, Socket: sock, Token: "tok", Cwd: "/work/" + sessionID, Transcript: transcript})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return address
+}
+
+func (h *harness) transcript(sessionID string) string {
+	return filepath.Join(h.dir, sessionID+".jsonl")
+}
+
 func (h *harness) send(t *testing.T, op, to, body, policy string) {
 	t.Helper()
 	sender := service.SessionAddress("producer", "sender")
@@ -134,36 +222,76 @@ func (h *harness) send(t *testing.T, op, to, body, policy string) {
 	}
 }
 
+// states lists each delivery to address as "state" or "state/reason", in
+// acceptance order.
+func (h *harness) states(t *testing.T, address string) []string {
+	t.Helper()
+	all, err := h.svc.ListDeliveries(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].AcceptedSequence < all[j].AcceptedSequence })
+	out := []string{}
+	for _, d := range all {
+		if d.RecipientAddress != address {
+			continue
+		}
+		state := d.State
+		if d.TerminalReason != "" && d.State != "delivered" {
+			state += "/" + d.TerminalReason
+		}
+		out = append(out, state)
+	}
+	return out
+}
+
+func TestCapabilitiesLeaveBusyNextTurnInTheFabric(t *testing.T) {
+	for _, capability := range claudedriver.Capabilities {
+		if capability == "durable_next_turn" {
+			t.Fatal("crew-claude claims durable_next_turn, but Claude Code's follow-up queue is in memory")
+		}
+	}
+}
+
 func TestDeliveryFollowsPolicyAndTurnState(t *testing.T) {
 	h := newHarness(t)
 	sock := h.socket(t, "one")
-	address, err := h.driver.RegisterSession(h.ctx, "session-1", sock, "tok", "/work")
-	if err != nil || !strings.HasPrefix(address, "s/") {
-		t.Fatalf("register=%q %v", address, err)
+	address := h.register(t, h.driver, "session-1", sock)
+	if !strings.HasPrefix(address, "s/") {
+		t.Fatalf("address=%q", address)
 	}
-	again, err := h.driver.RegisterSession(h.ctx, "session-1", sock, "tok", "/work")
-	if err != nil || again != address {
-		t.Fatalf("re-register=%q %v, want %q", again, err, address)
+	if again := h.register(t, h.driver, "session-1", sock); again != address {
+		t.Fatalf("re-register=%q, want %q", again, address)
 	}
 
-	// Busy: next_step reaches the active turn; next_turn waits for it to end.
+	// Busy: next_step reaches the active turn; next_turn waits in the fabric.
 	h.driver.SetBusy("session-1", true)
 	h.send(t, "step", address, "gate failed", "next_step")
 	h.send(t, "turn", address, "later please", "next_turn")
 	h.driver.Pump(h.ctx)
 	sent := h.inbox.sent()
-	if len(sent) != 2 || sent[0].priority != claudedriver.PriorityNext || sent[1].priority != claudedriver.PriorityLater {
+	if len(sent) != 1 || sent[0].priority != claudedriver.PriorityNext {
 		t.Fatalf("busy posts=%#v", sent)
 	}
 	if !strings.Contains(sent[0].text, "gate failed") || !strings.Contains(sent[0].text, "Crew message from s/") {
 		t.Fatalf("rendered text=%q", sent[0].text)
+	}
+	if got := h.states(t, address); len(got) != 2 || got[0] != "delivered" || got[1] != "queued" {
+		t.Fatalf("states while busy=%v", got)
+	}
+
+	// Idle: the next_turn message goes out as a new turn.
+	h.driver.SetBusy("session-1", false)
+	h.driver.Pump(h.ctx)
+	sent = h.inbox.sent()
+	if len(sent) != 2 || sent[1].priority != claudedriver.PriorityLater || !strings.Contains(sent[1].text, "later please") {
+		t.Fatalf("idle posts=%#v", sent)
 	}
 	if len(sent[0].msgID) != 36 || sent[0].msgID == sent[1].msgID {
 		t.Fatalf("native ids=%q %q", sent[0].msgID, sent[1].msgID)
 	}
 
 	// no_wake waits while idle and goes out with the next busy turn.
-	h.driver.SetBusy("session-1", false)
 	h.send(t, "quiet", address, "fyi", "no_wake")
 	h.driver.Pump(h.ctx)
 	if n := len(h.inbox.sent()); n != 2 {
@@ -174,15 +302,103 @@ func TestDeliveryFollowsPolicyAndTurnState(t *testing.T) {
 	if sent := h.inbox.sent(); len(sent) != 3 || sent[2].priority != claudedriver.PriorityNext {
 		t.Fatalf("no_wake while busy=%#v", sent)
 	}
+	if got := h.states(t, address); strings.Join(got, ",") != "delivered,delivered,delivered" {
+		t.Fatalf("final states=%v", got)
+	}
+}
+
+// Busy next_turn work is never handed to the session's in-memory queue: it
+// stays queued in the fabric through an exit and a resume, and goes out once
+// the resumed session reports idle.
+func TestBusyNextTurnWaitsForIdleAcrossExit(t *testing.T) {
+	h := newHarness(t)
+	sock := h.socket(t, "five")
+	address := h.register(t, h.driver, "session-5", sock)
+	h.driver.SetBusy("session-5", true)
+	h.send(t, "turn", address, "after your turn", "next_turn")
+	h.driver.Pump(h.ctx)
+	if n := len(h.inbox.sent()); n != 0 {
+		t.Fatalf("next_turn posted to a busy session (%d posts)", n)
+	}
+	// The session exits mid-turn: no Stop hook, the socket disappears.
+	if err := os.Remove(sock); err != nil {
+		t.Fatal(err)
+	}
+	h.driver.Pump(h.ctx)
+	if got := h.states(t, address); len(got) != 1 || got[0] != "queued" {
+		t.Fatalf("after exit=%v", got)
+	}
+
+	// It resumes under a new process; a restarted driver takes over. The
+	// resumed session starts a turn before the driver gets a pass in.
+	resumed := h.socket(t, "five-resumed")
+	driver := h.newDriver(t)
+	if err := driver.Start(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.register(t, driver, "session-5", resumed); got != address {
+		t.Fatalf("resume address=%q, want %q", got, address)
+	}
+	driver.SetBusy("session-5", true)
+	driver.Pump(h.ctx)
+	if n := len(h.inbox.sent()); n != 0 {
+		t.Fatalf("next_turn posted to the resumed busy session (%d posts)", n)
+	}
+	driver.SetBusy("session-5", false)
+	driver.Pump(h.ctx)
+	sent := h.inbox.sent()
+	if len(sent) != 1 || sent[0].socket != resumed || sent[0].priority != claudedriver.PriorityLater {
+		t.Fatalf("after idle=%#v", sent)
+	}
+	if got := h.states(t, address); len(got) != 1 || got[0] != "delivered" {
+		t.Fatalf("final=%v", got)
+	}
+}
+
+// A Stop hook that lands in the middle of a pass must not let a no_wake
+// message out as a "next" frame, which would start a turn on the idle
+// session.
+func TestStopDuringAPassHoldsNoWake(t *testing.T) {
+	h := newHarness(t)
+	sock := h.socket(t, "six")
+	address := h.register(t, h.driver, "session-6", sock)
+	h.driver.SetBusy("session-6", true)
+	h.send(t, "step", address, "gate failed", "next_step")
+	h.send(t, "quiet-1", address, "fyi one", "no_wake")
+	h.send(t, "quiet-2", address, "fyi two", "no_wake")
+
+	// Stop arrives while the first message is being posted: the rest of the
+	// batch must see the session idle.
+	posts := 0
+	h.inbox.onDial = func(string) {
+		posts++
+		if posts == 2 {
+			// Between the second claim (made busy) and its write.
+			h.driver.SetBusy("session-6", false)
+		}
+	}
+	h.driver.Pump(h.ctx)
+	sent := h.inbox.sent()
+	if len(sent) != 1 || !strings.Contains(sent[0].text, "gate failed") {
+		t.Fatalf("posts=%#v", sent)
+	}
+	if got := h.states(t, address); strings.Join(got, ",") != "delivered,queued,queued" {
+		t.Fatalf("states=%v", got)
+	}
+
+	// The next busy turn takes both.
+	h.inbox.onDial = nil
+	h.driver.SetBusy("session-6", true)
+	h.driver.Pump(h.ctx)
+	if sent := h.inbox.sent(); len(sent) != 3 || sent[1].priority != claudedriver.PriorityNext || sent[2].priority != claudedriver.PriorityNext {
+		t.Fatalf("busy again=%#v", sent)
+	}
 }
 
 func TestExitedSessionKeepsWorkUntilItResumes(t *testing.T) {
 	h := newHarness(t)
 	sock := h.socket(t, "two")
-	address, err := h.driver.RegisterSession(h.ctx, "session-2", sock, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	address := h.register(t, h.driver, "session-2", sock)
 	// Socket file gone: the session is not running, so nothing is claimed.
 	if err := os.Remove(sock); err != nil {
 		t.Fatal(err)
@@ -204,30 +420,129 @@ func TestExitedSessionKeepsWorkUntilItResumes(t *testing.T) {
 	if err := driver.Start(h.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := driver.RegisterSession(h.ctx, "session-2", resumed, "", ""); err != nil || got != address {
-		t.Fatalf("resume register=%q %v, want %q", got, err, address)
+	if got := h.register(t, driver, "session-2", resumed); got != address {
+		t.Fatalf("resume register=%q, want %q", got, address)
 	}
 	driver.Pump(h.ctx)
 	sent := h.inbox.sent()
 	if len(sent) != 1 || sent[0].socket != resumed || !strings.Contains(sent[0].text, "while you were away") {
 		t.Fatalf("after resume=%#v", sent)
 	}
+	if got := h.states(t, address); len(got) != 1 || got[0] != "delivered" {
+		t.Fatalf("final=%v", got)
+	}
+}
+
+// A successful socket write is not acceptance. The session may hold, refuse
+// or drop the frame; only the transcript shows it took the message.
+func TestAcceptanceComesFromTheTranscript(t *testing.T) {
+	h := newHarness(t)
+	sock := h.socket(t, "seven")
+	address := h.register(t, h.driver, "session-7", sock)
+	h.driver.SetBusy("session-7", true)
+
+	// Rejected after a successful write: nothing in the transcript.
+	h.inbox.behaviour[sock] = ignores
+	h.send(t, "refused", address, "refused one", "next_step")
+	h.send(t, "behind", address, "behind it", "next_step")
+	h.driver.Pump(h.ctx)
+	if got := h.states(t, address); strings.Join(got, ",") != "dispatching,queued" {
+		t.Fatalf("after write=%v", got)
+	}
+	h.clock.Advance(59 * time.Second)
+	h.driver.Pump(h.ctx)
+	if got := h.states(t, address); got[0] != "dispatching" {
+		t.Fatalf("settled before the bound=%v", got)
+	}
+	// Past the bound it becomes outcome_unknown without a second write, and
+	// the next message goes out.
+	h.inbox.behaviour[sock] = takes
+	h.clock.Advance(2 * time.Second)
+	h.driver.Pump(h.ctx)
+	sent := h.inbox.sent()
+	if len(sent) != 2 || !strings.Contains(sent[1].text, "behind it") {
+		t.Fatalf("posts=%#v", sent)
+	}
+	if got := h.states(t, address); strings.Join(got, ",") != "outcome_unknown/native_outcome_unknown,delivered" {
+		t.Fatalf("after bound=%v", got)
+	}
+
+	// Queued but lost when the process exits before it enters the
+	// conversation.
+	h.inbox.behaviour[sock] = queues
+	h.send(t, "lost", address, "lost on exit", "next_step")
+	h.driver.Pump(h.ctx)
+	h.clock.Advance(10 * time.Minute)
+	h.driver.Pump(h.ctx)
+	if got := h.states(t, address); got[2] != "dispatching" {
+		t.Fatalf("a queued message timed out like an unqueued one: %v", got)
+	}
+	if err := os.Remove(sock); err != nil {
+		t.Fatal(err)
+	}
+	h.driver.Pump(h.ctx)
+	if got := h.states(t, address); got[2] != "outcome_unknown/native_outcome_unknown" {
+		t.Fatalf("after exit=%v", got)
+	}
+	if n := len(h.inbox.sent()); n != 3 {
+		t.Fatalf("posts=%d, want 3", n)
+	}
+}
+
+// A message that enters the conversation late (behind a long tool call) is
+// acknowledged then, including by a restarted driver; the msg_id quoted in a
+// tool result does not count.
+func TestLateTranscriptEntryIsAcknowledgedAfterRestart(t *testing.T) {
+	h := newHarness(t)
+	sock := h.socket(t, "eight")
+	address := h.register(t, h.driver, "session-8", sock)
+	h.driver.SetBusy("session-8", true)
+	h.inbox.behaviour[sock] = queues
+	h.send(t, "slow", address, "behind a long tool call", "next_step")
+	h.driver.Pump(h.ctx)
+	sent := h.inbox.sent()
+	if len(sent) != 1 {
+		t.Fatalf("posts=%#v", sent)
+	}
+	msgID := sent[0].msgID
+	quote, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []map[string]string{{"type": "tool_result", "content": "msg_id " + msgID}}}})
+	appendTranscript(h.transcript("session-8"), string(quote))
+
+	driver := h.newDriver(t)
+	if err := driver.Start(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	driver.Pump(h.ctx)
+	if got := h.states(t, address); got[0] != "dispatching" {
+		t.Fatalf("a quoted msg_id settled the delivery: %v", got)
+	}
+	appendTranscript(h.transcript("session-8"), insertedLine(msgID, sent[0].text))
+	driver.Pump(h.ctx)
+	if got := h.states(t, address); got[0] != "delivered" {
+		t.Fatalf("after the transcript entry=%v", got)
+	}
+	if n := len(h.inbox.sent()); n != 1 {
+		t.Fatalf("reposted (%d posts)", n)
+	}
 }
 
 func TestFailedWriteIsNotRedelivered(t *testing.T) {
 	h := newHarness(t)
 	sock := h.socket(t, "three")
-	address, err := h.driver.RegisterSession(h.ctx, "session-3", sock, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	address := h.register(t, h.driver, "session-3", sock)
+	h.driver.SetBusy("session-3", true)
 	h.inbox.failPost[sock] = true
 	h.send(t, "lost", address, "maybe seen", "next_step")
 	h.driver.Pump(h.ctx)
 	h.inbox.failPost[sock] = false
 	h.driver.Pump(h.ctx)
+	h.clock.Advance(2 * time.Minute)
+	h.driver.Pump(h.ctx)
 	if n := len(h.inbox.sent()); n != 0 {
 		t.Fatalf("an ambiguous post was retried blindly (%d posts)", n)
+	}
+	if got := h.states(t, address); len(got) != 1 || got[0] != "outcome_unknown/native_outcome_unknown" {
+		t.Fatalf("states=%v", got)
 	}
 }
 
@@ -256,15 +571,9 @@ func TestHooksRegisterAndFillNotifyAddress(t *testing.T) {
 
 func TestSendFromASessionReachesAnotherSession(t *testing.T) {
 	h := newHarness(t)
-	alice, err := h.driver.RegisterSession(h.ctx, "alice", h.socket(t, "alice"), "", "/a")
-	if err != nil {
-		t.Fatal(err)
-	}
+	alice := h.register(t, h.driver, "alice", h.socket(t, "alice"))
 	bobSock := h.socket(t, "bob")
-	bob, err := h.driver.RegisterSession(h.ctx, "bob", bobSock, "", "/b")
-	if err != nil {
-		t.Fatal(err)
-	}
+	bob := h.register(t, h.driver, "bob", bobSock)
 	api := httptest.NewServer(claudedriver.Handler(h.driver))
 	defer api.Close()
 	sessions, skipped := crewcli.Who(h.ctx, map[string]string{"claude-code": api.URL})

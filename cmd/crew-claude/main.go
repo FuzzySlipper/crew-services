@@ -87,6 +87,9 @@ func serve(args []string) error {
 	// A stable instance ID lets a restarted driver take over its own lease
 	// instead of waiting for the previous process's lease to expire.
 	instanceID := flags.String("instance-id", "crew-claude-local", "stable fabric adapter instance ID")
+	projectsDir := flags.String("projects", filepath.Join(home, ".claude/projects"), "Claude Code transcript root, for sessions that registered without a transcript path")
+	acceptTimeout := flags.Duration("accept-timeout", 2*time.Minute, "how long a posted message may go unqueued in the session transcript before it becomes outcome_unknown")
+	queuedTimeout := flags.Duration("queued-timeout", 6*time.Hour, "how long a queued message may wait to enter the conversation before it becomes outcome_unknown")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -102,7 +105,7 @@ func serve(args []string) error {
 		return err
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	driver, err := claudedriver.New(fabric, claudedriver.SocketInbox{}, time.Now, claudedriver.Config{AdapterID: *adapterID, InstanceID: *instanceID, StatePath: *statePath, LeaseDuration: *leaseDuration}, log)
+	driver, err := claudedriver.New(fabric, claudedriver.SocketInbox{}, time.Now, claudedriver.Config{AdapterID: *adapterID, InstanceID: *instanceID, StatePath: *statePath, LeaseDuration: *leaseDuration, ProjectsDir: *projectsDir, AcceptTimeout: *acceptTimeout, QueuedTimeout: *queuedTimeout}, log)
 	if err != nil {
 		return err
 	}

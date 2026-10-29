@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"crew-services/internal/crewcli"
@@ -20,8 +21,11 @@ import (
 )
 
 // Capabilities this driver advertises on every session binding. It cannot
-// start a Claude Code process, so it never claims wake_inactive.
-var Capabilities = []string{"deliver_next_step", "deliver_when_idle", "durable_next_turn"}
+// start a Claude Code process, so it never claims wake_inactive. It does not
+// claim durable_next_turn either: Claude Code's own follow-up queue is in
+// memory, so next_turn work for a busy session stays in the fabric until the
+// Stop hook reports the session idle.
+var Capabilities = []string{"deliver_next_step", "deliver_when_idle"}
 
 // Fabric is the part of the fabric API the driver uses.
 type Fabric interface {
@@ -42,6 +46,16 @@ type Config struct {
 	StatePath     string
 	LeaseDuration time.Duration
 	ClaimDuration time.Duration
+	// ProjectsDir is Claude Code's transcript root (~/.claude/projects), used
+	// when a session registered without a transcript path.
+	ProjectsDir string
+	// AcceptTimeout bounds how long a posted message may go without the
+	// transcript showing the session took it into its queue before the
+	// delivery becomes outcome_unknown.
+	AcceptTimeout time.Duration
+	// QueuedTimeout bounds how long a message the session queued may wait to
+	// enter the conversation (for example behind a long tool call).
+	QueuedTimeout time.Duration
 }
 
 // Session is the driver-private record for one Claude Code session. The
@@ -52,10 +66,37 @@ type Session struct {
 	Socket     string    `json:"socket"`
 	Token      string    `json:"token,omitempty"`
 	Cwd        string    `json:"cwd,omitempty"`
+	Transcript string    `json:"transcript,omitempty"`
 	Address    string    `json:"address"`
 	Generation int64     `json:"generation"`
 	Busy       bool      `json:"busy"`
 	SeenAt     time.Time `json:"seen_at"`
+}
+
+// Registration is what a SessionStart hook reports about a session.
+type Registration struct {
+	SessionID  string
+	Socket     string
+	Token      string
+	Cwd        string
+	Transcript string
+}
+
+// Dispatch is a message posted to a session's inbox and not yet settled. The
+// socket accepting the frame says nothing about whether the session took it,
+// so the delivery stays dispatching until the session's transcript shows the
+// message in the conversation.
+type Dispatch struct {
+	DeliveryID string    `json:"delivery_id"`
+	MessageID  string    `json:"message_id"`
+	MsgID      string    `json:"msg_id"`
+	Ref        string    `json:"native_attempt_ref"`
+	SessionID  string    `json:"session_id"`
+	Socket     string    `json:"socket"`
+	Transcript string    `json:"transcript"`
+	Offset     int64     `json:"offset"`
+	Enqueued   bool      `json:"enqueued,omitempty"`
+	PostedAt   time.Time `json:"posted_at"`
 }
 
 type Driver struct {
@@ -71,8 +112,10 @@ type Driver struct {
 	mu       sync.Mutex
 	lease    fabricclient.Lease
 	sessions map[string]*Session
-	pumpMu   sync.Mutex
-	wake     chan struct{}
+	// dispatches are keyed by delivery ID.
+	dispatches map[string]*Dispatch
+	pumpMu     sync.Mutex
+	wake       chan struct{}
 }
 
 func New(fabric Fabric, inbox Inbox, now func() time.Time, cfg Config, log *slog.Logger) (*Driver, error) {
@@ -82,7 +125,13 @@ func New(fabric Fabric, inbox Inbox, now func() time.Time, cfg Config, log *slog
 	if cfg.ClaimDuration == 0 {
 		cfg.ClaimDuration = time.Minute
 	}
-	d := &Driver{fabric: fabric, inbox: inbox, now: now, cfg: cfg, log: log, sessions: map[string]*Session{}, wake: make(chan struct{}, 1)}
+	if cfg.AcceptTimeout == 0 {
+		cfg.AcceptTimeout = 2 * time.Minute
+	}
+	if cfg.QueuedTimeout == 0 {
+		cfg.QueuedTimeout = 6 * time.Hour
+	}
+	d := &Driver{fabric: fabric, inbox: inbox, now: now, cfg: cfg, log: log, sessions: map[string]*Session{}, dispatches: map[string]*Dispatch{}, wake: make(chan struct{}, 1)}
 	if err := d.load(); err != nil {
 		return nil, err
 	}
@@ -109,16 +158,20 @@ func (d *Driver) leaseToken() string {
 }
 
 // RegisterSession records a session's inbox and returns its crew address.
-func (d *Driver) RegisterSession(ctx context.Context, sessionID, socket, token, cwd string) (string, error) {
-	if sessionID == "" || socket == "" {
+func (d *Driver) RegisterSession(ctx context.Context, r Registration) (string, error) {
+	if r.SessionID == "" || r.Socket == "" {
 		return "", errors.New("session_id and socket are required")
 	}
-	binding, err := d.fabric.RegisterSessionAddress(ctx, fabricclient.SessionAddressRequest{AdapterID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), NativeKey: sessionID, Capabilities: Capabilities})
+	binding, err := d.fabric.RegisterSessionAddress(ctx, fabricclient.SessionAddressRequest{AdapterID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), NativeKey: r.SessionID, Capabilities: Capabilities})
 	if err != nil {
 		return "", fmt.Errorf("register session address: %w", err)
 	}
+	transcript := r.Transcript
+	if transcript == "" {
+		transcript = defaultTranscript(d.cfg.ProjectsDir, r.Cwd, r.SessionID)
+	}
 	d.mu.Lock()
-	d.sessions[sessionID] = &Session{SessionID: sessionID, Socket: socket, Token: token, Cwd: cwd, Address: binding.Address, Generation: binding.Generation, SeenAt: d.now().UTC()}
+	d.sessions[r.SessionID] = &Session{SessionID: r.SessionID, Socket: r.Socket, Token: r.Token, Cwd: r.Cwd, Transcript: transcript, Address: binding.Address, Generation: binding.Generation, SeenAt: d.now().UTC()}
 	err = d.saveLocked()
 	d.mu.Unlock()
 	d.Poke()
@@ -228,13 +281,14 @@ func (d *Driver) renew(ctx context.Context) error {
 }
 
 // Pump makes one delivery pass over every registered session, draining each
-// session's eligible work in order.
+// session's eligible work in order. Each delivery reads the session's turn
+// state afresh, since a hook can change it in the middle of a pass.
 func (d *Driver) Pump(ctx context.Context) {
 	d.pumpMu.Lock()
 	defer d.pumpMu.Unlock()
 	for _, s := range d.snapshot() {
 		for i := 0; i < 20; i++ {
-			delivered, err := d.deliverOne(ctx, s)
+			delivered, err := d.deliverOne(ctx, s.SessionID)
 			if err != nil {
 				d.log.Warn("delivery pass failed", "session", s.SessionID, "address", s.Address, "error", err)
 			}
@@ -256,6 +310,17 @@ func (d *Driver) snapshot() []Session {
 	return out
 }
 
+// session returns the current record of one session.
+func (d *Driver) session(sessionID string) (Session, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s, ok := d.sessions[sessionID]
+	if !ok {
+		return Session{}, false
+	}
+	return *s, true
+}
+
 func (d *Driver) availability(s Session) string {
 	if _, err := os.Stat(s.Socket); err != nil {
 		return "inactive"
@@ -266,9 +331,14 @@ func (d *Driver) availability(s Session) string {
 	return "idle"
 }
 
-// deliverOne claims and delivers at most one message for s. It reports whether
-// a message went out, so the caller keeps draining.
-func (d *Driver) deliverOne(ctx context.Context, s Session) (bool, error) {
+// deliverOne claims and posts at most one message for a session, or settles
+// the one it posted earlier. It reports whether a message went out, so the
+// caller keeps draining.
+func (d *Driver) deliverOne(ctx context.Context, sessionID string) (bool, error) {
+	s, ok := d.session(sessionID)
+	if !ok {
+		return false, nil
+	}
 	token := d.leaseToken()
 	now := d.now().UTC()
 	claim, err := d.fabric.Claim(ctx, fabricclient.ClaimRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("claim", s.Address, now), RecipientAddress: s.Address, RecipientGeneration: s.Generation, Availability: d.availability(s), ClaimDuration: d.cfg.ClaimDuration.String()})
@@ -276,38 +346,180 @@ func (d *Driver) deliverOne(ctx context.Context, s Session) (bool, error) {
 		return false, fmt.Errorf("claim: %w", err)
 	}
 	if !claim.Claimed || claim.Delivery == nil || claim.Message == nil {
+		if claim.Reason == "head_dispatching" && claim.Head != nil {
+			// Settling the head lets the next message through in this pass.
+			return d.reconcile(ctx, s, *claim.Head)
+		}
 		return false, nil
 	}
 	delivery := claim.Delivery
-	priority := PriorityLater
-	if claim.DispatchAction == "deliver_next_step" {
-		priority = PriorityNext
+	action := claim.DispatchAction
+	if action == "" {
+		action = delivery.DispatchAction
+	}
+	release := func(cause error) error {
+		if _, err := d.fabric.Release(ctx, delivery.DeliveryID, fabricclient.ClaimTokenRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("release", delivery.DeliveryID, now), ClaimToken: claim.ClaimToken}); err != nil {
+			return fmt.Errorf("release after %v: %w", cause, err)
+		}
+		return nil
 	}
 	// Open the socket before recording the dispatch: a session that is gone
 	// sends the claim back to the queue instead of leaving it unknown.
 	conn, err := d.inbox.Dial(ctx, s.Socket, s.Token)
 	if err != nil {
-		if _, releaseErr := d.fabric.Release(ctx, delivery.DeliveryID, fabricclient.ClaimTokenRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("release", delivery.DeliveryID, now), ClaimToken: claim.ClaimToken}); releaseErr != nil {
-			return false, fmt.Errorf("release after %v: %w", err, releaseErr)
-		}
-		return false, nil
+		return false, release(err)
 	}
 	defer conn.Close()
+	// Read the turn state again just before the native side effect: a Stop
+	// or UserPromptSubmit hook may have arrived since the claim.
+	priority, stale := d.priorityFor(action, claim.Message.ActivationPolicy, sessionID)
+	if stale != "" {
+		d.log.Info("turn state changed before posting; message stays queued", "session", s.SessionID, "delivery", delivery.DeliveryID, "reason", stale)
+		return false, release(errors.New(stale))
+	}
 	ref := delivery.DeliveryID
 	if _, err := d.fabric.Begin(ctx, delivery.DeliveryID, fabricclient.DispatchRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("begin", delivery.DeliveryID, now), ClaimToken: claim.ClaimToken, NativeAttemptRef: ref}); err != nil {
 		return false, fmt.Errorf("begin dispatch: %w", err)
 	}
-	if err := conn.Post(nativeMessageID(delivery.DeliveryID), d.render(ctx, *claim.Message), priority); err != nil {
-		if _, unknownErr := d.fabric.Unknown(ctx, delivery.DeliveryID, fabricclient.ReconcileRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("unknown", delivery.DeliveryID, now), NativeAttemptRef: ref}); unknownErr != nil {
-			return false, fmt.Errorf("outcome unknown after %v: %w", err, unknownErr)
-		}
-		return false, fmt.Errorf("post: %w", err)
+	pending := &Dispatch{DeliveryID: delivery.DeliveryID, MessageID: claim.Message.MessageID, MsgID: nativeMessageID(delivery.DeliveryID), Ref: ref, SessionID: s.SessionID, Socket: s.Socket, Transcript: s.Transcript, Offset: fileSize(s.Transcript), PostedAt: now}
+	d.mu.Lock()
+	d.dispatches[pending.DeliveryID] = pending
+	saveErr := d.saveLocked()
+	d.mu.Unlock()
+	if saveErr != nil {
+		d.log.Warn("save driver state", "error", saveErr)
 	}
-	if _, err := d.fabric.Acknowledge(ctx, delivery.DeliveryID, fabricclient.ReconcileRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("ack", delivery.DeliveryID, now), NativeAttemptRef: ref}); err != nil {
-		return true, fmt.Errorf("acknowledge: %w", err)
+	// Whether or not the write succeeds, the delivery stays dispatching until
+	// the transcript settles it: a write that failed may still have arrived,
+	// and one that succeeded may still be held or refused by the session.
+	if err := conn.Post(pending.MsgID, d.render(ctx, *claim.Message), priority); err != nil {
+		d.log.Warn("inbox write failed; settling from the transcript", "session", s.SessionID, "delivery", delivery.DeliveryID, "error", err)
+		return false, nil
 	}
-	d.log.Info("delivered", "session", s.SessionID, "address", s.Address, "delivery", delivery.DeliveryID, "priority", priority)
+	d.log.Info("posted", "session", s.SessionID, "address", s.Address, "delivery", delivery.DeliveryID, "action", action, "priority", priority)
 	return true, nil
+}
+
+// priorityFor picks the inbox priority for a claimed delivery from the
+// session's current turn state, or says why the message must wait instead.
+//
+// "next" is read at the active turn's next step boundary, but it also starts a
+// turn on an idle session, and Claude Code has no frame that enters only an
+// active turn. So a no_wake message goes out only while the session is busy,
+// and a next_turn message only while it is idle (a "later" frame to a busy
+// session would sit in the session's in-memory queue, which an exit loses).
+func (d *Driver) priorityFor(action, policy, sessionID string) (string, string) {
+	s, ok := d.session(sessionID)
+	if !ok {
+		return "", "session no longer registered"
+	}
+	policy, _ = normalizePolicy(policy)
+	switch action {
+	case "deliver_next_step":
+		if !s.Busy && policy == "no_wake" {
+			return "", "no_wake target went idle"
+		}
+		return PriorityNext, ""
+	case "deliver_at_idle":
+		if s.Busy {
+			if policy == "next_step" {
+				return PriorityNext, ""
+			}
+			return "", "next_turn target became busy"
+		}
+		return PriorityLater, ""
+	}
+	return "", "unsupported dispatch action " + action
+}
+
+func normalizePolicy(policy string) (string, bool) {
+	switch policy {
+	case "", "next_turn", "wake_when_idle":
+		return "next_turn", true
+	case "next_step":
+		return "next_step", true
+	case "no_wake", "never_wake":
+		return "no_wake", true
+	}
+	return policy, false
+}
+
+// reconcile settles this driver's dispatching head from the session's
+// transcript: delivered once the message is in the conversation,
+// outcome_unknown when the session never queued it within AcceptTimeout, or
+// queued it and then lost it (the process exited) or kept it past
+// QueuedTimeout. It never posts again, and reports whether it settled the
+// delivery.
+func (d *Driver) reconcile(ctx context.Context, s Session, head fabricclient.Delivery) (bool, error) {
+	if head.ClaimOwnerAdapterID != "" && head.ClaimOwnerAdapterID != d.cfg.AdapterID {
+		return false, nil
+	}
+	now := d.now().UTC()
+	d.mu.Lock()
+	pending, ok := d.dispatches[head.DeliveryID]
+	if !ok {
+		// Posted by an instance that lost its state, or crashed between Begin
+		// and saving: look for it from the start of the transcript.
+		pending = &Dispatch{DeliveryID: head.DeliveryID, MessageID: head.MessageID, MsgID: nativeMessageID(head.DeliveryID), Ref: head.NativeAttemptRef, SessionID: s.SessionID, Socket: s.Socket, Transcript: s.Transcript, PostedAt: now}
+		d.dispatches[head.DeliveryID] = pending
+	}
+	p := *pending
+	d.mu.Unlock()
+	if p.Transcript == "" {
+		p.Transcript = s.Transcript
+	}
+	if head.NativeAttemptRef != "" {
+		p.Ref = head.NativeAttemptRef
+	}
+	marker := ""
+	if p.MessageID != "" {
+		marker = "(crew message " + p.MessageID + ")"
+	}
+	scan, err := scanTranscript(p.Transcript, p.Offset, p.MsgID, marker)
+	if err != nil {
+		return false, fmt.Errorf("read transcript %s: %w", p.Transcript, err)
+	}
+	p.Offset = scan.Offset
+	p.Enqueued = p.Enqueued || scan.Enqueued
+	age := now.Sub(p.PostedAt)
+	request := fabricclient.ReconcileRequest{AdapterID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), NativeAttemptRef: p.Ref}
+	var outcome string
+	switch {
+	case scan.Inserted:
+		outcome = "delivered"
+		request.OperationID = "crew-claude/ack/" + p.DeliveryID
+		_, err = d.fabric.Acknowledge(ctx, p.DeliveryID, request)
+	case !p.Enqueued && age > d.cfg.AcceptTimeout:
+		outcome = "outcome_unknown: never queued by the session"
+	case p.Enqueued && p.Socket != s.Socket:
+		outcome = "outcome_unknown: queued, then the session process exited"
+	case p.Enqueued && d.availability(s) == "inactive":
+		outcome = "outcome_unknown: queued, then the session process exited"
+	case p.Enqueued && age > d.cfg.QueuedTimeout:
+		outcome = "outcome_unknown: queued but never entered the conversation"
+	}
+	if outcome != "" && !scan.Inserted {
+		request.OperationID = "crew-claude/unknown/" + p.DeliveryID
+		_, err = d.fabric.Unknown(ctx, p.DeliveryID, request)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var gone *fabricclient.HTTPError
+	settled := outcome != "" && err == nil
+	if outcome != "" && errors.As(err, &gone) && (gone.Status == 404 || gone.Status == 409) {
+		// Already settled elsewhere (for example by fabric maintenance).
+		settled, err = true, nil
+	}
+	if settled {
+		delete(d.dispatches, p.DeliveryID)
+		d.log.Info("settled dispatch", "session", s.SessionID, "delivery", p.DeliveryID, "outcome", outcome, "after", age.Round(time.Millisecond))
+	} else {
+		*d.dispatches[p.DeliveryID] = p
+	}
+	if saveErr := d.saveLocked(); saveErr != nil && err == nil {
+		err = saveErr
+	}
+	return settled, err
 }
 
 // render is the text the session reads, naming the sender when Lookup knows it.
@@ -332,8 +544,12 @@ func nativeMessageID(deliveryID string) string {
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
+var opSeq atomic.Int64
+
+// opID names one fabric operation attempt. The sequence keeps two attempts
+// in the same clock tick apart.
 func opID(kind, subject string, now time.Time) string {
-	return fmt.Sprintf("crew-claude/%s/%s/%d", kind, subject, now.UnixNano())
+	return fmt.Sprintf("crew-claude/%s/%s/%d-%d", kind, subject, now.UnixNano(), opSeq.Add(1))
 }
 
 func (d *Driver) load() error {
@@ -348,13 +564,17 @@ func (d *Driver) load() error {
 		return fmt.Errorf("read driver state: %w", err)
 	}
 	var stored struct {
-		Sessions []*Session `json:"sessions"`
+		Sessions   []*Session  `json:"sessions"`
+		Dispatches []*Dispatch `json:"dispatches"`
 	}
 	if err := json.Unmarshal(data, &stored); err != nil {
 		return fmt.Errorf("parse driver state: %w", err)
 	}
 	for _, s := range stored.Sessions {
 		d.sessions[s.SessionID] = s
+	}
+	for _, p := range stored.Dispatches {
+		d.dispatches[p.DeliveryID] = p
 	}
 	return nil
 }
@@ -368,9 +588,15 @@ func (d *Driver) saveLocked() error {
 		list = append(list, s)
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].SessionID < list[j].SessionID })
+	pending := make([]*Dispatch, 0, len(d.dispatches))
+	for _, p := range d.dispatches {
+		pending = append(pending, p)
+	}
+	sort.Slice(pending, func(i, j int) bool { return pending[i].DeliveryID < pending[j].DeliveryID })
 	data, err := json.MarshalIndent(struct {
-		Sessions []*Session `json:"sessions"`
-	}{list}, "", "  ")
+		Sessions   []*Session  `json:"sessions"`
+		Dispatches []*Dispatch `json:"dispatches"`
+	}{list, pending}, "", "  ")
 	if err != nil {
 		return err
 	}
