@@ -8,6 +8,9 @@ const (
 	CapabilityDurableNextTurn = "durable_next_turn"
 	CapabilityWakeInactive    = "wake_inactive"
 	CapabilityPendingNotice   = "pending_notification"
+	// CapabilityDeliverNextStep means the adapter can put a message in front of
+	// a busy target at its next step boundary without cancelling its turn.
+	CapabilityDeliverNextStep = "deliver_next_step"
 )
 
 const (
@@ -15,6 +18,30 @@ const (
 	AvailabilityIdle     = "idle"
 	AvailabilityInactive = "inactive"
 )
+
+// Activation policies are chosen by the sender. next_turn never touches an
+// active turn; next_step may be seen at the active turn's next step boundary;
+// no_wake never starts a turn on its own. None of them interrupts.
+const (
+	PolicyNextTurn = "next_turn"
+	PolicyNextStep = "next_step"
+	PolicyNoWake   = "no_wake"
+)
+
+// NormalizePolicy maps an activation policy, including the retired v1 names
+// stored on older messages, to its current name. It reports false for an
+// unknown policy.
+func NormalizePolicy(policy string) (string, bool) {
+	switch policy {
+	case "", PolicyNextTurn, "wake_when_idle":
+		return PolicyNextTurn, true
+	case PolicyNextStep:
+		return PolicyNextStep, true
+	case PolicyNoWake, "never_wake":
+		return PolicyNoWake, true
+	}
+	return "", false
+}
 
 // ClaimResult is returned for both a durable no-work receipt and a claim.  A
 // claim token appears only here, never in ordinary delivery read models.

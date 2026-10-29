@@ -225,12 +225,11 @@ func (s *Service) SubmitMessage(ctx context.Context, request SubmitMessageReques
 	request.RecipientAddress = strings.TrimSpace(request.RecipientAddress)
 	request.CorrelationID = strings.TrimSpace(request.CorrelationID)
 	request.ReplyToMessageID = strings.TrimSpace(request.ReplyToMessageID)
-	if request.ActivationPolicy == "" {
-		request.ActivationPolicy = "wake_when_idle"
+	policy, ok := store.NormalizePolicy(request.ActivationPolicy)
+	if !ok {
+		return SubmitMessageResult{}, &Error{Code: CodeInvalid, Err: errors.New("activation_policy must be next_turn, next_step or no_wake")}
 	}
-	if request.ActivationPolicy != "wake_when_idle" && request.ActivationPolicy != "never_wake" {
-		return SubmitMessageResult{}, &Error{Code: CodeInvalid, Err: errors.New("activation_policy must be wake_when_idle or never_wake")}
-	}
+	request.ActivationPolicy = policy
 	if request.TTL <= 0 || request.TTL > s.maxTTLDuration {
 		return SubmitMessageResult{}, &Error{Code: CodeInvalid, Err: fmt.Errorf("ttl must be greater than zero and at most %s", s.maxTTLDuration)}
 	}

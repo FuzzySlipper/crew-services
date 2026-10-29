@@ -10,6 +10,10 @@ import (
 type migration struct {
 	version int
 	sql     string
+	// rebuildsTables marks a migration that replaces a table other tables
+	// reference. SQLite only allows that with foreign keys off, which cannot be
+	// changed inside a transaction; the result is checked before commit.
+	rebuildsTables bool
 }
 
 //go:embed migrations/001_bootstrap.sql
@@ -33,6 +37,9 @@ var migration006 string
 //go:embed migrations/007_receipt_retention.sql
 var migration007 string
 
+//go:embed migrations/008_activation_policies.sql
+var migration008 string
+
 var migrations = []migration{
 	{
 		version: 1,
@@ -47,6 +54,7 @@ var migrations = []migration{
 	{version: 5, sql: migration005},
 	{version: 6, sql: migration006},
 	{version: 7, sql: migration007},
+	{version: 8, sql: migration008, rebuildsTables: true},
 }
 
 func (s *Store) initialize(ctx context.Context) error {
@@ -89,6 +97,14 @@ func (s *Store) applied(ctx context.Context, version int) (bool, error) {
 }
 
 func (s *Store) apply(ctx context.Context, candidate migration) error {
+	if candidate.rebuildsTables {
+		// The store holds a single connection, so the pragma applies to the
+		// transaction below.
+		if _, err := s.db.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+			return fmt.Errorf("disable foreign keys for migration %d: %w", candidate.version, err)
+		}
+		defer s.db.ExecContext(ctx, "PRAGMA foreign_keys = ON")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin migration %d: %w", candidate.version, err)
@@ -97,6 +113,19 @@ func (s *Store) apply(ctx context.Context, candidate migration) error {
 
 	if _, err := tx.ExecContext(ctx, candidate.sql); err != nil {
 		return fmt.Errorf("apply migration %d: %w", candidate.version, err)
+	}
+	if candidate.rebuildsTables {
+		rows, err := tx.QueryContext(ctx, "PRAGMA foreign_key_check")
+		if err != nil {
+			return fmt.Errorf("check foreign keys after migration %d: %w", candidate.version, err)
+		}
+		violated := rows.Next()
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("check foreign keys after migration %d: %w", candidate.version, err)
+		}
+		if violated {
+			return fmt.Errorf("migration %d left foreign key violations", candidate.version)
+		}
 	}
 	if _, err := tx.ExecContext(ctx,
 		"INSERT INTO schema_migrations (version, applied_at) VALUES (?, CURRENT_TIMESTAMP)", candidate.version); err != nil {

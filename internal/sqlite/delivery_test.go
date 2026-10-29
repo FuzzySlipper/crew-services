@@ -93,9 +93,23 @@ func TestClaimEligibilityAndLeaseEquality(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	refused, err := svc.ClaimDelivery(ctx, service.ClaimDeliveryRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "never-busy", RecipientAddress: "agent/bob", RecipientGeneration: bob.Generation, Availability: "busy", ClaimDuration: time.Minute})
-	if err != nil || refused.Claimed || refused.Reason != "not_eligible" {
-		t.Fatalf("never work=%#v %v", refused, err)
+	// The retired never_wake name is stored as no_wake. Bob's adapter cannot
+	// reach an active turn, so the message waits whether bob is busy or idle.
+	for _, availability := range []string{"busy", "idle"} {
+		refused, err := svc.ClaimDelivery(ctx, service.ClaimDeliveryRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "no-wake-" + availability, RecipientAddress: "agent/bob", RecipientGeneration: bob.Generation, Availability: availability, ClaimDuration: time.Minute})
+		if err != nil || refused.Claimed || refused.Reason != "not_eligible" {
+			t.Fatalf("no_wake %s=%#v %v", availability, refused, err)
+		}
+	}
+	if stored, err := svc.GetMessage(ctx, first.Message.MessageID); err != nil || stored.ActivationPolicy != "no_wake" {
+		t.Fatalf("stored policy=%#v %v", stored, err)
+	}
+	if _, err := svc.CancelDelivery(ctx, first.Delivery.DeliveryID); err != nil {
+		t.Fatal(err)
+	}
+	first, err = svc.SubmitMessage(ctx, service.SubmitMessageRequest{ProducerID: alpha.AdapterID, LeaseToken: alpha.LeaseToken, OperationID: "send-2", SenderAddress: "agent/alice", RecipientAddress: "agent/bob", Body: "second", TTL: time.Hour})
+	if err != nil {
+		t.Fatal(err)
 	}
 	claim, err := svc.ClaimDelivery(ctx, service.ClaimDeliveryRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "claim", RecipientAddress: "agent/bob", RecipientGeneration: bob.Generation, Availability: "idle", ClaimDuration: time.Minute})
 	if err != nil {

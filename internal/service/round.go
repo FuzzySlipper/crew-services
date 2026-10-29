@@ -49,12 +49,11 @@ func (s *Service) BeginRound(ctx context.Context, request BeginRoundRequest) (Be
 	if root.ReplyToMessageID != "" {
 		return BeginRoundResult{}, invalid("round root cannot be a reply")
 	}
-	if root.ActivationPolicy == "" {
-		root.ActivationPolicy = "wake_when_idle"
+	policy, ok := store.NormalizePolicy(root.ActivationPolicy)
+	if !ok {
+		return BeginRoundResult{}, invalid("activation_policy must be next_turn, next_step or no_wake")
 	}
-	if root.ActivationPolicy != "wake_when_idle" && root.ActivationPolicy != "never_wake" {
-		return BeginRoundResult{}, invalid("activation_policy must be wake_when_idle or never_wake")
-	}
+	root.ActivationPolicy = policy
 	if root.TTL <= 0 || root.TTL > s.maxTTLDuration {
 		return BeginRoundResult{}, invalid(fmt.Sprintf("ttl must be greater than zero and at most %s", s.maxTTLDuration))
 	}

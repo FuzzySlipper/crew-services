@@ -210,14 +210,22 @@ func claimAction(policy string, caps []string, availability string) (string, str
 		}
 		return false
 	}
-	if policy == "never_wake" {
-		if availability == store.AvailabilityIdle && has(store.CapabilityDeliverWhenIdle) {
-			return "deliver_at_idle", ""
+	policy, _ = store.NormalizePolicy(policy)
+	if policy == store.PolicyNoWake {
+		// A no_wake message rides along with work the target is already doing;
+		// it waits in the queue while the target is idle or not running.
+		if availability == store.AvailabilityBusy && has(store.CapabilityDeliverNextStep) {
+			return "deliver_next_step", ""
 		}
 		return "", "not_eligible"
 	}
 	switch availability {
 	case store.AvailabilityBusy:
+		if policy == store.PolicyNextStep && has(store.CapabilityDeliverNextStep) {
+			return "deliver_next_step", ""
+		}
+		// A next_step message to an adapter that cannot reach the active turn
+		// falls back to the next turn: later than asked, never earlier.
 		if has(store.CapabilityDurableNextTurn) {
 			return "register_next_turn", ""
 		}
