@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"testing"
@@ -420,5 +421,34 @@ func TestTurnCompletionCarriesErrorAndLastAgentMessage(t *testing.T) {
 	}
 	if len(client.agentMessages) != 0 {
 		t.Fatalf("agent messages retained after completion: %#v", client.agentMessages)
+	}
+}
+
+func TestTurnCompletionCarriesToolRuntimeError(t *testing.T) {
+	client := &StdioAppServer{turnWaiters: map[string]chan TurnCompletion{}, completedTurns: map[string]TurnCompletion{}, ephemeralThreads: map[string]struct{}{"ephemeral": {}}, done: make(chan struct{}), interactions: map[string]pendingInteraction{}, pending: map[string]chan rpcResponse{}, handshakeDone: make(chan struct{})}
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"ordinary","turnId":"one","item":{"type":"commandExecution","id":"c0","status":"failed","aggregatedOutput":"failed to decode code-mode IPC frame: untracked"}}}`))
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"ephemeral","turnId":"one","item":{"type":"commandExecution","id":"c1","status":"completed","aggregatedOutput":"ok"}}}`))
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"ephemeral","turnId":"one","item":{"type":"commandExecution","id":"c2","status":"failed","aggregatedOutput":"exec: start\nfailed to decode code-mode IPC frame: unknown field result_buffered_for_ns\n"}}}`))
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"ephemeral","turnId":"one","item":{"type":"commandExecution","id":"c3","status":"failed","aggregatedOutput":"failed to decode code-mode IPC frame: later"}}}`))
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"ephemeral","turn":{"id":"one","status":"completed"}}}`))
+	done, err := client.WaitTurn(context.Background(), "ephemeral", "one")
+	if err != nil || done.ToolRuntimeError != "failed to decode code-mode IPC frame: unknown field result_buffered_for_ns" {
+		t.Fatalf("completion=%+v err=%v", done, err)
+	}
+	if len(client.toolErrors) != 0 {
+		t.Fatalf("tool errors retained after completion: %#v", client.toolErrors)
+	}
+	client.handleFrame([]byte(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"ephemeral","turn":{"id":"two","status":"completed"}}}`))
+	if done, _ := client.WaitTurn(context.Background(), "ephemeral", "two"); done.ToolRuntimeError != "" {
+		t.Fatalf("clean turn reported tool runtime error %q", done.ToolRuntimeError)
+	}
+}
+
+func TestIsRPCErrorSeparatesServerRefusalFromTransport(t *testing.T) {
+	if !IsRPCError(fmt.Errorf("turn/start: %w", &rpcError{Code: -32600, Message: "bad model"})) {
+		t.Fatal("RPC error not recognised")
+	}
+	if IsRPCError(errors.New("Codex App Server exited")) {
+		t.Fatal("transport error taken for an RPC error")
 	}
 }

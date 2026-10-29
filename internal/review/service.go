@@ -35,6 +35,25 @@ type Service struct {
 	// lastWorkspace is the checkout of the most recently started review, the
 	// most representative place to run that probe.
 	lastWorkspace string
+
+	// infraAttempts counts, per job, attempts that ended in a runtime
+	// infrastructure failure during this process. A restart starts the count
+	// again, which is itself a fresh runtime.
+	infraAttempts map[string]int
+}
+
+// maxInfraAttempts bounds how many attempts of one job may end in a runtime
+// infrastructure failure before the job fails.
+const maxInfraAttempts = 3
+
+// infraFailurePrefix starts the failure text of a job that failed only
+// because the reviewer runtime broke, so a plain resubmit can re-run it.
+const infraFailurePrefix = "runtime_infrastructure: "
+
+// InfrastructureFailure reports whether a failed job failed only because the
+// reviewer runtime broke, not because of anything about the review.
+func (j Job) InfrastructureFailure() bool {
+	return j.State == Failed && strings.HasPrefix(j.Failure, infraFailurePrefix)
 }
 
 // RuntimeChecker runs one read-only probe of the reviewer runtime, such as a
@@ -287,6 +306,11 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 		}
 		return e
 	})
+	if !errors.Is(runErr, ErrRuntimeInfrastructure) {
+		s.mu.Lock()
+		delete(s.infraAttempts, j.ID)
+		s.mu.Unlock()
+	}
 	current, getErr := s.store.Get(ctx, j.ID)
 	if getErr != nil && ctx.Err() != nil {
 		// A cancelled process context can no longer be used for the local
@@ -307,6 +331,9 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 					return requeueErr
 				}
 				return runErr
+			}
+			if errors.Is(runErr, ErrRuntimeInfrastructure) {
+				return s.infrastructureFailure(ctx, j, runErr)
 			}
 			return s.terminal(ctx, j, Failed, runErr.Error())
 		}
@@ -419,6 +446,28 @@ func finalizeRetryDelay(attempts int) time.Duration {
 		delay *= 2
 	}
 	return min(delay, finalizeRetryMax)
+}
+
+// infrastructureFailure requeues a job whose attempt the runtime itself broke,
+// until maxInfraAttempts such attempts have failed.
+func (s *Service) infrastructureFailure(ctx context.Context, j Job, runErr error) error {
+	s.mu.Lock()
+	if s.infraAttempts == nil {
+		s.infraAttempts = map[string]int{}
+	}
+	s.infraAttempts[j.ID]++
+	attempts := s.infraAttempts[j.ID]
+	if attempts >= maxInfraAttempts {
+		delete(s.infraAttempts, j.ID)
+	}
+	s.mu.Unlock()
+	if attempts < maxInfraAttempts {
+		if _, err := s.store.Requeue(context.Background(), j.ID); err != nil {
+			return err
+		}
+		return runErr
+	}
+	return s.terminal(ctx, j, Failed, fmt.Sprintf("%s%d attempts failed; last: %v", infraFailurePrefix, attempts, runErr))
 }
 func (s *Service) terminal(ctx context.Context, j Job, state State, why string) error {
 	_, e := s.store.Fail(ctx, j.ID, state, why)

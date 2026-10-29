@@ -31,6 +31,7 @@ type fakeServer struct {
 	startBlock    chan struct{}
 	turnStartHook func(thread, turn string)
 	turnOptions   []codexadapter.EphemeralTurnOptions
+	waitErr       error
 }
 
 func (f *fakeServer) Initialize(context.Context) error { return nil }
@@ -77,7 +78,11 @@ func (f *fakeServer) StartEphemeralTurn(_ context.Context, thread, _ string, opt
 func (f *fakeServer) WaitTurn(ctx context.Context, thread, turn string) (codexadapter.TurnCompletion, error) {
 	f.mu.Lock()
 	ch := f.waits[thread+"/"+turn]
+	waitErr := f.waitErr
 	f.mu.Unlock()
+	if waitErr != nil {
+		return codexadapter.TurnCompletion{}, waitErr
+	}
 	select {
 	case v := <-ch:
 		return v, nil
@@ -107,7 +112,12 @@ func (f *fakeServer) Interrupt(_ context.Context, thread, turn string) error {
 	f.interrupts = append(f.interrupts, thread+"/"+turn)
 	return nil
 }
-func (f *fakeServer) Close() error { f.closed = true; return nil }
+func (f *fakeServer) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	return nil
+}
 func itoa(n int) string {
 	if n < 10 {
 		return string(rune('0' + n))
@@ -582,5 +592,191 @@ func TestMissingCompletionReportsTurnErrorAndLastMessage(t *testing.T) {
 	long := missingCompletion(codexadapter.TurnCompletion{Status: "completed", LastMessage: strings.Repeat("é", 400)})
 	if !utf8.ValidString(long) || !strings.HasSuffix(long, "…") {
 		t.Fatalf("long message not truncated cleanly: %q", long)
+	}
+}
+
+// restartableFixture is a runtime that can restart onto new fake servers and
+// whose Codex executable fingerprint the test sets.
+func restartableFixture(t *testing.T) (r *Runtime, first *fakeServer, servers *[]*fakeServer, executable *string) {
+	t.Helper()
+	r, first = runtimeFixture(t)
+	all := []*fakeServer{first}
+	version := "codex-cli 0.163.0"
+	r.executable = func(context.Context) string { return version }
+	r.started = version
+	r.factory = func(context.Context) (codexadapter.EphemeralServer, error) {
+		next := &fakeServer{}
+		all = append(all, next)
+		return next, nil
+	}
+	return r, first, &all, &version
+}
+
+func TestExecutableChangeRestartsAppServerBeforeNextReview(t *testing.T) {
+	r, old, servers, executable := restartableFixture(t)
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", ""); e != nil {
+		t.Fatal(e)
+	}
+	if len(*servers) != 1 {
+		t.Fatalf("restarted without an executable change: %d servers", len(*servers))
+	}
+	*executable = "codex-cli 0.165.0"
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); e != nil {
+		t.Fatal(e)
+	}
+	if len(*servers) != 2 || !old.closed {
+		t.Fatalf("servers=%d old.closed=%v, want one restart", len(*servers), old.closed)
+	}
+	fresh := (*servers)[1]
+	if len(fresh.options) != 1 || fresh.handler == nil {
+		t.Fatalf("fresh server threads=%d handler=%v", len(fresh.options), fresh.handler != nil)
+	}
+	// Capacity is 2 and only the fresh worker holds a slot.
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 3}, "", ""); e != nil || len(*servers) != 2 {
+		t.Fatalf("Acquire err=%v servers=%d, want no second restart for an unchanged executable", e, len(*servers))
+	}
+}
+
+func TestExecutableChangeWaitsForRunningReview(t *testing.T) {
+	r, old, servers, executable := restartableFixture(t)
+	old.starts = make(chan string, 1)
+	busy, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	done := make(chan error, 1)
+	go func() { done <- r.Run(context.Background(), busy, "", func(review.Completion) error { return nil }) }()
+	started := <-old.starts
+	*executable = "codex-cli 0.165.0"
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); !errors.Is(e, review.ErrRuntimeUnavailable) {
+		t.Fatalf("Acquire under a running turn = %v, want ErrRuntimeUnavailable", e)
+	}
+	if len(*servers) != 1 || old.closed {
+		t.Fatal("restarted under a running review")
+	}
+	thread, turn, _ := strings.Cut(started, "/")
+	if e := must(old.handler(context.Background(), call(thread, turn, "looks_good"))); e == nil {
+		t.Fatal("no tool result")
+	}
+	old.finish(thread, turn)
+	if e := <-done; e != nil {
+		t.Fatal(e)
+	}
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); e != nil {
+		t.Fatal(e)
+	}
+	if len(*servers) != 2 || !old.closed {
+		t.Fatalf("servers=%d old.closed=%v, want restart once idle", len(*servers), old.closed)
+	}
+}
+
+func TestExecutableChangeRequeuesRetainedWorker(t *testing.T) {
+	r, old, servers, executable := restartableFixture(t)
+	retained, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	*executable = "codex-cli 0.165.0"
+	if e := r.Run(context.Background(), retained, "", func(review.Completion) error { return nil }); !errors.Is(e, review.ErrRuntimeUnavailable) {
+		t.Fatalf("Run on a retained worker after an update = %v, want ErrRuntimeUnavailable", e)
+	}
+	if len(*servers) != 2 || !old.closed || len(old.turnOptions) != 0 {
+		t.Fatalf("servers=%d old.closed=%v old turns=%d", len(*servers), old.closed, len(old.turnOptions))
+	}
+	if e := r.Release(context.Background(), retained); e != nil {
+		t.Fatalf("releasing a worker the restart released: %v", e)
+	}
+}
+
+func TestToolRuntimeFailureIsInfrastructureAndRestartsNextReview(t *testing.T) {
+	r, old, servers, _ := restartableFixture(t)
+	old.starts = make(chan string, 1)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	done := make(chan error, 1)
+	go func() { done <- r.Run(context.Background(), w, "", func(review.Completion) error { return nil }) }()
+	thread, turn, _ := strings.Cut(<-old.starts, "/")
+	old.mu.Lock()
+	ch := old.waits[thread+"/"+turn]
+	old.mu.Unlock()
+	ch <- codexadapter.TurnCompletion{ThreadID: thread, TurnID: turn, Status: "completed", LastMessage: "Review blocked by tool infrastructure.", ToolRuntimeError: "failed to decode code-mode IPC frame: unknown field result_buffered_for_ns"}
+	e = <-done
+	if !errors.Is(e, review.ErrRuntimeInfrastructure) || !strings.Contains(e.Error(), "result_buffered_for_ns") {
+		t.Fatalf("Run = %v, want ErrRuntimeInfrastructure naming the tool failure", e)
+	}
+	if e := r.Release(context.Background(), w); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", ""); e != nil {
+		t.Fatal(e)
+	}
+	if len(*servers) != 2 || !old.closed {
+		t.Fatalf("servers=%d old.closed=%v, want a restart before the retry", len(*servers), old.closed)
+	}
+}
+
+func TestLostAppServerMidTurnIsInfrastructure(t *testing.T) {
+	r, old, servers, _ := restartableFixture(t)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	old.waitErr = errors.New("Codex App Server exited")
+	if e := r.Run(context.Background(), w, "", func(review.Completion) error { return nil }); !errors.Is(e, review.ErrRuntimeInfrastructure) {
+		t.Fatalf("Run = %v, want ErrRuntimeInfrastructure", e)
+	}
+	_ = r.Release(context.Background(), w)
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", ""); e != nil {
+		t.Fatal(e)
+	}
+	if len(*servers) != 2 {
+		t.Fatalf("servers=%d, want a restart after losing the app-server", len(*servers))
+	}
+}
+
+func TestMissingCompletionWithoutToolFailureStaysReviewFailure(t *testing.T) {
+	r, old, servers, _ := restartableFixture(t)
+	old.starts = make(chan string, 1)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	done := make(chan error, 1)
+	go func() { done <- r.Run(context.Background(), w, "", func(review.Completion) error { return nil }) }()
+	thread, turn, _ := strings.Cut(<-old.starts, "/")
+	old.finish(thread, turn)
+	if e := <-done; e == nil || errors.Is(e, review.ErrRuntimeInfrastructure) || errors.Is(e, review.ErrRuntimeUnavailable) {
+		t.Fatalf("Run = %v, want an ordinary review failure", e)
+	}
+	_ = r.Release(context.Background(), w)
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); e != nil || len(*servers) != 1 {
+		t.Fatalf("Acquire err=%v servers=%d, want no restart", e, len(*servers))
+	}
+}
+
+func TestExecutableFingerprintTracksVersionAndFile(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "codex")
+	write := func(version string) {
+		if e := os.WriteFile(script, []byte("#!/bin/sh\necho codex-cli "+version+"\n"), 0o755); e != nil {
+			t.Fatal(e)
+		}
+	}
+	write("0.163.0")
+	first := executableFingerprint(context.Background(), script)
+	if !strings.Contains(first, "codex-cli 0.163.0") || !strings.HasPrefix(first, script) {
+		t.Fatalf("fingerprint %q", first)
+	}
+	if again := executableFingerprint(context.Background(), script); again != first {
+		t.Fatalf("unchanged executable fingerprint moved: %q then %q", first, again)
+	}
+	write("0.165.0")
+	if next := executableFingerprint(context.Background(), script); next == first {
+		t.Fatalf("updated executable kept fingerprint %q", next)
+	}
+	if missing := executableFingerprint(context.Background(), filepath.Join(dir, "absent")); missing != "" {
+		t.Fatalf("missing executable fingerprint %q", missing)
 	}
 }

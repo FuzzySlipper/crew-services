@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -35,6 +37,18 @@ type Runtime struct {
 	reserved int
 	next     int
 	factory  func(context.Context) (codexadapter.EphemeralServer, error)
+
+	// executable fingerprints the Codex executable on disk. Codex updates
+	// itself in place; a running app-server then spawns tool helpers from the
+	// new version that it cannot talk to, so the server is restarted once the
+	// fingerprint moves away from the one it started with.
+	executable func(context.Context) string
+	started    string
+	// broken asks for a restart once no turn is running, after a turn showed
+	// the app-server can no longer run tools or the server itself was lost.
+	broken bool
+	// restartMu serializes freshness checks and restarts.
+	restartMu sync.Mutex
 }
 type worker struct {
 	id, threadID   string
@@ -58,6 +72,8 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	factory := func(context.Context) (codexadapter.EphemeralServer, error) {
 		return codexadapter.StartStdioAppServer(cfg.Command, cfg.Args)
 	}
+	executable := func(ctx context.Context) string { return executableFingerprint(ctx, cfg.Command) }
+	started := executable(ctx)
 	server, e := factory(ctx)
 	if e != nil {
 		return nil, e
@@ -68,8 +84,74 @@ func New(ctx context.Context, cfg Config) (*Runtime, error) {
 	}
 	if r != nil {
 		r.factory = factory
+		r.executable = executable
+		r.started = started
 	}
 	return r, e
+}
+
+// executableFingerprint identifies the Codex executable that command names
+// now: its resolved path, modification time, size and reported version. It
+// returns "" when command cannot be found.
+func executableFingerprint(ctx context.Context, command string) string {
+	path, err := exec.LookPath(command)
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	fingerprint := path
+	if info, err := os.Stat(path); err == nil {
+		fingerprint += fmt.Sprintf(" %d %d", info.ModTime().UnixNano(), info.Size())
+	}
+	versionCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if version, err := exec.CommandContext(versionCtx, path, "--version").Output(); err == nil {
+		fingerprint += " " + strings.TrimSpace(string(version))
+	}
+	return fingerprint
+}
+
+// ensureFresh restarts the app-server before a new review when the Codex
+// executable changed since it started, or a turn found it broken. It never
+// restarts under a running turn; the caller's job waits in the queue instead.
+func (r *Runtime) ensureFresh(ctx context.Context) error {
+	if r.factory == nil {
+		return nil
+	}
+	r.restartMu.Lock()
+	defer r.restartMu.Unlock()
+	r.mu.Lock()
+	broken := r.broken
+	r.mu.Unlock()
+	current := ""
+	if r.executable != nil {
+		current = r.executable(ctx)
+	}
+	changed := current != "" && current != r.started
+	if !broken && !changed {
+		return nil
+	}
+	r.mu.Lock()
+	busy := false
+	for _, w := range r.workers {
+		busy = busy || w.busy
+	}
+	r.mu.Unlock()
+	reason := "a review turn found it unable to run tools"
+	if changed {
+		reason = "the Codex executable changed on disk"
+	}
+	if busy {
+		return fmt.Errorf("Codex App Server needs a restart because %s, after the running review: %w", reason, review.ErrRuntimeUnavailable)
+	}
+	if e := r.restartLocked(ctx); e != nil {
+		// Keep the job queued: a review cannot run until a server starts.
+		return fmt.Errorf("restart Codex App Server because %s: %w: %w", reason, e, review.ErrRuntimeUnavailable)
+	}
+	r.started = current
+	return nil
 }
 func NewWithServer(ctx context.Context, server codexadapter.EphemeralServer, capacity int, profilePath string) (*Runtime, error) {
 	return newWithServer(ctx, server, capacity, profilePath, "", "")
@@ -112,6 +194,9 @@ func (r *Runtime) Acquire(ctx context.Context, task review.TaskKey, _ string, wo
 			r.mu.Unlock()
 		}
 	}()
+	if e := r.ensureFresh(ctx); e != nil {
+		return nil, e
+	}
 	thread, e := r.server.StartEphemeralThread(ctx, codexadapter.EphemeralThreadOptions{CWD: workspace, DeveloperInstructions: r.profile, DynamicTools: completionTool(), ReadOnly: true})
 	if e != nil && r.factory != nil {
 		if restartErr := r.restart(ctx); restartErr != nil {
@@ -131,6 +216,20 @@ func (r *Runtime) Acquire(ctx context.Context, task review.TaskKey, _ string, wo
 	return w, nil
 }
 func (r *Runtime) restart(ctx context.Context) error {
+	r.restartMu.Lock()
+	defer r.restartMu.Unlock()
+	if e := r.restartLocked(ctx); e != nil {
+		return e
+	}
+	if r.executable != nil {
+		r.started = r.executable(ctx)
+	}
+	return nil
+}
+
+// restartLocked replaces the app-server; the caller holds restartMu. Every
+// worker of the old server is released.
+func (r *Runtime) restartLocked(ctx context.Context) error {
 	r.mu.Lock()
 	factory := r.factory
 	old := r.server
@@ -154,15 +253,25 @@ func (r *Runtime) restart(ctx context.Context) error {
 	}
 	r.mu.Lock()
 	r.server = next
+	r.broken = false
 	r.mu.Unlock()
 	return nil
 }
 func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, complete func(review.Completion) error) error {
+	if _, e := r.require(raw); e != nil {
+		return e
+	}
+	// A retained worker skips Acquire, so its next turn checks freshness here.
+	// A restart releases it, and the job returns to the queue for a new one.
+	if e := r.ensureFresh(ctx); e != nil {
+		return e
+	}
 	w, e := r.require(raw)
 	if e != nil {
 		return e
 	}
 	r.mu.Lock()
+	server := r.server
 	if w.busy {
 		r.mu.Unlock()
 		return errors.New("reviewer worker already has an active turn")
@@ -182,8 +291,11 @@ func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, com
 		w.turnID = ""
 		r.mu.Unlock()
 	}()
-	turn, e := r.server.StartEphemeralTurn(ctx, w.threadID, prompt, codexadapter.EphemeralTurnOptions{Model: r.model, Effort: r.effort})
+	turn, e := server.StartEphemeralTurn(ctx, w.threadID, prompt, codexadapter.EphemeralTurnOptions{Model: r.model, Effort: r.effort})
 	if e != nil {
+		if ctx.Err() == nil && !codexadapter.IsRPCError(e) {
+			return r.infrastructure(fmt.Errorf("start Codex turn: %w", e))
+		}
 		return e
 	}
 	r.mu.Lock()
@@ -199,7 +311,7 @@ func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, com
 	var done codexadapter.TurnCompletion
 	go func() {
 		var err error
-		done, err = r.server.WaitTurn(waitCtx, w.threadID, turn.ID)
+		done, err = server.WaitTurn(waitCtx, w.threadID, turn.ID)
 		wait <- err
 	}()
 	ticker := time.NewTicker(25 * time.Millisecond)
@@ -208,13 +320,16 @@ func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, com
 		select {
 		case err := <-wait:
 			if err != nil {
+				if ctx.Err() == nil {
+					return r.infrastructure(fmt.Errorf("wait for Codex turn: %w", err))
+				}
 				return err
 			}
 			goto completed
 		case <-ticker.C:
-			for _, interaction := range r.server.Interactions() {
+			for _, interaction := range server.Interactions() {
 				if interaction.ThreadID == w.threadID && interaction.TurnID == turn.ID {
-					_ = r.server.Interrupt(context.Background(), w.threadID, turn.ID)
+					_ = server.Interrupt(context.Background(), w.threadID, turn.ID)
 					cancel()
 					<-wait
 					return errors.New("noninteractive review cannot satisfy Codex interaction")
@@ -233,6 +348,10 @@ completed:
 		return w.callbackErr
 	}
 	if w.candidate == nil {
+		if done.ToolRuntimeError != "" {
+			r.broken = true
+			return fmt.Errorf("%s; Codex tool runtime failed: %s: %w", missingCompletion(done), done.ToolRuntimeError, review.ErrRuntimeInfrastructure)
+		}
 		if w.rejectedReason != "" {
 			return fmt.Errorf("Codex turn completed without complete_review: %s", w.rejectedReason)
 		}
@@ -261,7 +380,25 @@ func missingCompletion(done codexadapter.TurnCompletion) string {
 	}
 	return text
 }
+
+// infrastructure marks the app-server for a restart before the next review
+// and classifies err as a runtime infrastructure failure.
+func (r *Runtime) infrastructure(err error) error {
+	r.mu.Lock()
+	r.broken = true
+	r.mu.Unlock()
+	return fmt.Errorf("%w: %w", err, review.ErrRuntimeInfrastructure)
+}
 func (r *Runtime) Release(_ context.Context, raw review.Worker) error {
+	if w, ok := raw.(*worker); ok {
+		r.mu.Lock()
+		gone := w.released && r.workers[w.id] != w
+		r.mu.Unlock()
+		if gone {
+			// A restart already released it with its app-server.
+			return nil
+		}
+	}
 	w, e := r.require(raw)
 	if e != nil {
 		return e
@@ -273,11 +410,17 @@ func (r *Runtime) Release(_ context.Context, raw review.Worker) error {
 	}
 	w.released = true
 	delete(r.workers, w.id)
+	server := r.server
 	r.mu.Unlock()
-	r.server.ForgetThread(w.threadID)
+	server.ForgetThread(w.threadID)
 	return nil
 }
-func (r *Runtime) Close() error { return r.server.Close() }
+func (r *Runtime) Close() error {
+	r.mu.Lock()
+	server := r.server
+	r.mu.Unlock()
+	return server.Close()
+}
 func (r *Runtime) require(raw review.Worker) (*worker, error) {
 	w, ok := raw.(*worker)
 	if !ok {
@@ -286,7 +429,7 @@ func (r *Runtime) require(raw review.Worker) (*worker, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if w.released || r.workers[w.id] != w {
-		return nil, errors.New("reviewer worker was released")
+		return nil, fmt.Errorf("reviewer worker was released: %w", review.ErrRuntimeUnavailable)
 	}
 	return w, nil
 }

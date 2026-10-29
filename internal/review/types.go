@@ -43,6 +43,12 @@ var (
 	// a service restart into a terminal review failure.
 	ErrRuntimeUnavailable = errors.New("reviewer runtime is unavailable")
 	ErrAffinityBusy       = errors.New("retained reviewer is busy")
+	// ErrRuntimeInfrastructure marks an attempt that the reviewer runtime's
+	// own machinery broke, such as a tool runtime that cannot run any tool or
+	// a backend process that exited mid-turn. The runtime has already arranged
+	// its own recovery; the job is retried a bounded number of times instead
+	// of failing on the first attempt.
+	ErrRuntimeInfrastructure = errors.New("reviewer runtime infrastructure failure")
 	// Checkout resolution belongs to the review-host adapter.
 	ErrWorkspaceRequired  = errors.New("no matching local Git checkout found")
 	ErrWorkspaceAmbiguous = errors.New("multiple matching local Git checkouts found")

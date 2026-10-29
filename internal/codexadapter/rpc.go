@@ -70,7 +70,60 @@ type TurnCompletion struct {
 	Error string
 	// LastMessage is the turn's final agent message, kept for diagnostics.
 	LastMessage string
+	// ToolRuntimeError is the first tool item in the turn that failed because
+	// Codex's own tool runtime broke, rather than because of the tool's work.
+	// One such failure, a code-mode helper speaking a newer IPC protocol than
+	// the running app-server after Codex updated itself on disk, makes every
+	// later tool call in that app-server fail the same way.
+	ToolRuntimeError string
 }
+
+// toolRuntimeMarkers are text that only Codex's tool runtime reports when it
+// cannot carry a tool call at all.
+var toolRuntimeMarkers = []string{"failed to decode code-mode IPC frame"}
+
+// toolRuntimeError returns the line of a completed tool item that carries a
+// tool-runtime marker, or "".
+func toolRuntimeError(item json.RawMessage) string {
+	var text string
+	var walk func(any)
+	walk = func(value any) {
+		switch v := value.(type) {
+		case string:
+			for _, marker := range toolRuntimeMarkers {
+				if text == "" && strings.Contains(v, marker) {
+					for _, line := range strings.Split(v, "\n") {
+						if strings.Contains(line, marker) {
+							text = strings.TrimSpace(line)
+							break
+						}
+					}
+				}
+			}
+		case []any:
+			for _, x := range v {
+				walk(x)
+			}
+		case map[string]any:
+			for _, x := range v {
+				walk(x)
+			}
+		}
+	}
+	var value any
+	if json.Unmarshal(item, &value) == nil {
+		walk(value)
+	}
+	return text
+}
+
+// IsRPCError reports whether err is an error response from a live Codex
+// app-server, as opposed to a failure to reach it.
+func IsRPCError(err error) bool {
+	var rpc *rpcError
+	return errors.As(err, &rpc)
+}
+
 type EphemeralServer interface {
 	Initialize(context.Context) error
 	StartEphemeralThread(context.Context, EphemeralThreadOptions) (NativeThread, error)
@@ -108,6 +161,7 @@ type StdioAppServer struct {
 	turnWaiters      map[string]chan TurnCompletion
 	completedTurns   map[string]TurnCompletion
 	agentMessages    map[string]string
+	toolErrors       map[string]string
 	ephemeralThreads map[string]struct{}
 	closing          bool
 	closed           bool
@@ -270,6 +324,11 @@ func (c *StdioAppServer) ForgetThread(threadID string) {
 	for key := range c.agentMessages {
 		if strings.HasPrefix(key, threadID+"\x00") {
 			delete(c.agentMessages, key)
+		}
+	}
+	for key := range c.toolErrors {
+		if strings.HasPrefix(key, threadID+"\x00") {
+			delete(c.toolErrors, key)
 		}
 	}
 }
@@ -575,20 +634,38 @@ func (c *StdioAppServer) handleFrame(frame []byte) {
 	}
 	if envelope.Method == "item/completed" {
 		var completed struct {
-			ThreadID string `json:"threadId"`
-			TurnID   string `json:"turnId"`
-			Item     struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"item"`
+			ThreadID string          `json:"threadId"`
+			TurnID   string          `json:"turnId"`
+			Item     json.RawMessage `json:"item"`
 		}
-		if json.Unmarshal(envelope.Params, &completed) == nil && completed.Item.Type == "agentMessage" && strings.TrimSpace(completed.Item.Text) != "" {
-			c.mu.Lock()
-			if _, tracked := c.ephemeralThreads[completed.ThreadID]; tracked {
-				if c.agentMessages == nil {
-					c.agentMessages = make(map[string]string)
+		var item struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(envelope.Params, &completed) != nil || json.Unmarshal(completed.Item, &item) != nil {
+			return
+		}
+		key := turnKey(completed.ThreadID, completed.TurnID)
+		if item.Type == "agentMessage" {
+			if strings.TrimSpace(item.Text) != "" {
+				c.mu.Lock()
+				if _, tracked := c.ephemeralThreads[completed.ThreadID]; tracked {
+					if c.agentMessages == nil {
+						c.agentMessages = make(map[string]string)
+					}
+					c.agentMessages[key] = item.Text
 				}
-				c.agentMessages[turnKey(completed.ThreadID, completed.TurnID)] = completed.Item.Text
+				c.mu.Unlock()
+			}
+			return
+		}
+		if failure := toolRuntimeError(completed.Item); failure != "" {
+			c.mu.Lock()
+			if _, tracked := c.ephemeralThreads[completed.ThreadID]; tracked && c.toolErrors[key] == "" {
+				if c.toolErrors == nil {
+					c.toolErrors = make(map[string]string)
+				}
+				c.toolErrors[key] = failure
 			}
 			c.mu.Unlock()
 		}
@@ -614,6 +691,8 @@ func (c *StdioAppServer) handleFrame(frame []byte) {
 			c.mu.Lock()
 			value.LastMessage = c.agentMessages[key]
 			delete(c.agentMessages, key)
+			value.ToolRuntimeError = c.toolErrors[key]
+			delete(c.toolErrors, key)
 			if wait := c.turnWaiters[key]; wait != nil {
 				delete(c.turnWaiters, key)
 				wait <- value
@@ -768,6 +847,7 @@ func (c *StdioAppServer) fail(err error) {
 	}
 	c.completedTurns = make(map[string]TurnCompletion)
 	c.agentMessages = nil
+	c.toolErrors = nil
 	c.ephemeralThreads = make(map[string]struct{})
 	c.interactions = make(map[string]pendingInteraction)
 	c.closed = true

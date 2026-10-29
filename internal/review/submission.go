@@ -78,6 +78,9 @@ func (s *Service) SubmitTaskForReview(ctx context.Context, request SubmissionReq
 		record, err = s.reviseSubmission(ctx, store, normalized, idempotencyKey, materialHash)
 		replayed = err == nil
 	}
+	if err == nil && replayed {
+		err = s.rerunInfrastructureFailure(ctx, record)
+	}
 	if err == nil && normalized.NotifyAddress != "" && normalized.NotifyAddress != record.Request.NotifyAddress {
 		record, err = s.updateNotifyAddress(ctx, store, record, normalized.NotifyAddress)
 	}
@@ -153,6 +156,26 @@ func (s *Service) retireAfterChangesRequested(ctx context.Context, store Submiss
 		return false, err
 	}
 	return true, nil
+}
+
+// rerunInfrastructureFailure lets a plain resubmit re-run a job that failed
+// only because the reviewer runtime broke. Its Den round is still open, so
+// the same job takes another attempt; any other failure keeps the replay.
+func (s *Service) rerunInfrastructureFailure(ctx context.Context, record SubmissionRecord) error {
+	if record.Phase != SubmissionJobAdmitted || record.JobID == "" {
+		return nil
+	}
+	job, err := s.store.Get(ctx, record.JobID)
+	if err != nil {
+		return err
+	}
+	if !job.InfrastructureFailure() {
+		return nil
+	}
+	if _, err := s.RetryFailed(ctx, job.ID); err != nil && !errors.Is(err, ErrTooLate) {
+		return err
+	}
+	return nil
 }
 
 // AdvanceSubmissions moves unfinished submissions forward so a caller's single

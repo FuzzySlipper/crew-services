@@ -1258,3 +1258,126 @@ func TestFinalizedHookSeesOnlyStoredReceipts(t *testing.T) {
 		t.Fatalf("hook jobs = %+v, want the succeeded job once", hook.jobs)
 	}
 }
+
+func TestRuntimeInfrastructureFailureRetriesBoundedThenFails(t *testing.T) {
+	svc, store, _, runtime, a := fixture(t, 1)
+	defer store.Close()
+	j, _, err := svc.Admit(context.Background(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.skipCompletion = true
+	runtime.runErr = fmt.Errorf("Codex tool runtime failed: failed to decode code-mode IPC frame: %w", ErrRuntimeInfrastructure)
+	for attempt := 1; attempt < maxInfraAttempts; attempt++ {
+		if _, err = svc.RunOne(context.Background()); !errors.Is(err, ErrRuntimeInfrastructure) {
+			t.Fatalf("attempt %d error = %v, want ErrRuntimeInfrastructure", attempt, err)
+		}
+		got, err := svc.Get(context.Background(), j.ID)
+		if err != nil || got.State != Queued {
+			t.Fatalf("attempt %d job=%+v err=%v, want queued", attempt, got, err)
+		}
+	}
+	if _, err = svc.RunOne(context.Background()); err != nil {
+		t.Fatalf("last attempt error = %v", err)
+	}
+	got, err := svc.Get(context.Background(), j.ID)
+	if err != nil || got.State != Failed || !got.InfrastructureFailure() || !strings.Contains(got.Failure, "code-mode IPC") {
+		t.Fatalf("exhausted job=%+v err=%v", got, err)
+	}
+	if runtime.acquired != maxInfraAttempts {
+		t.Fatalf("acquired %d workers, want one per attempt (%d)", runtime.acquired, maxInfraAttempts)
+	}
+}
+
+func TestRuntimeInfrastructureFailureThenSuccessCompletes(t *testing.T) {
+	svc, store, _, runtime, a := fixture(t, 1)
+	defer store.Close()
+	j, _, err := svc.Admit(context.Background(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.skipCompletion = true
+	runtime.runErr = fmt.Errorf("Codex App Server exited: %w", ErrRuntimeInfrastructure)
+	if _, err = svc.RunOne(context.Background()); !errors.Is(err, ErrRuntimeInfrastructure) {
+		t.Fatalf("first attempt error = %v", err)
+	}
+	runtime.skipCompletion, runtime.runErr = false, nil
+	if _, err = svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Get(context.Background(), j.ID)
+	if err != nil || got.State != Succeeded || got.Receipt == nil {
+		t.Fatalf("retried job=%+v err=%v", got, err)
+	}
+	if len(svc.infraAttempts) != 0 {
+		t.Fatalf("infra attempt counts retained: %v", svc.infraAttempts)
+	}
+}
+
+func TestResubmissionRerunsInfrastructureFailedJob(t *testing.T) {
+	den := &submissionDen{watchGate: GateEvidence{Status: "passed", Handle: "43", TerminalReason: "checks_passed"}}
+	store, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), nil, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	runtime := &fakeRuntime{completion: Completion{Verdict: "looks_good"}, skipCompletion: true, runErr: fmt.Errorf("tool runtime broke: %w", ErrRuntimeInfrastructure)}
+	service, err := New(store, den, runtime, "review profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxInfraAttempts; i++ {
+		_, _ = service.RunOne(context.Background())
+	}
+	failed, err := service.Get(context.Background(), first.JobID)
+	if err != nil || !failed.InfrastructureFailure() {
+		t.Fatalf("job before resubmit=%+v err=%v", failed, err)
+	}
+	again, replayed, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil || !replayed || again.JobID != first.JobID || den.requestCalls != 1 {
+		t.Fatalf("resubmission=%+v replayed=%v requests=%d err=%v", again, replayed, den.requestCalls, err)
+	}
+	requeued, err := service.Get(context.Background(), first.JobID)
+	if err != nil || requeued.State != Queued || requeued.Failure != "" {
+		t.Fatalf("job after resubmit=%+v err=%v, want queued", requeued, err)
+	}
+	runtime.skipCompletion, runtime.runErr = false, nil
+	if ran, err := service.RunOne(context.Background()); err != nil || !ran {
+		t.Fatalf("rerun ran=%v err=%v", ran, err)
+	}
+	done, err := service.Get(context.Background(), first.JobID)
+	if err != nil || done.State != Succeeded {
+		t.Fatalf("rerun job=%+v err=%v", done, err)
+	}
+}
+
+func TestResubmissionDoesNotRerunReviewFailure(t *testing.T) {
+	den := &submissionDen{watchGate: GateEvidence{Status: "passed", Handle: "43", TerminalReason: "checks_passed"}}
+	store, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), nil, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service, err := New(store, den, &fakeRuntime{skipCompletion: true}, "review profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = service.SubmitTaskForReview(context.Background(), submissionRequestForTest()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := service.Get(context.Background(), first.JobID)
+	if err != nil || got.State != Failed || got.InfrastructureFailure() {
+		t.Fatalf("ordinary failure after resubmit=%+v err=%v, want still failed", got, err)
+	}
+}

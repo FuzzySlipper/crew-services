@@ -147,6 +147,17 @@ Ephemeral Codex thread IDs are process-local and disappear on service restart;
 an in-flight job is requeued when the process context is cancelled so the next
 start can run it fresh.
 
+Codex updates itself on disk under a running crew-review. Before each review
+the Codex backend compares the executable's resolved path, modification time,
+size and `--version` with the ones its app-server started from, and restarts
+the app-server when they differ, once no review turn is running. A review that
+fails because the runtime broke (a tool-runtime error such as `failed to
+decode code-mode IPC frame` with no `complete_review`, or the app-server lost
+mid-turn) restarts the app-server and is retried, up to three attempts per
+process. A job that still fails records a `runtime_infrastructure:` failure,
+and a plain resubmit of the same submission re-runs it; any other failure
+still needs `supersedes_round` or an explicit retry.
+
 When Den MCP runs on a separate service box, keep `crew-review` loopback-only
 and carry its backend connection over SSH. On the agent box, a persistent
 reverse tunnel such as the following makes the agent-box listener available as
