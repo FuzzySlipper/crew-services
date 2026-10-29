@@ -58,6 +58,8 @@ func (s *Store) DeliveryOperation(ctx context.Context, now time.Time, r store.De
 		result, err = s.claimTransition(ctx, tx, now, r)
 	case "acknowledge", "fail", "outcome_unknown":
 		result, err = s.reconcile(ctx, tx, now, r)
+	case "not_inserted":
+		result, err = s.notInserted(ctx, tx, now, r)
 	default:
 		err = fmt.Errorf("unknown delivery operation %q", r.Kind)
 	}
@@ -335,6 +337,42 @@ func (s *Store) reconcile(ctx context.Context, tx *sql.Tx, now time.Time, r stor
 	}
 	updated, _, err := readDelivery(ctx, tx, d.DeliveryID)
 	return store.DeliveryOperationResult{Delivery: publicDelivery(updated)}, err
+}
+
+// notInserted returns a dispatching delivery to the queue when the
+// claim-owning adapter instance knows its native attempt inserted nothing. It
+// is the one way out of dispatching that is not terminal. The attempt stays
+// counted, the rejected native_attempt_ref stays on the row until the next
+// begin_dispatch replaces it, and accepted_sequence is untouched, so the
+// delivery is still its address head and is claimed again before anything
+// accepted after it.
+func (s *Store) notInserted(ctx context.Context, tx *sql.Tx, now time.Time, r store.DeliveryOperationRequest) (store.DeliveryOperationResult, error) {
+	d, found, err := readDelivery(ctx, tx, r.DeliveryID)
+	if err != nil {
+		return store.DeliveryOperationResult{}, err
+	}
+	if !found {
+		return store.DeliveryOperationResult{}, store.ErrNotFound
+	}
+	lease, err := currentLease(ctx, tx, now, r.AdapterID, r.LeaseToken)
+	if err != nil {
+		return store.DeliveryOperationResult{}, err
+	}
+	if d.State != "dispatching" {
+		return store.DeliveryOperationResult{}, store.ErrConflict
+	}
+	// Only the instance that made the attempt can know it inserted nothing.
+	if d.ClaimOwnerAdapterID != r.AdapterID {
+		return store.DeliveryOperationResult{}, store.ErrAdapterMismatch
+	}
+	if d.ClaimOwnerInstanceID != lease.InstanceID || d.ClaimToken != r.ClaimToken || d.NativeAttemptRef != r.NativeAttemptRef {
+		return store.DeliveryOperationResult{}, store.ErrClaimFenced
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE deliveries SET state='queued',claim_owner_adapter_id='',claim_owner_instance_id='',claim_token='',claim_expires_at=NULL,claimed_at=NULL,dispatch_action='',dispatching_at=NULL WHERE delivery_id=? AND state='dispatching'`, d.DeliveryID); err != nil {
+		return store.DeliveryOperationResult{}, fmt.Errorf("requeue not-inserted delivery: %w", err)
+	}
+	updated, _, err := readDelivery(ctx, tx, d.DeliveryID)
+	return store.DeliveryOperationResult{Delivery: publicDelivery(updated), NotInsertedReason: r.FailureReason}, err
 }
 func terminalize(ctx context.Context, tx *sql.Tx, now time.Time, id, state, reason string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE deliveries SET state=?,terminal_reason=?,terminal_at=? WHERE delivery_id=?`, state, reason, timestamp(now), id)

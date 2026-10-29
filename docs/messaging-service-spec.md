@@ -131,6 +131,7 @@ queued -> claimed -> dispatching -> delivered
 claimed -> queued                 (release or lease expiry before dispatch)
 queued | claimed -> failed | expired | cancelled
 dispatching -> delivered | failed | outcome_unknown
+dispatching -> queued             (not inserted: definite native rejection)
 ```
 
 A claim carries a claim token, lease expiry, attempt count, and terminal reason.
@@ -170,6 +171,27 @@ This is API idempotency and leased delivery, not exactly-once processing. An
 adapter uses `delivery_id` plus a native receipt to reconcile ambiguous native
 insertion. If it cannot determine whether the native side effect happened, it
 records `outcome_unknown`; it must not blindly redeliver after a lease expires.
+
+`dispatching -> queued` is the one non-terminal way out of dispatching. It is
+reported as *not inserted* by the claim-owning adapter instance when the
+runtime definitively rejected the native attempt and the adapter has confirmed
+the message is not in the runtime (for example Codex refusing a `turn/steer`
+because the turn ended). The request carries `adapter_id`, `lease_token`,
+`operation_id`, `claim_token`, `native_attempt_ref`, and a short `reason` code;
+it is accepted only while the delivery is `dispatching`, from the adapter that
+owns the claim under the live lease of the instance that claimed it, with that
+claim's token and the attempt reference recorded by begin dispatch. A
+replacement instance cannot use it: it did not make the attempt, so it
+reconciles through acknowledge or `outcome_unknown` instead. The transition
+clears the claim, keeps `attempt_count` (the attempt stays counted) and the
+rejected `native_attempt_ref` until the next begin dispatch replaces it, and
+leaves `accepted_sequence` unchanged, so the delivery is still its address head
+and is claimed again before anything accepted after it, under the usual
+eligibility rules (a `no_wake` head waits for the next active turn). Replaying
+the same `operation_id` returns the stored result; a different request under
+it is an operation conflict. Any doubt about whether the runtime took the
+message is `outcome_unknown`, never not-inserted.
+
 Lease and fencing coordinate adapters, not authentication or a security scheme.
 
 ### Replies and rounds
@@ -200,6 +222,7 @@ Paths are provisional; these operations are semantic commitments:
 | claim deliveries | Adapter-only, optionally long-polling; atomically claim eligible FIFO work with token and lease. |
 | begin dispatch | Token-fenced transition recorded immediately before the native side effect, including its stable attempt reference. |
 | acknowledge / release / fail / outcome unknown | Token-fenced adapter outcomes; acknowledgement means native acceptance only, and ambiguity is preserved for reconciliation. |
+| not inserted | `POST /v1/deliveries/{id}/not-inserted`: the claim-owning instance returns a dispatching delivery to the queue as its address head after a definite native rejection. |
 | inspect message / delivery / mailbox | Read-only inspection and history. |
 | adopt / update session | Adapter-owned, lease- and revision-fenced runtime-neutral projection. |
 | append / replay session event | Append projection fact with adapter operation idempotency; replay from global cursor or SSE. |

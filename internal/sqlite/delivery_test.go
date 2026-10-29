@@ -357,3 +357,100 @@ func TestPruneDeliveryOperationsRemovesOnlyReceiptsPastRetention(t *testing.T) {
 		t.Fatalf("old receipt survived retention: %#v", again)
 	}
 }
+
+func TestNotInsertedRequeuesDispatchingHeadForTheClaimOwnerOnly(t *testing.T) {
+	ctx := context.Background()
+	_, svc, closeDB, alpha, beta, bob := deliveryFixture(t)
+	defer closeDB()
+	first := submit(t, svc, alpha, "send-1", "first", time.Hour)
+	id := first.Delivery.DeliveryID
+	claimReq := func(op string) service.ClaimDeliveryRequest {
+		return service.ClaimDeliveryRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: op, RecipientAddress: "agent/bob", RecipientGeneration: bob.Generation, Availability: "idle", ClaimDuration: time.Minute}
+	}
+	claim, err := svc.ClaimDelivery(ctx, claimReq("claim-1"))
+	if err != nil || !claim.Claimed {
+		t.Fatalf("claim=%#v %v", claim, err)
+	}
+	req := service.NotInsertedRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "requeue-1", DeliveryID: id, ClaimToken: claim.ClaimToken, NativeAttemptRef: "native-1", Reason: "steer_rejected"}
+	// Only a dispatching delivery can be reported not inserted.
+	if _, err := svc.NotInserted(ctx, req); !hasCode(err, service.CodeConflict) {
+		t.Fatalf("claimed not-inserted=%v", err)
+	}
+	if _, err := svc.BeginDispatch(ctx, service.BeginDispatchRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "begin-1", DeliveryID: id, ClaimToken: claim.ClaimToken, NativeAttemptRef: "native-1"}); err != nil {
+		t.Fatal(err)
+	}
+	second := submit(t, svc, alpha, "send-2", "second", time.Hour)
+	for name, bad := range map[string]struct {
+		mutate func(*service.NotInsertedRequest)
+		code   service.ErrorCode
+	}{
+		"other adapter": {func(r *service.NotInsertedRequest) { r.AdapterID, r.LeaseToken = alpha.AdapterID, alpha.LeaseToken }, service.CodeAdapterMismatch},
+		"stale lease":   {func(r *service.NotInsertedRequest) { r.LeaseToken = "stale" }, service.CodeLeaseFenced},
+		"wrong token":   {func(r *service.NotInsertedRequest) { r.ClaimToken = "wrong" }, service.CodeClaimFenced},
+		"wrong attempt": {func(r *service.NotInsertedRequest) { r.NativeAttemptRef = "native-0" }, service.CodeClaimFenced},
+		"bad reason":    {func(r *service.NotInsertedRequest) { r.Reason = "Steer rejected!" }, service.CodeInvalid},
+	} {
+		r := req
+		r.OperationID = "bad-" + name
+		bad.mutate(&r)
+		if _, err := svc.NotInserted(ctx, r); !hasCode(err, bad.code) {
+			t.Fatalf("%s: err=%v want %s", name, err, bad.code)
+		}
+	}
+	requeued, err := svc.NotInserted(ctx, req)
+	if err != nil || requeued.State != "queued" || requeued.AttemptCount != 1 || requeued.NativeAttemptRef != "native-1" || requeued.ClaimOwnerAdapterID != "" || requeued.DispatchingAt != nil || requeued.TerminalAt != nil {
+		t.Fatalf("requeued=%#v %v", requeued, err)
+	}
+	replay, err := svc.NotInserted(ctx, req)
+	if err != nil || !reflect.DeepEqual(replay, requeued) {
+		t.Fatalf("replay=%#v %v", replay, err)
+	}
+	changed := req
+	changed.Reason = "other_reason"
+	if _, err := svc.NotInserted(ctx, changed); !hasCode(err, service.CodeOperationConflict) {
+		t.Fatalf("changed replay=%v", err)
+	}
+	// The requeued delivery is still the address head and is claimed again
+	// before the message accepted after it.
+	again, err := svc.ClaimDelivery(ctx, claimReq("claim-2"))
+	if err != nil || !again.Claimed || again.Delivery.DeliveryID != id || again.Delivery.AttemptCount != 2 || again.ClaimToken == claim.ClaimToken {
+		t.Fatalf("reclaim=%#v %v", again, err)
+	}
+	// The old claim token no longer fences anything.
+	if _, err := svc.BeginDispatch(ctx, service.BeginDispatchRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "begin-stale", DeliveryID: id, ClaimToken: claim.ClaimToken, NativeAttemptRef: "native-2"}); !hasCode(err, service.CodeClaimFenced) {
+		t.Fatalf("stale claim begin=%v", err)
+	}
+	if _, err := svc.BeginDispatch(ctx, service.BeginDispatchRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "begin-2", DeliveryID: id, ClaimToken: again.ClaimToken, NativeAttemptRef: "native-2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Acknowledge(ctx, service.ReconcileDeliveryRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "ack-2", DeliveryID: id, NativeAttemptRef: "native-2"}); err != nil {
+		t.Fatal(err)
+	}
+	next, err := svc.ClaimDelivery(ctx, claimReq("claim-3"))
+	if err != nil || !next.Claimed || next.Delivery.DeliveryID != second.Delivery.DeliveryID {
+		t.Fatalf("next=%#v %v", next, err)
+	}
+}
+
+func TestNotInsertedIsFencedToTheInstanceThatDispatched(t *testing.T) {
+	ctx := context.Background()
+	_, svc, closeDB, alpha, beta, bob := deliveryFixture(t)
+	defer closeDB()
+	first := submit(t, svc, alpha, "send-1", "first", time.Hour)
+	claim, err := svc.ClaimDelivery(ctx, service.ClaimDeliveryRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "claim-1", RecipientAddress: "agent/bob", RecipientGeneration: bob.Generation, Availability: "idle", ClaimDuration: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.BeginDispatch(ctx, service.BeginDispatchRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "begin-1", DeliveryID: first.Delivery.DeliveryID, ClaimToken: claim.ClaimToken, NativeAttemptRef: "native-1"}); err != nil {
+		t.Fatal(err)
+	}
+	replacement := registerWithPrevious(t, svc, beta.AdapterID, "recipient-2", beta.LeaseToken)
+	// A replacement instance can reconcile the dispatch but cannot claim to
+	// know the old instance's attempt inserted nothing.
+	if _, err := svc.NotInserted(ctx, service.NotInsertedRequest{AdapterID: replacement.AdapterID, LeaseToken: replacement.LeaseToken, OperationID: "requeue", DeliveryID: first.Delivery.DeliveryID, ClaimToken: claim.ClaimToken, NativeAttemptRef: "native-1", Reason: "steer_rejected"}); !hasCode(err, service.CodeClaimFenced) {
+		t.Fatalf("replacement not-inserted=%v", err)
+	}
+	if _, err := svc.NotInserted(ctx, service.NotInsertedRequest{AdapterID: beta.AdapterID, LeaseToken: beta.LeaseToken, OperationID: "requeue-old", DeliveryID: first.Delivery.DeliveryID, ClaimToken: claim.ClaimToken, NativeAttemptRef: "native-1", Reason: "steer_rejected"}); !hasCode(err, service.CodeLeaseFenced) {
+		t.Fatalf("old instance not-inserted=%v", err)
+	}
+}

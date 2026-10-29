@@ -122,6 +122,30 @@ func reconcile(svc *service.Service, kind string) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, v)
 	}
 }
+
+type notInsertedRequest struct {
+	AdapterID        string `json:"adapter_id"`
+	LeaseToken       string `json:"lease_token"`
+	OperationID      string `json:"operation_id"`
+	ClaimToken       string `json:"claim_token"`
+	NativeAttemptRef string `json:"native_attempt_ref"`
+	Reason           string `json:"reason"`
+}
+
+func notInserted(svc *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var b notInsertedRequest
+		if !decodeJSON(w, r, &b) {
+			return
+		}
+		v, err := svc.NotInserted(r.Context(), service.NotInsertedRequest{AdapterID: b.AdapterID, LeaseToken: b.LeaseToken, OperationID: b.OperationID, DeliveryID: r.PathValue("deliveryID"), ClaimToken: b.ClaimToken, NativeAttemptRef: b.NativeAttemptRef, Reason: b.Reason})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, v)
+	}
+}
 func failDelivery(svc *service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var b claimMutationRequest

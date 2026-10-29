@@ -50,6 +50,7 @@ func NewHandler(svc *service.Service) http.Handler {
 	mux.HandleFunc("POST /v1/deliveries/{deliveryID}/acknowledge", reconcile(svc, "ack"))
 	mux.HandleFunc("POST /v1/deliveries/{deliveryID}/fail", failDelivery(svc))
 	mux.HandleFunc("POST /v1/deliveries/{deliveryID}/outcome-unknown", reconcile(svc, "unknown"))
+	mux.HandleFunc("POST /v1/deliveries/{deliveryID}/not-inserted", notInserted(svc))
 	mux.HandleFunc("POST /v1/maintenance/reap", reap(svc))
 	mux.HandleFunc("GET /v1/mailbox/{address}", mailbox(svc))
 	mux.HandleFunc("GET /v1/mailbox/{address}/head", mailboxHead(svc))

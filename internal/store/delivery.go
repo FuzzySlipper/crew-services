@@ -82,5 +82,8 @@ type DeliveryOperationLookup struct {
 type DeliveryOperationResult struct {
 	Claim    ClaimResult `json:"claim,omitempty"`
 	Delivery Delivery    `json:"delivery,omitempty"`
-	Replayed bool        `json:"replayed"`
+	// NotInsertedReason is the adapter's reason for a not_inserted requeue,
+	// kept in the operation receipt.
+	NotInsertedReason string `json:"not_inserted_reason,omitempty"`
+	Replayed          bool   `json:"replayed"`
 }

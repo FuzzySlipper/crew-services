@@ -85,6 +85,7 @@ type Delivery struct {
 	DispatchAction      string `json:"dispatch_action"`
 	NativeAttemptRef    string `json:"native_attempt_ref"`
 	ClaimOwnerAdapterID string `json:"claim_owner_adapter_id,omitempty"`
+	AttemptCount        int    `json:"attempt_count,omitempty"`
 }
 
 type Claim struct {
@@ -122,6 +123,17 @@ type DispatchRequest struct {
 	OperationID      string `json:"operation_id"`
 	ClaimToken       string `json:"claim_token"`
 	NativeAttemptRef string `json:"native_attempt_ref"`
+}
+
+// NotInsertedRequest reports that a begun dispatch definitely inserted
+// nothing natively, so the delivery goes back to the queue as the address head.
+type NotInsertedRequest struct {
+	AdapterID        string `json:"adapter_id"`
+	LeaseToken       string `json:"lease_token"`
+	OperationID      string `json:"operation_id"`
+	ClaimToken       string `json:"claim_token"`
+	NativeAttemptRef string `json:"native_attempt_ref"`
+	Reason           string `json:"reason"`
 }
 
 type ReconcileRequest struct {
@@ -215,6 +227,14 @@ func (c *Client) Unknown(ctx context.Context, deliveryID string, request Reconci
 func (c *Client) Fail(ctx context.Context, deliveryID string, request ReconcileRequest) (Delivery, error) {
 	var delivery Delivery
 	err := c.call(ctx, http.MethodPost, "/v1/deliveries/"+url.PathEscape(deliveryID)+"/fail", request, &delivery)
+	return delivery, err
+}
+
+// NotInserted moves a dispatching delivery back to queued after a definite
+// native rejection. Use Unknown when the native outcome is not known.
+func (c *Client) NotInserted(ctx context.Context, deliveryID string, request NotInsertedRequest) (Delivery, error) {
+	var delivery Delivery
+	err := c.call(ctx, http.MethodPost, "/v1/deliveries/"+url.PathEscape(deliveryID)+"/not-inserted", request, &delivery)
 	return delivery, err
 }
 

@@ -27,6 +27,13 @@ type BeginDispatchRequest struct{ AdapterID, LeaseToken, OperationID, DeliveryID
 type ReconcileDeliveryRequest struct{ AdapterID, LeaseToken, OperationID, DeliveryID, NativeAttemptRef string }
 type FailDeliveryRequest struct{ AdapterID, LeaseToken, OperationID, DeliveryID, ClaimToken, NativeAttemptRef string }
 
+// NotInsertedRequest reports a definite native rejection: the claim-owning
+// adapter knows its dispatch attempt inserted nothing. Reason is a short
+// machine code such as "steer_rejected".
+type NotInsertedRequest struct {
+	AdapterID, LeaseToken, OperationID, DeliveryID, ClaimToken, NativeAttemptRef, Reason string
+}
+
 // ClaimDelivery records a durable claim or a durable no-work decision. A
 // pending notification is intentionally not an action and never becomes a
 // delivery fact.
@@ -83,6 +90,39 @@ func (s *Service) FailDelivery(ctx context.Context, r FailDeliveryRequest) (Deli
 		return s.reconcile(ctx, "fail", r.AdapterID, r.LeaseToken, r.OperationID, r.DeliveryID, r.NativeAttemptRef)
 	}
 	return s.claimMutation(ctx, "fail_claimed", r.AdapterID, r.LeaseToken, r.OperationID, r.DeliveryID, r.ClaimToken, "", 0)
+}
+
+// NotInserted moves a dispatching delivery back to queued, ahead of anything
+// accepted after it, for an adapter that knows its native attempt inserted
+// nothing. An adapter that does not know must report OutcomeUnknown instead.
+func (s *Service) NotInserted(ctx context.Context, r NotInsertedRequest) (Delivery, error) {
+	if err := requireFields(r.AdapterID, r.LeaseToken, r.OperationID, r.DeliveryID, r.ClaimToken, r.NativeAttemptRef, r.Reason); err != nil {
+		return Delivery{}, err
+	}
+	if !reasonCode(r.Reason) {
+		return Delivery{}, invalid("reason must be 1-64 characters of a-z, 0-9 and _")
+	}
+	fp := deliveryFingerprint("not_inserted", r.DeliveryID, r.ClaimToken, r.NativeAttemptRef, r.Reason)
+	if result, found, err := s.replayDeliveryOperation(ctx, r.AdapterID, r.OperationID, fp); err != nil || found {
+		if err != nil {
+			return Delivery{}, err
+		}
+		return result.Delivery, nil
+	}
+	result, err := s.store.DeliveryOperation(ctx, s.clock.Now().UTC(), store.DeliveryOperationRequest{Kind: "not_inserted", AdapterID: r.AdapterID, LeaseToken: r.LeaseToken, OperationID: r.OperationID, Fingerprint: fp, DeliveryID: r.DeliveryID, ClaimToken: r.ClaimToken, NativeAttemptRef: r.NativeAttemptRef, FailureReason: r.Reason})
+	return result.Delivery, mapStoreError(err)
+}
+
+func reasonCode(v string) bool {
+	if len(v) == 0 || len(v) > 64 {
+		return false
+	}
+	for _, c := range v {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) claimMutation(ctx context.Context, kind, adapter, lease, op, delivery, token, native string, duration time.Duration) (Delivery, error) {
