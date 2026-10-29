@@ -82,7 +82,26 @@ Submission `8e76cf0a…`, gate 8400, commit `70663e9` (adds `gate-proof/PASS`).
 
 ### Exited: delivered on resume
 
-_Pending._
+Scratch task #10483, submission `7ae3e633…`, gate 8406, commit `72af331`.
+
+**Test subject.** A throwaway desktop Claude Code session registered as `s/18b3ce4f7fa49522`.
+
+**Making it exit.** The session was archived, which stops its process. crew-claude then listed it as `exited`, and no process remained.
+
+**Submission.** It went through `den-tool den submit_task_for_review` with `notify_address: "s/18b3ce4f7fa49522"`. This was the real MCP path; the coordinator's own tool schema predates #10455.
+
+| Time | Event |
+| --- | --- |
+| 11:27:50 | `gate_failed` |
+| 11:28:15 | fabric accepted message `c8fc385e…` |
+| 11:28:20 | notice row `sent` |
+| 11:28:20–11:28:57 | delivery `queued`, attempt_count 0: nothing is attempted while the session is exited (Claude advertises no `wake_inactive`) |
+| 11:29:11 | session unarchived and resumed with a neutral message; SessionStart re-registered the same address. Same instant: claimed as `deliver_at_idle` |
+| 11:29:13 | the session answered the resume message |
+| 11:29:15 | the notice arrived as its own peer turn (`turnOrigin: peer`) |
+| 11:29:17 | `delivered` / `native_accepted`, attempt_count 1; the session replied `got notice c8fc385e…` |
+
+Exactly one message and one delivery exist for that operation.
 
 ## Codex and DSH
 
