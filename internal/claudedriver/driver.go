@@ -87,16 +87,21 @@ type Registration struct {
 // so the delivery stays dispatching until the session's transcript shows the
 // message in the conversation.
 type Dispatch struct {
-	DeliveryID string    `json:"delivery_id"`
-	MessageID  string    `json:"message_id"`
-	MsgID      string    `json:"msg_id"`
-	Ref        string    `json:"native_attempt_ref"`
-	SessionID  string    `json:"session_id"`
-	Socket     string    `json:"socket"`
-	Transcript string    `json:"transcript"`
-	Offset     int64     `json:"offset"`
-	Enqueued   bool      `json:"enqueued,omitempty"`
-	PostedAt   time.Time `json:"posted_at"`
+	DeliveryID string `json:"delivery_id"`
+	MessageID  string `json:"message_id"`
+	MsgID      string `json:"msg_id"`
+	Ref        string `json:"native_attempt_ref"`
+	SessionID  string `json:"session_id"`
+	Socket     string `json:"socket"`
+	Transcript string `json:"transcript"`
+	Offset     int64  `json:"offset"`
+	Enqueued   bool   `json:"enqueued,omitempty"`
+	// Inserted records that the transcript showed the message in the
+	// conversation. It is saved before the acknowledgement is sent, so a failed
+	// acknowledgement is retried (with the same operation ID) instead of being
+	// lost behind an offset that already moved past the evidence.
+	Inserted bool      `json:"inserted,omitempty"`
+	PostedAt time.Time `json:"posted_at"`
 }
 
 type Driver struct {
@@ -492,22 +497,35 @@ func (d *Driver) reconcile(ctx context.Context, s Session, head fabricclient.Del
 	if head.NativeAttemptRef != "" {
 		p.Ref = head.NativeAttemptRef
 	}
-	marker := ""
-	if p.MessageID != "" {
-		marker = "(crew message " + p.MessageID + ")"
+	if !p.Inserted {
+		marker := ""
+		if p.MessageID != "" {
+			marker = "(crew message " + p.MessageID + ")"
+		}
+		scan, err := scanTranscript(p.Transcript, p.Offset, p.MsgID, marker)
+		if err != nil {
+			return false, fmt.Errorf("read transcript %s: %w", p.Transcript, err)
+		}
+		p.Offset = scan.Offset
+		p.Enqueued = p.Enqueued || scan.Enqueued
+		if scan.Inserted {
+			// Keep the evidence before acting on it: the offset now points past
+			// the line that proved the insertion.
+			p.Inserted = true
+			if err := d.keepDispatch(p); err != nil {
+				d.log.Warn("save driver state", "error", err)
+			}
+		}
 	}
-	scan, err := scanTranscript(p.Transcript, p.Offset, p.MsgID, marker)
-	if err != nil {
-		return false, fmt.Errorf("read transcript %s: %w", p.Transcript, err)
-	}
-	p.Offset = scan.Offset
-	p.Enqueued = p.Enqueued || scan.Enqueued
 	age := now.Sub(p.PostedAt)
 	request := fabricclient.ReconcileRequest{AdapterID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), NativeAttemptRef: p.Ref}
 	var outcome string
+	var err error
 	switch {
-	case scan.Inserted:
+	case p.Inserted:
 		outcome = "delivered"
+		// The same operation ID on every attempt: a retry after a lost
+		// response replays the first acknowledgement.
 		request.OperationID = "crew-claude/ack/" + p.DeliveryID
 		_, err = d.fabric.Acknowledge(ctx, p.DeliveryID, request)
 	case !p.Enqueued && age > d.cfg.AcceptTimeout:
@@ -519,28 +537,44 @@ func (d *Driver) reconcile(ctx context.Context, s Session, head fabricclient.Del
 	case p.Enqueued && age > d.cfg.QueuedTimeout:
 		outcome = "outcome_unknown: queued but never entered the conversation"
 	}
-	if outcome != "" && !scan.Inserted {
+	if outcome != "" && !p.Inserted {
 		request.OperationID = "crew-claude/unknown/" + p.DeliveryID
 		_, err = d.fabric.Unknown(ctx, p.DeliveryID, request)
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
 	var gone *fabricclient.HTTPError
 	settled := outcome != "" && err == nil
 	if outcome != "" && errors.As(err, &gone) && (gone.Status == 404 || gone.Status == 409) {
 		// Already settled elsewhere (for example by fabric maintenance).
 		settled, err = true, nil
 	}
-	if settled {
-		delete(d.dispatches, p.DeliveryID)
-		d.log.Info("settled dispatch", "session", s.SessionID, "delivery", p.DeliveryID, "outcome", outcome, "after", age.Round(time.Millisecond))
-	} else {
-		*d.dispatches[p.DeliveryID] = p
+	if !settled {
+		if saveErr := d.keepDispatch(p); saveErr != nil && err == nil {
+			err = saveErr
+		}
+		if err != nil && p.Inserted {
+			err = fmt.Errorf("acknowledge %s (kept for retry): %w", p.DeliveryID, err)
+		}
+		return false, err
 	}
-	if saveErr := d.saveLocked(); saveErr != nil && err == nil {
-		err = saveErr
+	d.mu.Lock()
+	delete(d.dispatches, p.DeliveryID)
+	saveErr := d.saveLocked()
+	d.mu.Unlock()
+	d.log.Info("settled dispatch", "session", s.SessionID, "delivery", p.DeliveryID, "outcome", outcome, "after", age.Round(time.Millisecond))
+	return true, saveErr
+}
+
+// keepDispatch records a dispatch's progress in memory and in the state file.
+// A dispatch another pass settled in the meantime stays settled.
+func (d *Driver) keepDispatch(p Dispatch) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	current, ok := d.dispatches[p.DeliveryID]
+	if !ok {
+		return nil
 	}
-	return settled, err
+	*current = p
+	return d.saveLocked()
 }
 
 // render is the text the session reads, naming the sender when Lookup knows it.

@@ -177,7 +177,12 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) newDriver(t *testing.T) *claudedriver.Driver {
 	t.Helper()
-	d, err := claudedriver.New(h.fabric, h.inbox, h.clock.Now, claudedriver.Config{AdapterID: "claude-code", InstanceID: "test", StatePath: filepath.Join(h.dir, "state.json"), LeaseDuration: time.Minute, AcceptTimeout: time.Minute, QueuedTimeout: time.Hour}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return h.newDriverWith(t, h.fabric)
+}
+
+func (h *harness) newDriverWith(t *testing.T, fabric claudedriver.Fabric) *claudedriver.Driver {
+	t.Helper()
+	d, err := claudedriver.New(fabric, h.inbox, h.clock.Now, claudedriver.Config{AdapterID: "claude-code", InstanceID: "test", StatePath: filepath.Join(h.dir, "state.json"), LeaseDuration: time.Minute, AcceptTimeout: time.Minute, QueuedTimeout: time.Hour}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -633,5 +638,86 @@ func TestSendFromASessionReachesAnotherSession(t *testing.T) {
 	}
 	if _, err := crewcli.Send(h.ctx, api.URL, crewcli.SendRequest{From: "stranger", To: to, Body: "x", OperationID: "s-1"}); err == nil {
 		t.Fatal("an unregistered session sent a message")
+	}
+}
+
+// flakyAck fails acknowledgements: "fail" before the fabric sees them, "lose"
+// after the fabric applied them (the response is lost).
+type flakyAck struct {
+	*fabricclient.Client
+	mu   sync.Mutex
+	mode string
+	ops  []string
+}
+
+func (f *flakyAck) Acknowledge(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error) {
+	f.mu.Lock()
+	mode := f.mode
+	f.ops = append(f.ops, request.OperationID)
+	f.mu.Unlock()
+	switch mode {
+	case "fail":
+		return fabricclient.Delivery{}, errors.New("connection refused")
+	case "lose":
+		_, _ = f.Client.Acknowledge(ctx, deliveryID, request)
+		return fabricclient.Delivery{}, errors.New("connection reset")
+	}
+	return f.Client.Acknowledge(ctx, deliveryID, request)
+}
+
+func (f *flakyAck) set(mode string) {
+	f.mu.Lock()
+	f.mode = mode
+	f.mu.Unlock()
+}
+
+// The transcript line that proves an insertion is read once; the offset moves
+// past it. A failed acknowledgement must keep that fact, retry the same
+// operation without posting again, and survive a driver restart.
+func TestFailedAcknowledgementIsRetriedFromSavedInsertion(t *testing.T) {
+	h := newHarness(t)
+	flaky := &flakyAck{Client: h.fabric, mode: "fail"}
+	driver := h.newDriverWith(t, flaky)
+	if err := driver.Start(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	sock := h.socket(t, "ten")
+	address := h.register(t, driver, "session-10", sock)
+	driver.SetBusy("session-10", true)
+	h.send(t, "first", address, "acknowledge me", "next_step")
+	h.send(t, "second", address, "behind it", "next_step")
+	driver.Pump(h.ctx)
+	if got := h.states(t, address); strings.Join(got, ",") != "dispatching,queued" {
+		t.Fatalf("after a failed ack=%v", got)
+	}
+	state, err := os.ReadFile(filepath.Join(h.dir, "state.json"))
+	if err != nil || !strings.Contains(string(state), `"inserted": true`) {
+		t.Fatalf("insertion not saved before the ack: %s %v", state, err)
+	}
+	// The fabric applies the ack but the response is lost: still pending here.
+	flaky.set("lose")
+	driver.Pump(h.ctx)
+	if n := len(h.inbox.sent()); n != 1 {
+		t.Fatalf("reposted after a failed ack (%d posts)", n)
+	}
+
+	// A restarted driver reads the saved insertion and acknowledges with the
+	// same operation ID; the fabric replays it and the next message goes out.
+	restarted := h.newDriver(t)
+	if err := restarted.Start(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	restarted.Pump(h.ctx)
+	if got := h.states(t, address); strings.Join(got, ",") != "delivered,delivered" {
+		t.Fatalf("after restart=%v", got)
+	}
+	sent := h.inbox.sent()
+	if len(sent) != 2 || !strings.Contains(sent[1].text, "behind it") {
+		t.Fatalf("posts=%#v", sent)
+	}
+	flaky.mu.Lock()
+	defer flaky.mu.Unlock()
+	if len(flaky.ops) != 2 || flaky.ops[0] != flaky.ops[1] {
+		t.Fatalf("ack operation ids=%v, want one id retried", flaky.ops)
 	}
 }
