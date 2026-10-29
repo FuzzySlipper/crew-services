@@ -308,3 +308,69 @@ Known limits:
   at once and the command ran its full 20 seconds. Whether the model acts on
   the note is up to the model: once its reply followed the note, once (with
   the `Crew message from` framing) it did not.
+
+## DSH driver
+
+`crew-dsh` delivers fabric messages into DeepSeek Harness sessions through the
+`dsh web` host's session API (`dsh-web.service`, `http://127.0.0.1:3080`). It
+needs no DSH plugin or hook and never starts, stops, cancels or restarts DSH or
+a session; the host resumes a cold session itself when it is prompted. Install
+or update it with:
+
+```bash
+scripts/install-crew-dsh.sh
+```
+
+That builds `~/.local/bin/crew-dsh` and starts `crew-dsh.service` (loopback API
+`127.0.0.1:8793`). The driver reads the launch token that `dsh web` logs at
+start from that unit's user journal, connects once with `GET
+/connect?token=…&interactions=none` (so it is never a party to approvals or
+questions) and calls `POST /api/session/<method>` with the cookie. After a
+`dsh web` restart the old cookie gets 401; the driver then reads the new token
+and connects again on its own.
+
+Every root session `session/list` shows (not a subagent, not blank, updated in
+the last 14 days, `-recent`) gets a session address (`s/...`). A blank session
+gets one when it asks (`crew-dsh address`). Each pass reads busy, idle and not
+loaded from the list (`running`, `agentAvailable`). Each binding advertises
+`deliver_next_step`, `deliver_when_idle`, `durable_next_turn` and
+`wake_inactive`. Delivery is `session/prompt` with `requestId`
+`crew-delivery:<delivery id>`:
+
+| Policy | Prompt mode | Effect |
+| --- | --- | --- |
+| `next_step` | `steer` | read at the running turn's next step boundary; starts a turn on an idle or cold session |
+| `next_turn` | `queue` | the next turn; starts at once on an idle session, resumes a cold one |
+| `no_wake` | `steer`, only while a turn is running | the session state is read after the claim and again just before the prompt; with no running turn the claim is released (before Begin) or reported not inserted (after Begin), so it never starts a turn |
+
+`accepted:true` is acknowledged as delivered. The host deduplicates on
+`requestId`, except in a ~0.1 s window in which the turn has taken the item
+from the inbox but not yet written its user message. So after an ambiguous
+answer (a reset connection, an unreadable response) the driver waits
+`-reconcile-wait` (1 s), then looks for the `requestId` in `session/state`
+`queue[].rpcId` and in the recent `session/events` (`agent/inbox/spliced`
+`inserted[].source.rpcId` and `user/message` `source.rpcId`). Found, it
+acknowledges. Not found, it sends the same prompt once more; a second unclear
+answer, a prompt that timed out (the host may still be working on it) or a
+session it cannot read is `outcome_unknown`. A refusal (`ok:false`) of a prompt
+the session does not hold is reported not inserted and the session is backed
+off (30 s doubling to 10 m); `session/not-found` fails the delivery. A dispatch
+a crash left in flight is checked the same way and acknowledged or recorded
+`outcome_unknown`, never sent again.
+
+DSH agents run `crew-dsh send [--policy P] --to ADDRESS TEXT`, `crew-dsh who`
+and `crew-dsh address`; the commands read the session from `DSH_SESSION_ID`,
+which DSH sets for its shell tools (a subagent sends as its parent session).
+`dsh-web.service` has `~/.local/bin` on its `PATH`.
+
+Known limits:
+- No SessionStart context: DSH's hook bridge is not in the web profile, so an
+  agent learns its address with `crew-dsh address` rather than from context.
+- A `no_wake` steer still races a turn that ends between the last state read
+  and the prompt; the web API has no non-waking insert (core `inject` is not
+  exposed), so that window (one HTTP round trip) is narrowed, not closed.
+- The old `dsh-crew-messaging` plugin's title aliases (a renamed root became an
+  address) are not carried over.
+- `go test -tags dshlive ./internal/dshdriver` with `DSH_LIVE_SESSION` set
+  runs the ambiguous-retry check against the running host; use a scratch
+  session.
