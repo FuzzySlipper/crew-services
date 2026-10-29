@@ -277,7 +277,8 @@ Known limits:
 - A thread `crew-codex` resumes has `crew-codex` as its only subscriber until
   a client attaches. An approval request in that turn waits unanswered until
   someone opens the thread.
-- A steer never cuts short a running tool call. Checked with a `sleep 20`
-  shell command: the steered note was recorded at once, the command ran its
-  full 20 seconds, and the model's next request (and its reply) took the note
-  into account.
+- A steer never cuts short a running tool call. Checked twice with a
+  `sleep 20` shell command: the steered note was recorded in the active turn
+  at once and the command ran its full 20 seconds. Whether the model acts on
+  the note is up to the model: once its reply followed the note, once (with
+  the `Crew message from` framing) it did not.
