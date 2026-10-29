@@ -457,9 +457,12 @@ type Job struct {
 	State        State         `json:"state"`
 	Failure      string        `json:"failure,omitempty"`
 	Finalization *Finalization `json:"-"`
-	Receipt      *Receipt      `json:"receipt,omitempty"`
-	CreatedAt    time.Time     `json:"created_at"`
-	UpdatedAt    time.Time     `json:"updated_at"`
+	// FinalizeAttempts counts transient finalization failures; it drives the
+	// retry backoff.
+	FinalizeAttempts int       `json:"finalize_attempts,omitempty"`
+	Receipt          *Receipt  `json:"receipt,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // Projection intentionally excludes runtime worker identifiers, prompts and transcripts.

@@ -61,6 +61,20 @@ func OpenSQLite(ctx context.Context, path string, clock Clock, capacity int) (*S
 			return nil, err
 		}
 	}
+	// Transient finalization retries back off durably, so a restart neither
+	// resets the delay nor hammers Den with a request it keeps refusing.
+	for _, column := range []string{"finalize_attempts", "finalize_after"} {
+		if err = db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('crew_review_jobs') WHERE name=?`, column).Scan(&columns); err != nil {
+			db.Close()
+			return nil, err
+		}
+		if columns == 0 {
+			if _, err = db.ExecContext(ctx, `ALTER TABLE crew_review_jobs ADD COLUMN `+column+` INTEGER NOT NULL DEFAULT 0`); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("migrate crew review %s: %w", column, err)
+			}
+		}
+	}
 	if _, err = db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS crew_review_jobs_round_identity ON crew_review_jobs(round_identity) WHERE round_identity IS NOT NULL`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate crew review round identity: %w", err)
@@ -206,7 +220,7 @@ func (s *SQLiteStore) AdmitRound(ctx context.Context, a Admission) (Job, bool, e
 	return Job{}, false, err
 }
 func (s *SQLiteStore) Get(ctx context.Context, id string) (Job, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,admission_json,state,finalization_json,receipt_json,failure,created_at,updated_at FROM crew_review_jobs WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id,admission_json,state,finalization_json,receipt_json,failure,finalize_attempts,created_at,updated_at FROM crew_review_jobs WHERE id=?`, id)
 	return scanJob(row)
 }
 
@@ -216,7 +230,7 @@ func scanJob(row scanner) (Job, error) {
 	var j Job
 	var a, f, r sql.NullString
 	var c, u string
-	e := row.Scan(&j.ID, &a, &j.State, &f, &r, &j.Failure, &c, &u)
+	e := row.Scan(&j.ID, &a, &j.State, &f, &r, &j.Failure, &j.FinalizeAttempts, &c, &u)
 	if errors.Is(e, sql.ErrNoRows) {
 		return Job{}, ErrNotFound
 	}
@@ -249,7 +263,7 @@ func (s *SQLiteStore) Claim(ctx context.Context) (Job, bool, error) {
 	// Finalization has durable material already. Prefer reconciling it after a
 	// restart before starting any new native work; Den owns idempotency there.
 	var finalizingID string
-	if e = tx.QueryRowContext(ctx, `SELECT id FROM crew_review_jobs WHERE state=? AND finalizing_claim=0 ORDER BY updated_at LIMIT 1`, Finalizing).Scan(&finalizingID); e == nil {
+	if e = tx.QueryRowContext(ctx, `SELECT id FROM crew_review_jobs WHERE state=? AND finalizing_claim=0 AND finalize_after<=? ORDER BY updated_at LIMIT 1`, Finalizing, s.clock.Now().UnixNano()).Scan(&finalizingID); e == nil {
 		result, claimErr := tx.ExecContext(ctx, `UPDATE crew_review_jobs SET finalizing_claim=1,updated_at=? WHERE id=? AND state=? AND finalizing_claim=0`, stamp(s.clock.Now()), finalizingID, Finalizing)
 		if claimErr != nil {
 			return Job{}, false, claimErr
@@ -302,7 +316,7 @@ func (s *SQLiteStore) ClaimPreferred(ctx context.Context, task TaskKey) (Job, bo
 	}
 	defer tx.Rollback()
 	var finalizingID string
-	if e = tx.QueryRowContext(ctx, `SELECT id FROM crew_review_jobs WHERE state=? AND finalizing_claim=0 ORDER BY updated_at LIMIT 1`, Finalizing).Scan(&finalizingID); e == nil {
+	if e = tx.QueryRowContext(ctx, `SELECT id FROM crew_review_jobs WHERE state=? AND finalizing_claim=0 AND finalize_after<=? ORDER BY updated_at LIMIT 1`, Finalizing, s.clock.Now().UnixNano()).Scan(&finalizingID); e == nil {
 		result, claimErr := tx.ExecContext(ctx, `UPDATE crew_review_jobs SET finalizing_claim=1,updated_at=? WHERE id=? AND state=? AND finalizing_claim=0`, stamp(s.clock.Now()), finalizingID, Finalizing)
 		if claimErr != nil {
 			return Job{}, false, claimErr
@@ -352,7 +366,7 @@ func (s *SQLiteStore) PutFinalization(ctx context.Context, id string, f Finaliza
 	// reconciles or explicitly releases it for retry. Without this claim, a
 	// second runner can reconcile the stored result before the callback's turn
 	// returns and cause that lane to lose its changes-requested affinity.
-	res, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,finalizing_claim=1,finalization_json=?,updated_at=? WHERE id=? AND state=?`, Finalizing, string(b), stamp(s.clock.Now()), id, Running)
+	res, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,finalizing_claim=1,finalization_json=?,finalize_attempts=0,finalize_after=0,updated_at=? WHERE id=? AND state=?`, Finalizing, string(b), stamp(s.clock.Now()), id, Running)
 	if e != nil {
 		return Job{}, e
 	}
@@ -420,7 +434,7 @@ func (s *SQLiteStore) RetryFailed(ctx context.Context, id string) (Job, error) {
 	// a new admission. Clear every attempt-specific terminal value together so
 	// a runner can only observe either the intact failed attempt or a clean
 	// queued attempt.
-	result, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,finalizing_claim=0,failure='',finalization_json=NULL,receipt_json=NULL,updated_at=? WHERE id=? AND state=?`, Queued, stamp(s.clock.Now()), id, Failed)
+	result, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,finalizing_claim=0,failure='',finalization_json=NULL,receipt_json=NULL,finalize_attempts=0,finalize_after=0,updated_at=? WHERE id=? AND state=?`, Queued, stamp(s.clock.Now()), id, Failed)
 	if e != nil {
 		return Job{}, e
 	}
@@ -462,6 +476,13 @@ func (s *SQLiteStore) ReleaseFinalization(ctx context.Context, id string) error 
 	_, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET finalizing_claim=0,updated_at=? WHERE id=? AND state=?`, stamp(s.clock.Now()), id, Finalizing)
 	return e
 }
+
+// DeferFinalization releases a finalizing job's claim after a transient
+// failure, counts the attempt, and keeps claims off it until retryAt.
+func (s *SQLiteStore) DeferFinalization(ctx context.Context, id string, retryAt time.Time) error {
+	_, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET finalizing_claim=0,finalize_attempts=finalize_attempts+1,finalize_after=?,updated_at=? WHERE id=? AND state=?`, retryAt.UnixNano(), stamp(s.clock.Now()), id, Finalizing)
+	return e
+}
 func (s *SQLiteStore) Snapshot(ctx context.Context, limit int) (Snapshot, error) {
 	if limit < 1 || limit > 100 {
 		limit = 20
@@ -476,7 +497,7 @@ func (s *SQLiteStore) Snapshot(ctx context.Context, limit int) (Snapshot, error)
 	if e := s.db.QueryRowContext(ctx, `SELECT count(*) FROM crew_review_jobs WHERE state=?`, Finalizing).Scan(&out.Finalizing); e != nil {
 		return out, e
 	}
-	active, e := s.db.QueryContext(ctx, `SELECT id,admission_json,state,finalization_json,receipt_json,failure,created_at,updated_at FROM crew_review_jobs WHERE state IN (?,?,?) ORDER BY created_at LIMIT ?`, Queued, Running, Finalizing, limit)
+	active, e := s.db.QueryContext(ctx, `SELECT id,admission_json,state,finalization_json,receipt_json,failure,finalize_attempts,created_at,updated_at FROM crew_review_jobs WHERE state IN (?,?,?) ORDER BY created_at LIMIT ?`, Queued, Running, Finalizing, limit)
 	if e != nil {
 		return out, e
 	}
@@ -493,7 +514,7 @@ func (s *SQLiteStore) Snapshot(ctx context.Context, limit int) (Snapshot, error)
 		return out, e
 	}
 	active.Close()
-	rows, e := s.db.QueryContext(ctx, `SELECT id,admission_json,state,finalization_json,receipt_json,failure,created_at,updated_at FROM crew_review_jobs WHERE state IN (?,?,?,?) ORDER BY updated_at DESC LIMIT ?`, Succeeded, Failed, Cancelled, Stale, limit)
+	rows, e := s.db.QueryContext(ctx, `SELECT id,admission_json,state,finalization_json,receipt_json,failure,finalize_attempts,created_at,updated_at FROM crew_review_jobs WHERE state IN (?,?,?,?) ORDER BY updated_at DESC LIMIT ?`, Succeeded, Failed, Cancelled, Stale, limit)
 	if e != nil {
 		return out, e
 	}

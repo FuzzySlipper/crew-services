@@ -537,12 +537,88 @@ func TestFinalizingStaleConflictAndResponseLoss(t *testing.T) {
 		t.Fatal("response loss must remain retryable")
 	}
 	den.fail = false
+	svc.clock.(*testClock).Advance(finalizeRetryMin)
 	if _, e = svc.RunOne(context.Background()); e != nil {
 		t.Fatal(e)
 	}
 	got, e := svc.Get(context.Background(), j.ID)
 	if e != nil || got.State != Succeeded {
 		t.Fatalf("retry=%+v err=%v", got, e)
+	}
+}
+
+func TestFinalizingEndsOnDenTaskNotReviewable(t *testing.T) {
+	svc, store, den, _, a := fixture(t, 1)
+	defer store.Close()
+	den.finalErr = fmt.Errorf("%w: task_not_reviewable: task is not reviewable for packet kind: done", ErrTaskNotReviewable)
+	j, _, e := svc.Admit(context.Background(), a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = store.Claim(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = store.PutFinalization(context.Background(), j.ID, Finalization{Key: a.Key, Reviewer: a.Reviewer, Completion: Completion{Verdict: "looks_good"}}); e != nil {
+		t.Fatal(e)
+	}
+	if e = store.ReleaseFinalization(context.Background(), j.ID); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = svc.RunOne(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	got, e := svc.Get(context.Background(), j.ID)
+	if e != nil || got.State != Stale || !strings.Contains(got.Failure, "task_not_reviewable") {
+		t.Fatalf("got=%+v err=%v", got, e)
+	}
+	if ran, e := svc.RunOne(context.Background()); e != nil || ran || den.calls != 1 {
+		t.Fatalf("refused finalization retried: ran=%v err=%v calls=%d", ran, e, den.calls)
+	}
+}
+
+func TestFinalizationRetryBacksOff(t *testing.T) {
+	svc, store, den, _, a := fixture(t, 1)
+	defer store.Close()
+	clock := svc.clock.(*testClock)
+	den.fail = true
+	j, _, e := svc.Admit(context.Background(), a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = store.Claim(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = store.PutFinalization(context.Background(), j.ID, Finalization{Key: a.Key, Reviewer: a.Reviewer, Completion: Completion{Verdict: "looks_good"}}); e != nil {
+		t.Fatal(e)
+	}
+	if e = store.ReleaseFinalization(context.Background(), j.ID); e != nil {
+		t.Fatal(e)
+	}
+	for attempt, wait := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second} {
+		if ran, e := svc.RunOne(context.Background()); !ran || e == nil {
+			t.Fatalf("attempt %d ran=%v err=%v", attempt, ran, e)
+		}
+		clock.Advance(wait - time.Millisecond)
+		if ran, e := svc.RunOne(context.Background()); ran || e != nil {
+			t.Fatalf("attempt %d retried before its backoff: ran=%v err=%v", attempt, ran, e)
+		}
+		clock.Advance(time.Millisecond)
+	}
+	// The backoff is durable: a restart does not make the job claimable early.
+	if ran, _ := svc.RunOne(context.Background()); !ran {
+		t.Fatal("job not retried after backoff")
+	}
+	if e = store.Recover(context.Background()); e != nil {
+		t.Fatal(e)
+	}
+	if ran, e := svc.RunOne(context.Background()); ran || e != nil {
+		t.Fatalf("recovered job retried before its backoff: ran=%v err=%v", ran, e)
+	}
+	if got, _ := svc.Get(context.Background(), j.ID); got.State != Finalizing || got.FinalizeAttempts != 4 {
+		t.Fatalf("job=%+v", got)
+	}
+	if d := finalizeRetryDelay(20); d != finalizeRetryMax {
+		t.Fatalf("delay cap = %v", d)
 	}
 }
 
@@ -1174,6 +1250,7 @@ func TestFinalizedHookSeesOnlyStoredReceipts(t *testing.T) {
 		t.Fatalf("hook ran before Den's receipt was stored: %+v", hook.jobs)
 	}
 	den.fail = false
+	svc.clock.(*testClock).Advance(finalizeRetryMin)
 	if _, e = svc.RunOne(context.Background()); e != nil {
 		t.Fatal(e)
 	}

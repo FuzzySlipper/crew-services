@@ -387,9 +387,14 @@ func (s *Service) reconcile(ctx context.Context, j Job) error {
 		if errors.Is(e, ErrDenRejected) {
 			return s.terminal(ctx, j, Failed, e.Error())
 		}
+		if errors.Is(e, ErrTaskNotReviewable) {
+			// Den refuses any finalization for a task that left review, such as
+			// one already done or cancelled. Retrying cannot change that.
+			return s.terminal(ctx, j, Stale, "Den no longer accepts a review for this task; this review was not recorded: "+e.Error())
+		}
 		// An ambiguous transport failure retains the exact stored request in
 		// finalizing for retry; Den's receipt is the only completion authority.
-		_ = s.store.ReleaseFinalization(ctx, j.ID)
+		_ = s.store.DeferFinalization(ctx, j.ID, s.clock.Now().Add(finalizeRetryDelay(j.FinalizeAttempts)))
 		return e
 	}
 	completed, e := s.store.Complete(ctx, j.ID, r)
@@ -397,6 +402,23 @@ func (s *Service) reconcile(ctx context.Context, j Job) error {
 		s.finalized.Finalized(completed)
 	}
 	return e
+}
+
+// Finalization retries back off exponentially from finalizeRetryMin, capped
+// at finalizeRetryMax.
+const (
+	finalizeRetryMin = time.Second
+	finalizeRetryMax = 5 * time.Minute
+)
+
+// finalizeRetryDelay is the wait after the given number of earlier transient
+// failures.
+func finalizeRetryDelay(attempts int) time.Duration {
+	delay := finalizeRetryMin
+	for i := 0; i < attempts && delay < finalizeRetryMax; i++ {
+		delay *= 2
+	}
+	return min(delay, finalizeRetryMax)
 }
 func (s *Service) terminal(ctx context.Context, j Job, state State, why string) error {
 	_, e := s.store.Fail(ctx, j.ID, state, why)

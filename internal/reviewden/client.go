@@ -237,7 +237,8 @@ func classifyCode(operation, code, message string) error {
 			return &review.SubmissionError{Code: sourceCode, Message: message}
 		}
 	}
-	if strings.TrimSpace(strings.ToLower(code)) == "task_not_reviewable" {
+	// Den may also report the refusal only in the message text.
+	if strings.TrimSpace(strings.ToLower(code)) == "task_not_reviewable" || strings.Contains(lower, "task_not_reviewable") {
 		return fmt.Errorf("%w: %s", review.ErrTaskNotReviewable, text)
 	}
 	if strings.Contains(lower, "stale_review_round") || strings.Contains(lower, "review round is no longer current") || strings.Contains(lower, "round is stale") {

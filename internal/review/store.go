@@ -1,6 +1,9 @@
 package review
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type Store interface {
 	Admit(context.Context, Admission) (Job, bool, error)
@@ -14,6 +17,9 @@ type Store interface {
 	PutFinalization(context.Context, string, Finalization) (Job, error)
 	Complete(context.Context, string, Receipt) (Job, error)
 	ReleaseFinalization(context.Context, string) error
+	// DeferFinalization releases a finalizing job after a transient failure
+	// and holds it from claims until the given retry time.
+	DeferFinalization(context.Context, string, time.Time) error
 	Fail(context.Context, string, State, string) (Job, error)
 	Cancel(context.Context, string) (Job, error)
 	Requeue(context.Context, string) (Job, error)

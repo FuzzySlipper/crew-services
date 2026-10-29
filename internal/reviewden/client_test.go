@@ -377,6 +377,14 @@ func TestFinalizeReviewClassifiesStaleAndConflict(t *testing.T) {
 			message: `{"error":"den_backend_request_failed","message":"{\"error\":{\"code\":\"review_request_too_large\",\"message\":\"review request exceeds the bounded payload budget\"}}"}`,
 			want:    review.ErrDenRejected,
 		},
+		"task not reviewable": {
+			message: `{"error":"den_backend_request_failed","message":"{\"error\":{\"code\":\"task_not_reviewable\",\"message\":\"task is not reviewable for packet kind: done\"}}"}`,
+			want:    review.ErrTaskNotReviewable,
+		},
+		"task not reviewable in text": {
+			message: `{"error":"den_backend_request_failed","message":"task_not_reviewable: task is not reviewable for packet kind: cancelled"}`,
+			want:    review.ErrTaskNotReviewable,
+		},
 		"unresolved findings": {
 			message: `{"error":"den_backend_request_failed","message":"{\"error\":{\"code\":\"unresolved_review_findings\",\"message\":\"looks_good requires no unresolved findings for the task\"}}"}`,
 			want:    review.ErrDenRejected,
