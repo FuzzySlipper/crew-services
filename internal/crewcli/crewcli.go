@@ -46,7 +46,7 @@ type SendResult struct {
 }
 
 // DriverURLs are the loopback APIs of the drivers on this box.
-var DriverURLs = map[string]string{"claude-code": "http://127.0.0.1:8792", "codex": "http://127.0.0.1:8788"}
+var DriverURLs = map[string]string{"claude-code": "http://127.0.0.1:8792", "codex": "http://127.0.0.1:8788", "dsh": "http://127.0.0.1:8793"}
 
 // Who lists the sessions every reachable driver knows. A driver that does not
 // answer is reported in skipped rather than failing the list.
