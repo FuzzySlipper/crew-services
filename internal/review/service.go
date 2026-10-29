@@ -40,6 +40,12 @@ type Service struct {
 	// infrastructure failure during this process. A restart starts the count
 	// again, which is itself a fresh runtime.
 	infraAttempts map[string]int
+
+	// advanceTimeout bounds one submission's advance in a background pass;
+	// zero means DefaultSubmissionAdvanceTimeout. submissionLoop is the
+	// pass heartbeat, guarded by mu.
+	advanceTimeout time.Duration
+	submissionLoop SubmissionLoopHeartbeat
 }
 
 // maxInfraAttempts bounds how many attempts of one job may end in a runtime

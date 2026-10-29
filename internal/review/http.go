@@ -11,11 +11,15 @@ import (
 func NewHandler(s *Service) http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		// The submission loop heartbeat is reported, not judged: health
+		// stays the database's readiness, and a watcher decides how old a
+		// last pass may be.
+		loop := s.SubmissionLoop()
 		if e := s.Ready(r.Context()); e != nil {
-			write(w, 503, map[string]string{"status": "unavailable"})
+			write(w, 503, map[string]any{"status": "unavailable", "submission_loop": loop})
 			return
 		}
-		write(w, 200, map[string]string{"status": "ok"})
+		write(w, 200, map[string]any{"status": "ok", "submission_loop": loop})
 	})
 	m.HandleFunc("POST /v1/review-jobs", func(w http.ResponseWriter, r *http.Request) {
 		var a Admission
@@ -136,6 +140,8 @@ func NewHandler(s *Service) http.Handler {
 			errJSON(w, e)
 			return
 		}
+		loop := s.SubmissionLoop()
+		v.SubmissionLoop = &loop
 		write(w, 200, v)
 	})
 	return m

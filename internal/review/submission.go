@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -182,22 +183,99 @@ func (s *Service) rerunInfrastructureFailure(ctx context.Context, record Submiss
 // submit is enough: gate waits, Den unavailability, and checkout waits resolve
 // here instead of through caller retries. It reports whether any submission
 // was examined.
-func (s *Service) AdvanceSubmissions(ctx context.Context) (bool, error) {
+//
+// Each submission's advance has its own timeout, so one stuck Den call or git
+// command delays the pass by at most that long and the remaining submissions
+// still advance. Every pass updates the heartbeat.
+func (s *Service) AdvanceSubmissions(ctx context.Context) (examined bool, err error) {
 	store, ok := s.store.(SubmissionAdvanceStore)
 	if !ok {
 		return false, nil
 	}
-	records, err := store.ListUnfinishedSubmissions(ctx)
+	s.startSubmissionPass()
+	var records []SubmissionRecord
+	defer func() { s.finishSubmissionPass(len(records), err) }()
+	records, err = store.ListUnfinishedSubmissions(ctx)
 	if err != nil {
 		return false, err
 	}
+	timeout := s.advanceTimeout
+	if timeout <= 0 {
+		timeout = DefaultSubmissionAdvanceTimeout
+	}
 	var advanceErrors []error
 	for _, record := range records {
-		if _, err := s.advanceSubmission(ctx, store, record, false); err != nil {
-			advanceErrors = append(advanceErrors, fmt.Errorf("advance review submission %s: %w", record.ID, err))
+		if ctx.Err() != nil {
+			advanceErrors = append(advanceErrors, ctx.Err())
+			break
+		}
+		advanceCtx, cancel := context.WithTimeout(ctx, timeout)
+		_, advanceErr := s.advanceSubmission(advanceCtx, store, record, false)
+		if advanceErr == nil && advanceCtx.Err() != nil && ctx.Err() == nil {
+			advanceErr = fmt.Errorf("advance exceeded %s", timeout)
+		}
+		cancel()
+		if advanceErr != nil {
+			advanceErrors = append(advanceErrors, fmt.Errorf("advance review submission %s: %w", record.ID, advanceErr))
 		}
 	}
 	return len(records) > 0, errors.Join(advanceErrors...)
+}
+
+// DefaultSubmissionAdvanceTimeout bounds one submission's advance in a
+// background pass: well above a healthy sequence of Den calls and a local
+// git check, so only a stuck call reaches it.
+const DefaultSubmissionAdvanceTimeout = 2 * time.Minute
+
+// WithSubmissionAdvanceTimeout overrides DefaultSubmissionAdvanceTimeout.
+func WithSubmissionAdvanceTimeout(timeout time.Duration) Option {
+	return func(s *Service) { s.advanceTimeout = timeout }
+}
+
+// SubmissionLoopHeartbeat shows that the background submission pass is alive:
+// when the last pass started and finished, how many submissions it examined,
+// and its error. Running with an old LastPassStartedAt means a pass is stuck.
+type SubmissionLoopHeartbeat struct {
+	Running            bool      `json:"running"`
+	LastPassStartedAt  time.Time `json:"last_pass_started_at,omitzero"`
+	LastPassFinishedAt time.Time `json:"last_pass_finished_at,omitzero"`
+	LastPassExamined   int       `json:"last_pass_examined"`
+	LastPassError      string    `json:"last_pass_error,omitempty"`
+	Passes             int64     `json:"passes"`
+}
+
+// SubmissionLoop returns the background submission pass heartbeat. It is
+// zero until the first pass starts.
+func (s *Service) SubmissionLoop() SubmissionLoopHeartbeat {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.submissionLoop
+}
+
+func (s *Service) startSubmissionPass() {
+	now := s.clock.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.submissionLoop.Running = true
+	s.submissionLoop.LastPassStartedAt = now
+}
+
+func (s *Service) finishSubmissionPass(examined int, err error) {
+	now := s.clock.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.submissionLoop.Running = false
+	s.submissionLoop.LastPassFinishedAt = now
+	s.submissionLoop.LastPassExamined = examined
+	s.submissionLoop.LastPassError = ""
+	if err != nil {
+		message := err.Error()
+		if len(message) > 2048 {
+			message = message[:2048]
+		}
+		s.submissionLoop.LastPassError = message
+	}
+	s.submissionLoop.Passes++
 }
 
 func normalizeSubmissionRequest(request SubmissionRequest) (SubmissionRequest, error) {
@@ -361,7 +439,9 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 	gate := record.Gate
 	if len(record.Request.RequiredChecks) == 0 {
 		gate = noRequiredChecksGate(record.Request)
-		if !sameGate(record.Gate, gate) || record.Phase != SubmissionGatePassed {
+		// A submission waiting for its checkout keeps source_pending, so its
+		// grace period runs from when the wait began.
+		if !sameGate(record.Gate, gate) || (record.Phase != SubmissionGatePassed && record.Phase != SubmissionSourcePending) {
 			record, err = s.transitionSubmission(ctx, store, record, SubmissionTransition{
 				Phase:   SubmissionGatePassed,
 				Gate:    &gate,
@@ -510,7 +590,7 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 // submitter; after the grace period it records the typed source_missing
 // infrastructure failure.
 func (s *Service) submissionSourcePending(ctx context.Context, store SubmissionStore, record SubmissionRecord, gate GateEvidence, workspace string, checkErr error) (SubmissionReceipt, error) {
-	message := "review checkout " + workspace + " does not have commit " + record.Request.CommitSHA + " yet, even after a fetch"
+	message := "review checkout " + workspace + " does not have commit " + record.Request.CommitSHA + " yet; it is fetched in the background and checked again on the next pass"
 	if checkErr != nil {
 		message = "checking review checkout " + workspace + " for commit " + record.Request.CommitSHA + ": " + checkErr.Error()
 	}

@@ -143,6 +143,12 @@ Then enable it with `systemctl --user daemon-reload` and
 http://127.0.0.1:8413/healthz` checks SQLite readiness; `GET
 http://127.0.0.1:8413/v1/review-pool` reports the configured runtime backend,
 queued/running jobs, recent terminal projections, and retained task affinity.
+Both include `submission_loop`, the background submission pass heartbeat
+(`running`, `last_pass_started_at`, `last_pass_finished_at`,
+`last_pass_examined`, `last_pass_error`, `passes`). With the default 30s
+`-submission-interval`, a `last_pass_finished_at` minutes old, or `running`
+with an old `last_pass_started_at`, means the loop is stuck. `/healthz` stays
+200 while SQLite is ready either way.
 Ephemeral Codex thread IDs are process-local and disappear on service restart;
 an in-flight job is requeued when the process context is cancelled so the next
 start can run it fresh.

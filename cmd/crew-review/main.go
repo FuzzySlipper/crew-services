@@ -102,7 +102,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	options := []review.Option{review.WithBackend(cfg.backend), review.WithSourceChecker(reviewden.GitSourceChecker{}, cfg.sourceGrace)}
+	options := []review.Option{review.WithBackend(cfg.backend), review.WithSourceChecker(&reviewden.GitSourceChecker{}, cfg.sourceGrace)}
 	if cfg.backend == "codex" {
 		options = append(options, review.WithRuntimeChecker(reviewcodex.SandboxCheck{Command: cfg.codexCommand}))
 	}

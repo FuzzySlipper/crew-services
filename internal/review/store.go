@@ -81,4 +81,6 @@ type Snapshot struct {
 	Active     []Projection       `json:"active"`
 	Recent     []Projection       `json:"recent"`
 	Retained   []RetainedAffinity `json:"retained_affinities"`
+	// SubmissionLoop is the background submission pass heartbeat.
+	SubmissionLoop *SubmissionLoopHeartbeat `json:"submission_loop,omitempty"`
 }

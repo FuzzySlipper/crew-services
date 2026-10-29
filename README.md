@@ -201,10 +201,15 @@ Before admitting a reviewer, crew-review checks that the resolved checkout's
 repository holds the submitted commit (`git cat-file -e`), so the reviewer can
 read it with git. The working tree may be at another commit: agents often push
 from per-task worktrees, whose commits share the checkout's object store, and
-nothing pulls the main checkout. When the commit is absent crew-review runs one
-`git fetch`, which updates objects and remote-tracking refs but never the
-working tree, HEAD, or local branches. If the commit is still missing the
-submission waits quietly in `source_pending`; after `-source-grace` (15 minutes
+nothing pulls the main checkout. When the commit is absent crew-review starts
+one background `git fetch` for that checkout (at most one at a time per
+checkout, bounded to a minute, never prompting, aborted by git if the transfer
+stalls), which updates objects and remote-tracking refs but never the working
+tree, HEAD, or local branches. The check does not wait for it: the submission
+waits quietly in `source_pending` and the next background pass finds the
+fetched commit, so a slow or hung fetch never holds up a caller's submit or
+other submissions. While the commit is missing the submission stays in
+`source_pending`; after `-source-grace` (15 minutes
 by default) it stops as `source_missing` with `error_code:
 "checkout_missing_commit"`. This never produces a review verdict or a message
 to the submitter. The admitted job carries the submitted
@@ -226,7 +231,12 @@ crew-review registers each GitHub check gate with `timeout_seconds` from
 re-registers the gate instead of failing the submission; Den reopens it as a
 new attempt with a fresh deadline, so CI that outlasts one timeout still
 reaches a reviewer without a resubmit. This happens once per submission
-(`gate_auto_rechecks`). A second timeout records `gate_failed`. Once a submission's reviewer has returned `changes_requested`,
+(`gate_auto_rechecks`). A second timeout records `gate_failed`.
+
+Each submission's advance within a background pass has its own 2-minute
+bound, so one stuck Den call or git command cannot hold up the other
+submissions in the pass. Every pass updates the `submission_loop` heartbeat
+reported by `GET /healthz` and `GET /v1/review-pool`. Once a submission's reviewer has returned `changes_requested`,
 submitting the same target again (or using the manual action) starts a fresh
 submission and Den round, so a finding answered without a new commit can still
 be re-reviewed; after `looks_good` a repeat only replays. Submission state and

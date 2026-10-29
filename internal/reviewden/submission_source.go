@@ -39,7 +39,7 @@ func (c *Client) ResolveSubmissionSource(ctx context.Context, request review.Sub
 	if err != nil {
 		return review.ReviewSource{}, err
 	}
-	remotes, err := exec.CommandContext(ctx, "git", "-C", workspace, "config", "--get-regexp", `^remote\..*\.url$`).Output()
+	remotes, err := gitCommand(ctx, "", workspace, "config", "--get-regexp", `^remote\..*\.url$`).Output()
 	if err != nil {
 		return review.ReviewSource{}, fmt.Errorf("read source checkout remotes: %w", err)
 	}
@@ -71,7 +71,9 @@ type taskSourceCommit struct {
 }
 
 func (g gitSubmissionRepository) run(ctx context.Context, args ...string) (string, error) {
-	output, err := exec.CommandContext(ctx, "git", append([]string{"-C", g.workspace}, args...)...).CombinedOutput()
+	// Network commands (ls-remote, fetch) run here inside a caller's submit, so
+	// they must never prompt and must abort a stalled transfer.
+	output, err := gitCommand(ctx, "", g.workspace, append(append([]string(nil), lowSpeedArgs...), args...)...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(output)))
 	}
