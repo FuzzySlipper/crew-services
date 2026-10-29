@@ -113,16 +113,45 @@ import a driver.
   - Connect to `CLAUDE_CODE_MESSAGING_SOCKET`.
   - Optionally send `{"type":"auth","token":…}` first.
   - Then write one JSON line per message: `{"msgV":1,"msg_id":"<uuid>","type":"user","message":{"role":"user","content":"<text>"},"priority":"next"|"later"}`.
-  - The session answers nothing on the connection. Held, denied and expired messages are reported only as `peer_message_status` frames to a sender's own inbox, which the driver doesn't have.
-  - `next` is read between tool calls of an active turn, or starts a turn when idle. `later` is held until the current turn ends. `now` preempts and is never used.
-- *Registration:* a user-level SessionStart hook (`crew-claude hook session-start`) sends the session id, socket and token to the driver and puts the session's address into context. The socket and token change on every process restart, so they stay in the driver's 0600 state file (`~/.local/state/crew-claude/sessions.json`), not in the fabric binding.
-- *Busy or idle:* UserPromptSubmit marks the session busy and Stop marks it idle. A session with no socket file is not running.
-- *Delivery:* `deliver_next_step` goes out with priority `next`. Every other delivery goes out with `later`, so stale busy/idle state can make a message late but never early.
+  - The session answers nothing on the connection. Held, denied, refused and expired messages are reported only as `peer_message_status` frames to the sender's `from` reply socket, which the driver doesn't have.
+  - `next` is read between tool calls of an active turn. `later` is held until the current turn ends. Both start a turn on an idle session. `now` preempts and is never used.
+  - No frame enters only an active turn. The frame accepts nothing besides content, priority, msg_id, from, uuid and file attachments (`passive` and `wake:false` exist only for in-process poll events).
+- *Registration:* a user-level SessionStart hook (`crew-claude hook session-start`) sends the session id, socket, token and `transcript_path` to the driver and puts the session's address into context. The socket and token change on every process restart, so they stay in the driver's 0600 state file (`~/.local/state/crew-claude/sessions.json`), not in the fabric binding. `claude --resume` keeps the session id, so a resumed session keeps its address.
+- *Busy or idle:* UserPromptSubmit marks the session busy (it also fires for a turn a crew message started). Stop and StopFailure mark it idle; a turn that ends on an API error fires only StopFailure. A session with no socket file is not running.
+- *Capabilities:* `deliver_next_step` and `deliver_when_idle`. Not `durable_next_turn`: Claude Code's follow-up queue is in memory and an exit loses it. So a `next_turn` message for a busy session stays `queued` in the fabric until the Stop hook reports idle. While it waits it also holds back later messages to that address, because the fabric delivers in order.
+- *Delivery:*
+  - The turn state is read for each claim and again just before the write.
+  - `deliver_next_step` (`next_step` or `no_wake` to a busy session) goes out as `next`. If the session went idle first, a `no_wake` claim is released back to the queue.
+  - `deliver_at_idle` goes out as `later`. If the session became busy first, a `next_turn` claim is released (a `next_step` claim goes out as `next`).
   - The driver dials before it records the dispatch, so a session that is gone sends the claim back to the queue.
-  - A write that fails after the dispatch is recorded becomes `outcome_unknown` and is never retried blindly.
+- *Acceptance:* a successful socket write is not acceptance. The session writes what its inbox did to the transcript (`~/.claude/projects/<cwd with non-alphanumerics as '-'>/<session id>.jsonl`):
+  - When the inbox admits the frame, it writes `{"type":"queue-operation","operation":"enqueue","content":"<text>"}` (with no msg_id).
+  - When the message enters the conversation, it writes a line with `origin.msg_id` equal to the frame's `msg_id`. That is an `attachment` of type `queued_command`, followed by `queue-operation remove` with `absorbed_mid_turn`, when an active turn takes it. It is a `user` line with `turnOrigin: "peer"` when it starts a turn.
+  - The delivery stays `dispatching` until that msg_id line appears, and is then acknowledged. The driver reads only lines added after the write, and the msg_id quoted in a tool result does not count.
+  - It becomes `outcome_unknown` in three cases: the session never queued the message within `-accept-timeout` (2m; held, refused, dropped, or the write was lost); the session queued it, then its process exited or was replaced; or the message stayed queued past `-queued-timeout` (6h).
+  - Pending dispatches are kept in the state file, so a restarted driver settles them the same way. A dispatch it has no record of is checked against the whole transcript. Nothing is ever posted twice.
 - *Inbound control:* the installer sets `crossSessionInbound: accept`. Without it, a session that bypasses permission prompts holds the driver's messages for approval.
-- *Loss window:* the session's queue is in memory, so a message accepted just before the process exits can be lost. `delivered` means the socket accepted it, not that it was read.
-- The `asyncRewake` fallback was not needed.
+- *Residual windows (not closed):*
+  - `no_wake` can start a turn. The busy check runs just before the write. But a session stays busy, as far as the hooks can tell, through its final response, and that response has no step boundary. A `next` frame that lands then is not absorbed; it starts a new turn after Stop. The 07:42:53 live check below did exactly this with a `next_step` message. Claude Code has no frame that avoids it, so the window lasts as long as a turn's final tool-free response.
+  - A message the session has queued but not yet taken in is lost if the process exits. The driver reports it as `outcome_unknown`, never `delivered`.
+- *Live checks (2026-10-29, Claude Code 2.1.310, real hooks, deployed driver):*
+  - **Idle wake.**
+    - A scratch `claude` session in tmux was sent `next_turn`. The driver posted `deliver_at_idle`/`later` 0.6s after the send. About 40ms later the UserPromptSubmit hook marked the session busy. The transcript shows a `turnOrigin: "peer"` user line with the msg_id, and the delivery was acknowledged 2.0s after the post.
+    - The scratch CLI was not logged in, so the model call failed ("Login expired"), and that turn ended in StopFailure and not Stop.
+    - With a working model, the coordinator session woke from idle on a crew message at 07:13:59Z and answered it.
+  - **Busy, non-cancelling.**
+    - An earlier run (03:03Z): a `next_step` message reached the coordinator mid-turn as a `queued_command` attachment, then `absorbed_mid_turn` 2.1s after enqueue, and the turn carried on.
+    - Again at 07:42:53Z, through the new driver: the coordinator was already writing its final response, so the message was enqueued at once and started a new turn 3.2s later, right after Stop. That shows the window above.
+    - That delivery was wrongly settled `outcome_unknown` by the first deployed build. Sessions registered before the change had no transcript path, so it read nothing. It is fixed in 322c473, which falls back to the default path.
+  - **Exited, then resume.**
+    - The scratch session exited (`/exit`, socket gone). A `next_step` message sent then stayed `queued` with 0 attempts for 18s.
+    - `claude --resume <id>` registered the same address with a new socket. The driver posted 0.4s after launch, the transcript showed it 0.37s after the post, and it was acknowledged 1.1s after the post.
+  - **Hook latency.** `crew-claude hook busy|idle|session-start` was run with realistic stdin, 10 runs each:
+    - busy: median 2.6ms (2.1–3.7).
+    - idle: median 2.4ms (2.0–3.4).
+    - session-start: median 2.7ms (2.3–3.4).
+    - Claude Code recorded 4–7ms for the Stop hook on 14 turns of the coordinator session. With the driver down, a hook returns in about 2ms (connection refused).
+  - **Not checked live:** `no_wake` to a busy session, and a turn-start delivery with a working model in a scratch session (the scratch CLI could not log in).
 
 **Codex (`crew-codex`, reworked in #10453).**
 - *Connection:* the daemon's control socket speaks WebSocket (one JSON-RPC message per text frame; `codex app-server proxy` only forwards bytes), so the driver dials it directly. It never starts, stops or restarts the daemon or a thread, and never uses the `/daemon/shutdown` path.
