@@ -686,7 +686,7 @@ func nativeHas(ctx context.Context, native Native, threadID, clientID string) (b
 // Render is the text the Codex thread reads, as a user message. It says
 // where the message came from so the agent treats it as crew traffic.
 func Render(m fabricclient.Message) string {
-	return fmt.Sprintf("Crew message from %s (crew message %s):\n\n%s", m.SenderAddress, m.MessageID, strings.TrimSpace(m.Body))
+	return crewcli.RenderMessage(m.SenderAddress, m.MessageID, m.Body, "crew-codex")
 }
 
 func (d *Driver) load() error {

@@ -255,3 +255,10 @@ func send(ctx context.Context, args []string, self, ownURL string, stdin io.Read
 	fmt.Fprintf(stdout, "sent %s from %s to %s\n", result.MessageID, result.From, result.To)
 	return 0
 }
+
+// RenderMessage is the text a receiving session reads. It marks the message as
+// crew traffic rather than the session's user, and ends with a ready-to-run
+// reply command so the agent need not work out how to answer.
+func RenderMessage(sender, messageID, body, sendCommand string) string {
+	return fmt.Sprintf("Crew message from %s (crew message %s):\n\n%s\n\nTo reply, run: %s send --to %s \"your reply\"", sender, messageID, strings.TrimSpace(body), sendCommand, sender)
+}

@@ -310,7 +310,7 @@ func (d *Driver) deliverOne(ctx context.Context, s Session) (bool, error) {
 // Render is the text the Claude session reads. It says where the message came
 // from so the receiving agent can treat it as crew traffic, not its user.
 func Render(m fabricclient.Message) string {
-	return fmt.Sprintf("Crew message from %s (crew message %s):\n\n%s", m.SenderAddress, m.MessageID, strings.TrimSpace(m.Body))
+	return crewcli.RenderMessage(m.SenderAddress, m.MessageID, m.Body, "crew-claude")
 }
 
 // nativeMessageID derives the UUID-shaped msg_id the inbox records (it ignores
