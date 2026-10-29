@@ -3,7 +3,8 @@
 #
 #   scripts/deploy-crew-services.sh                 build, install and restart
 #                                                   crew-messaging crew-codex
-#                                                   crew-dsh crew-review
+#                                                   crew-dsh crew-claude
+#                                                   crew-review
 #   scripts/deploy-crew-services.sh crew-codex ...  only the named services
 #   scripts/deploy-crew-services.sh --dry-run       print what would change;
 #                                                   builds nothing, restarts
@@ -65,7 +66,7 @@ for arg in "$@"; do
 done
 [[ "$wait_seconds" =~ ^[0-9]+$ ]] || { echo "--wait needs a number of seconds" >&2; exit 2; }
 # Restart order: the fabric first, then its drivers, crew-review last.
-(( ${#services[@]} )) || services=(crew-messaging crew-codex crew-dsh crew-review)
+(( ${#services[@]} )) || services=(crew-messaging crew-codex crew-dsh crew-claude crew-review)
 for s in "${services[@]}"; do
   [[ -d "$repo_dir/cmd/$s" ]] || { echo "no such command: cmd/$s" >&2; exit 2; }
 done
