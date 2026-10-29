@@ -77,6 +77,9 @@ type knownThread struct {
 
 // Driver delivers fabric messages into threads of the shared Codex daemon.
 type Driver struct {
+	// Lookup, when set, names a message's sender session; see crewcli.Lookup.
+	Lookup func(ctx context.Context, address string) (crewcli.SessionInfo, bool)
+
 	fabric Fabric
 	now    func() time.Time
 	cfg    Config
@@ -609,7 +612,7 @@ func (d *Driver) deliverOne(ctx context.Context, native Native, t target, availa
 		return false, fmt.Errorf("begin dispatch: %w", err)
 	}
 	clientID := ClientMessageID(delivery.DeliveryID)
-	text := Render(*claim.Message)
+	text := d.render(ctx, *claim.Message)
 	how, err := d.dispatch(ctx, native, t.ThreadID, action, activeTurn, text, clientID)
 	if err != nil {
 		// The native outcome is ambiguous: look for the message before
@@ -715,10 +718,15 @@ func nativeHas(ctx context.Context, native Native, threadID, clientID string) (b
 	return false, nil
 }
 
-// Render is the text the Codex thread reads, as a user message. It says
-// where the message came from so the agent treats it as crew traffic.
-func Render(m fabricclient.Message) string {
-	return crewcli.RenderMessage(m.SenderAddress, m.MessageID, m.Body, "crew-codex")
+// render is the text the session reads, naming the sender when Lookup knows it.
+func (d *Driver) render(ctx context.Context, m fabricclient.Message) string {
+	var sender *crewcli.SessionInfo
+	if d.Lookup != nil {
+		if info, ok := d.Lookup(ctx, m.SenderAddress); ok {
+			sender = &info
+		}
+	}
+	return crewcli.RenderMessage(m.SenderAddress, m.MessageID, m.Body, "crew-codex", sender)
 }
 
 func (d *Driver) load() error {

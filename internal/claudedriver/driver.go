@@ -59,6 +59,9 @@ type Session struct {
 }
 
 type Driver struct {
+	// Lookup, when set, names a message's sender session; see crewcli.Lookup.
+	Lookup func(ctx context.Context, address string) (crewcli.SessionInfo, bool)
+
 	fabric Fabric
 	inbox  Inbox
 	now    func() time.Time
@@ -294,7 +297,7 @@ func (d *Driver) deliverOne(ctx context.Context, s Session) (bool, error) {
 	if _, err := d.fabric.Begin(ctx, delivery.DeliveryID, fabricclient.DispatchRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("begin", delivery.DeliveryID, now), ClaimToken: claim.ClaimToken, NativeAttemptRef: ref}); err != nil {
 		return false, fmt.Errorf("begin dispatch: %w", err)
 	}
-	if err := conn.Post(nativeMessageID(delivery.DeliveryID), Render(*claim.Message), priority); err != nil {
+	if err := conn.Post(nativeMessageID(delivery.DeliveryID), d.render(ctx, *claim.Message), priority); err != nil {
 		if _, unknownErr := d.fabric.Unknown(ctx, delivery.DeliveryID, fabricclient.ReconcileRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("unknown", delivery.DeliveryID, now), NativeAttemptRef: ref}); unknownErr != nil {
 			return false, fmt.Errorf("outcome unknown after %v: %w", err, unknownErr)
 		}
@@ -307,10 +310,15 @@ func (d *Driver) deliverOne(ctx context.Context, s Session) (bool, error) {
 	return true, nil
 }
 
-// Render is the text the Claude session reads. It says where the message came
-// from so the receiving agent can treat it as crew traffic, not its user.
-func Render(m fabricclient.Message) string {
-	return crewcli.RenderMessage(m.SenderAddress, m.MessageID, m.Body, "crew-claude")
+// render is the text the session reads, naming the sender when Lookup knows it.
+func (d *Driver) render(ctx context.Context, m fabricclient.Message) string {
+	var sender *crewcli.SessionInfo
+	if d.Lookup != nil {
+		if info, ok := d.Lookup(ctx, m.SenderAddress); ok {
+			sender = &info
+		}
+	}
+	return crewcli.RenderMessage(m.SenderAddress, m.MessageID, m.Body, "crew-claude", sender)
 }
 
 // nativeMessageID derives the UUID-shaped msg_id the inbox records (it ignores
