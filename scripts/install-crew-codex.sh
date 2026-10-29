@@ -10,6 +10,10 @@
 #                                                submit_task_for_review (only once
 #                                                Den accepts the field, #10455)
 #   scripts/install-crew-codex.sh --uninstall-hooks  remove the hooks again
+#   scripts/install-crew-codex.sh --mcp-server=NAME name of the Den MCP server in
+#                                                this runtime's config (default:
+#                                                the server whose URL ends in
+#                                                :5199/mcp)
 #
 # The unit keeps the -address pins of an existing crew-codex.service. crew-codex
 # connects to the running Codex daemon; this script never starts, stops or
@@ -37,11 +41,13 @@ service=1
 hooks=1
 hooks_mode=install
 fill_notify=0
+mcp_server=
 for arg in "$@"; do
   case "$arg" in
     --service-only) hooks=0 ;;
     --hooks-only) service=0 ;;
     --fill-notify) fill_notify=1 ;;
+    --mcp-server=*) mcp_server=${arg#--mcp-server=} ;;
     --uninstall-hooks) service=0; hooks_mode=uninstall ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
@@ -52,9 +58,23 @@ edit_hooks() {
   mkdir -p "$(dirname "$hooks_file")"
   [[ -f "$hooks_file" ]] || echo '{"hooks": {}}' > "$hooks_file"
   cp "$hooks_file" "$hooks_file.bak-crew-codex-$(date +%Y%m%d%H%M%S)"
-  python3 -I - "$hooks_file" "$bin_dir/crew-codex" "$1" "$2" <<'EOF'
-import json, os, sys
+  python3 -I - "$hooks_file" "$bin_dir/crew-codex" "$1" "$2" "$mcp_server" "${CODEX_HOME:-$HOME/.codex}/config.toml" <<'EOF'
+import json, os, sys, tomllib
 path, binary, mode, fill = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1"
+server, config = sys.argv[5], sys.argv[6]
+if fill and not server:
+    # Codex names MCP tools mcp__<server>__<tool>, after the config key.
+    try:
+        with open(config, "rb") as f:
+            servers = tomllib.load(f).get("mcp_servers", {})
+    except OSError:
+        servers = {}
+    found = [name for name, s in servers.items() if str(s.get("url", "")).rstrip("/").endswith(":5199/mcp")]
+    if len(found) != 1:
+        sys.exit(f"cannot tell which MCP server in {config} is Den ({found or 'none'}); pass --mcp-server=NAME")
+    server = found[0]
+if fill:
+    print(f"fill-notify matches mcp__{server}__submit_task_for_review")
 with open(path) as f:
     data = json.load(f)
 hooks = data.setdefault("hooks", {})
@@ -75,7 +95,7 @@ if mode == "install":
         hooks.setdefault(event, []).append(entry)
     add("SessionStart", "session-start")
     if fill:
-        add("PreToolUse", "fill-notify", matcher="mcp__runner__submit_task_for_review")
+        add("PreToolUse", "fill-notify", matcher=f"mcp__{server}__submit_task_for_review")
 with open(path + ".tmp", "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")

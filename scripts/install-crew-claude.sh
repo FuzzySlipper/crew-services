@@ -9,6 +9,9 @@
 #   scripts/install-crew-claude.sh --service-only  binary and unit only; leave
 #                                                ~/.claude/settings.json alone
 #   scripts/install-crew-claude.sh --uninstall   remove hooks and the unit
+#   scripts/install-crew-claude.sh --mcp-server=NAME  name of the Den MCP server in
+#                                                Claude's config (default: the
+#                                                server whose URL ends in :5199/mcp)
 set -euo pipefail
 
 # Go is often not on PATH in a plain shell here; fall back to the newest
@@ -29,11 +32,13 @@ unit_dir="$HOME/.config/systemd/user"
 settings="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 mode=install
 fill_notify=0
+mcp_server=
 service_only=0
 for arg in "$@"; do
   case "$arg" in
     --uninstall) mode=uninstall ;;
     --fill-notify) fill_notify=1 ;;
+    --mcp-server=*) mcp_server=${arg#--mcp-server=} ;;
     --service-only) service_only=1 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
@@ -44,9 +49,23 @@ edit_settings() {
   mkdir -p "$(dirname "$settings")"
   [[ -f "$settings" ]] || echo '{}' > "$settings"
   cp "$settings" "$settings.bak-crew-claude-$(date +%Y%m%d%H%M%S)"
-  python3 -I - "$settings" "$bin_dir/crew-claude" "$1" "$2" <<'EOF'
+  python3 -I - "$settings" "$bin_dir/crew-claude" "$1" "$2" "$mcp_server" "$HOME/.claude.json" <<'EOF'
 import json, sys
 path, binary, mode, fill = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1"
+server, config = sys.argv[5], sys.argv[6]
+if fill and not server:
+    # Claude names MCP tools mcp__<server>__<tool>, after the configured name.
+    try:
+        with open(config) as f:
+            servers = json.load(f).get("mcpServers", {})
+    except (OSError, ValueError):
+        servers = {}
+    found = [name for name, s in servers.items() if str(s.get("url", "")).rstrip("/").endswith(":5199/mcp")]
+    if len(found) != 1:
+        sys.exit(f"cannot tell which MCP server in {config} is Den ({found or 'none'}); pass --mcp-server=NAME")
+    server = found[0]
+if fill:
+    print(f"fill-notify matches mcp__{server}__submit_task_for_review")
 with open(path) as f:
     settings = json.load(f)
 hooks = settings.setdefault("hooks", {})
@@ -77,7 +96,7 @@ if mode == "install":
     # StopFailure instead of Stop; without it the session would stay busy.
     add("StopFailure", "idle")
     if fill:
-        add("PreToolUse", "fill-notify", matcher="mcp__runner__submit_task_for_review")
+        add("PreToolUse", "fill-notify", matcher=f"mcp__{server}__submit_task_for_review")
     # Messages arrive from crew-claude, not from a child of the session, so the
     # session's inbound default would hold them in bypass-permission sessions.
     settings["crossSessionInbound"] = "accept"
