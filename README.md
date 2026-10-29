@@ -13,8 +13,7 @@ box and how it came from den-services.
 `crew-services` is an independent, runtime-neutral successor for selected local
 agent-service capabilities. Its implemented foundation includes a runtime-neutral
 directory, atomic immutable message acceptance, an ordered delivery ledger, and
-an adapter-owned session projection with an append-only event log. It stores
-accepted work and read-model facts only; runtime activation and native insertion
+optional reply rounds. It stores accepted work and read-model facts only; runtime activation and native insertion
 remain adapter-owned and are not implemented here.
 
 Rusty Crew, DSH, the Codex app server, and future transports are evidence and
@@ -26,8 +25,8 @@ The fabric records durable delivery, the sender's activation policy
 claim/dispatch/reconciliation state, and optional reply rounds; runtime drivers
 decide how to deliver into, resume, or activate their native agents. Drivers
 register each session they drive with `POST /v1/session-addresses` and get a
-stable `s/…` address for it. The session projection and event log are frozen:
-still readable, but no longer extended. The direction is in
+stable `s/…` address for it. The old session projection and event log were
+removed in #10456. The direction is in
 [docs/messaging-redesign.md](docs/messaging-redesign.md).
 
 ## Run locally
@@ -52,9 +51,8 @@ under `/v1`. Submission atomically records one immutable envelope and one queued
 delivery, with producer-scoped `operation_id` retries. Inspection is read-only.
 Claims, dispatch acknowledgement/reconciliation, reply rounds, and explicit
 maintenance reaping are available. Native activation remains adapter-owned.
-The session surface adds idempotent adapter adoption, revision-fenced updates,
-bounded session/event reads, and SSE replay from a durable global cursor.
-Opaque adapter keys and lease tokens never appear in session/client JSON.
+Drivers register session addresses with `POST /v1/session-addresses`; native
+session keys and lease tokens never appear in client JSON.
 
 Start here:
 

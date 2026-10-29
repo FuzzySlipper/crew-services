@@ -45,10 +45,13 @@ ours to own. Activation is now a small piece of code per runtime.
 3. **Sessions register themselves.** A SessionStart hook or plugin in each
    runtime binds the session to an address. The adoption and projection
    machinery is not needed for that.
-4. **The transcript mirror goes.** The session projection, event log and SSE
-   replay (1,619 events, the last from 2026-09-04) copy runtime state the
-   runtimes already keep. Nothing outside this repo reads them. Retire them,
-   or at least freeze them, unless a consumer turns up.
+4. **The transcript mirror went.** The session projection, event log and SSE
+   replay held 1,619 events, the last from 2026-09-04, and copied runtime
+   state the runtimes already keep. Their only client was the retired
+   dsh-crew `crew-messaging` plugin, which #10454 removed from the DSH profile
+   and `update.sh`. They were deleted on 2026-10-29 (#10456): the routes, code
+   and tables are gone (migration 9). The drivers' own `GET /v1/sessions` are
+   separate driver APIs and stay.
 5. **Producers send to an address.** A service that learns something an agent
    should know, starting with crew-review learning that a gate failed, submits
    one fabric message to the address it was given. It does not need to know
