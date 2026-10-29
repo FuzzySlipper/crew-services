@@ -21,10 +21,12 @@ func (s *SQLiteStore) SubmissionForJob(ctx context.Context, jobID string) (Submi
 	return record, true, nil
 }
 
-// FailWithNotice fails a job and records its notice in one transaction.
-func (s *SQLiteStore) FailWithNotice(ctx context.Context, id, why string, notice *Notice) (Job, bool, error) {
-	if notice != nil && (notice.OperationID == "" || notice.SubmissionID == "" || notice.Recipient == "" || notice.Body == "") {
-		return Job{}, false, errors.New("invalid review failure notice")
+// FailWithNotices fails a job and records its notices in one transaction.
+func (s *SQLiteStore) FailWithNotices(ctx context.Context, id, why string, notices []*Notice) (Job, bool, error) {
+	for _, notice := range notices {
+		if notice == nil || notice.OperationID == "" || notice.Recipient == "" || notice.Body == "" {
+			return Job{}, false, errors.New("invalid review failure notice")
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -40,7 +42,10 @@ func (s *SQLiteStore) FailWithNotice(ctx context.Context, id, why string, notice
 	if err != nil {
 		return Job{}, false, err
 	}
-	if rows == 1 && notice != nil {
+	for _, notice := range notices {
+		if rows != 1 {
+			break
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO crew_review_notices(operation_id,submission_id,kind,recipient,body,state,created_at,updated_at,next_attempt_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(operation_id) DO NOTHING`,
 			notice.OperationID, notice.SubmissionID, notice.Kind, notice.Recipient, notice.Body, NoticePending, now, now, noticeStamp(s.clock.Now())); err != nil {
 			return Job{}, false, fmt.Errorf("record review failure notice: %w", err)

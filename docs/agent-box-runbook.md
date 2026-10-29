@@ -210,8 +210,9 @@ with backoff (1, 2, 4 min; four attempts), and a turn that ended without
 `complete_review` and with no tool-runtime marker is requeued after 30 s and
 60 s (three attempts). These final failures also carry the
 `runtime_infrastructure:` prefix, so a plain resubmit re-runs them. Every job
-that ends Failed records a `review_failed` notice for the submission's
-`notify_address` and posts a status message on the Den task thread. The journal
+that ends Failed records, in the same transaction, a `review_failed` notice
+for the submission's `notify_address` and a Den task-thread note, both
+delivered by the notice outbox loop. The journal
 logs each job claim, finish, requeue and failure with durations, and each
 submission-loop pass with its duration.
 

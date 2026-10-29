@@ -167,20 +167,6 @@ func TestMissingCompletionThenSuccessCompletes(t *testing.T) {
 	}
 }
 
-// notingDen is a submission Den that records task-thread notes.
-type notingDen struct {
-	*submissionDen
-	mu    sync.Mutex
-	notes []string
-}
-
-func (d *notingDen) PostTaskNote(_ context.Context, key TaskKey, content string) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.notes = append(d.notes, fmt.Sprintf("%s/%d: %s", key.ProjectID, key.TaskID, content))
-	return nil
-}
-
 func TestFinalFailureNotifiesOnceAndResubmitReruns(t *testing.T) {
 	den := &notingDen{submissionDen: &submissionDen{watchGate: GateEvidence{Status: "passed", Handle: "43", TerminalReason: "checks_passed"}}}
 	clock := &testClock{now: time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)}
@@ -212,14 +198,20 @@ func TestFinalFailureNotifiesOnceAndResubmitReruns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var reviewFailed []Notice
+	var reviewFailed, denTask []Notice
 	for _, notice := range notices {
-		if notice.Kind == NoticeReviewFailed {
+		switch {
+		case notice.Kind != NoticeReviewFailed:
+		case notice.Recipient == "claude:session-7":
 			reviewFailed = append(reviewFailed, notice)
+		case notice.Recipient == "den-task:dsh-crew/7416":
+			denTask = append(denTask, notice)
+		default:
+			t.Fatalf("unexpected notice %+v", notice)
 		}
 	}
-	if len(reviewFailed) != 1 {
-		t.Fatalf("review_failed notices = %+v, want exactly one", notices)
+	if len(reviewFailed) != 1 || len(denTask) != 1 {
+		t.Fatalf("review_failed notices = %+v, want exactly one to the submitter and one Den task note", notices)
 	}
 	notice := reviewFailed[0]
 	if notice.Recipient != "claude:session-7" || notice.State != NoticePending ||
@@ -227,15 +219,18 @@ func TestFinalFailureNotifiesOnceAndResubmitReruns(t *testing.T) {
 		!strings.Contains(notice.Body, "a plain resubmit re-runs this review") || !strings.Contains(notice.Body, submissionTestSHA) {
 		t.Fatalf("notice = %+v", notice)
 	}
-	if len(den.notes) != 1 || !strings.Contains(den.notes[0], "dsh-crew/7416: crew-review: the review of task #7416") {
-		t.Fatalf("Den notes = %q, want one on the task thread", den.notes)
+	if _, err := service.SendNotices(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if notes := den.postedNotes(); len(notes) != 1 || !strings.Contains(notes[0], "dsh-crew#7416: crew-review: the review of task #7416") || notes[0] != "dsh-crew#7416: "+notice.Body {
+		t.Fatalf("Den notes = %q, want one on the task thread", notes)
 	}
 	// Failing the job again is a no-op and reports nothing more.
 	if err := service.terminal(context.Background(), failed, Failed, "again"); err != nil {
 		t.Fatal(err)
 	}
-	if notices, _ := store.ListSubmissionNotices(context.Background(), first.SubmissionID); len(notices) != len(reviewFailed) || len(den.notes) != 1 {
-		t.Fatalf("second fail reported again: notices=%d notes=%d", len(notices), len(den.notes))
+	if again, _ := store.ListSubmissionNotices(context.Background(), first.SubmissionID); len(again) != len(notices) {
+		t.Fatalf("second fail reported again: notices=%d, want %d", len(again), len(notices))
 	}
 
 	again, replayed, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
@@ -253,7 +248,7 @@ func TestFinalFailureNotifiesOnceAndResubmitReruns(t *testing.T) {
 	}
 }
 
-func TestFailureWithoutNotifyAddressStillPostsDenNote(t *testing.T) {
+func TestFailureWithoutNotifyAddressStillNotesDenTask(t *testing.T) {
 	den := &notingDen{submissionDen: &submissionDen{watchGate: GateEvidence{Status: "passed", Handle: "43", TerminalReason: "checks_passed"}}}
 	store, err := OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "review.db"), nil, 2)
 	if err != nil {
@@ -273,10 +268,32 @@ func TestFailureWithoutNotifyAddressStillPostsDenNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	notices, err := store.ListSubmissionNotices(context.Background(), first.SubmissionID)
-	if err != nil || len(notices) != 0 {
-		t.Fatalf("notices = %+v err=%v, want none without a notify address", notices, err)
+	if err != nil || len(notices) != 1 || !strings.HasPrefix(notices[0].Recipient, "den-task:") {
+		t.Fatalf("notices = %+v err=%v, want only the Den task note without a notify address", notices, err)
 	}
-	if len(den.notes) != 1 || !strings.Contains(den.notes[0], "does not re-run this kind of failure") || !strings.Contains(den.notes[0], "/v1/review-jobs/"+first.JobID+"/retry") {
-		t.Fatalf("Den notes = %q", den.notes)
+	if _, err := service.SendNotices(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if notes := den.postedNotes(); len(notes) != 1 || !strings.Contains(notes[0], "does not re-run this kind of failure") || !strings.Contains(notes[0], "/v1/review-jobs/"+first.JobID+"/retry") {
+		t.Fatalf("Den notes = %q", notes)
+	}
+}
+
+func TestFailedJobWithoutSubmissionStillNotesDenTask(t *testing.T) {
+	svc, store, _, runtime, a := fixture(t, 1)
+	defer store.Close()
+	runtime.skipCompletion = true
+	runtime.runErr = errors.New("noninteractive review cannot satisfy Codex interaction")
+	j, _, err := svc.Admit(context.Background(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	notices, err := store.ListSubmissionNotices(context.Background(), "")
+	if err != nil || len(notices) != 1 || notices[0].Recipient != "den-task:dsh-crew/7413" || notices[0].Kind != NoticeReviewFailed ||
+		!strings.HasPrefix(notices[0].OperationID, "job/"+j.ID+"@") || !strings.Contains(notices[0].Body, "cannot satisfy Codex interaction") {
+		t.Fatalf("notices = %+v err=%v", notices, err)
 	}
 }

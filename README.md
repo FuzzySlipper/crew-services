@@ -142,7 +142,7 @@ instructions beside it in `reviewer.md`. `CREW_REVIEW_LISTEN`,
 `CREW_REVIEW_DB`, `CREW_REVIEW_MODEL`, `CREW_REVIEW_REASONING_EFFORT`,
 `DEN_MCP_TOKEN`, `CREW_REVIEW_PROFILE`, `CREW_REVIEW_CAPACITY`,
 `CREW_REVIEW_RUN_INTERVAL`, `CREW_REVIEW_SUBMISSION_INTERVAL`,
-`CREW_REVIEW_SOURCE_GRACE`, `CREW_REVIEW_GATE_TIMEOUT`, `CREW_REVIEW_FABRIC_URL`,
+`CREW_REVIEW_SOURCE_GRACE`, `CREW_REVIEW_GATE_TIMEOUT`, `CREW_REVIEW_DEADLINE`, `CREW_REVIEW_FABRIC_URL`,
 `CREW_REVIEW_FABRIC_INSTANCE`, and `CODEX_COMMAND` may be supplied through the
 environment; all have corresponding flags where they affect the process.
 The command starts a fixed number of bounded runner lanes (one durable job per
