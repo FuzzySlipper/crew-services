@@ -16,6 +16,18 @@
 # restarts Codex itself.
 set -euo pipefail
 
+# Go is often not on PATH in a plain shell here; fall back to the newest
+# toolchain unpacked under ~/.local/share.
+find_go() {
+  if [[ -n "${GO:-}" ]]; then echo "$GO"; return; fi
+  if command -v go >/dev/null 2>&1; then command -v go; return; fi
+  local candidate
+  candidate=$(ls -d "$HOME"/.local/share/go*/bin/go /usr/local/go/bin/go 2>/dev/null | sort -V | tail -1)
+  if [[ -n "$candidate" ]]; then echo "$candidate"; return; fi
+  echo "go not found: install Go or set GO=/path/to/go" >&2
+  exit 1
+}
+
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 bin_dir="${CREW_BIN_DIR:-$HOME/.local/bin}"
 unit_dir="$HOME/.config/systemd/user"
@@ -73,7 +85,7 @@ EOF
 
 if [[ "$service" == 1 ]]; then
   mkdir -p "$bin_dir" "$unit_dir"
-  (cd "$repo_dir" && CGO_ENABLED=0 go build -o "$bin_dir/crew-codex.new" ./cmd/crew-codex)
+  (cd "$repo_dir" && CGO_ENABLED=0 "$(find_go)" build -o "$bin_dir/crew-codex.new" ./cmd/crew-codex)
   mv "$bin_dir/crew-codex.new" "$bin_dir/crew-codex"
   pins=""
   if [[ -f "$unit" ]]; then

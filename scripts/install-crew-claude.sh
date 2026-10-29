@@ -11,6 +11,18 @@
 #   scripts/install-crew-claude.sh --uninstall   remove hooks and the unit
 set -euo pipefail
 
+# Go is often not on PATH in a plain shell here; fall back to the newest
+# toolchain unpacked under ~/.local/share.
+find_go() {
+  if [[ -n "${GO:-}" ]]; then echo "$GO"; return; fi
+  if command -v go >/dev/null 2>&1; then command -v go; return; fi
+  local candidate
+  candidate=$(ls -d "$HOME"/.local/share/go*/bin/go /usr/local/go/bin/go 2>/dev/null | sort -V | tail -1)
+  if [[ -n "$candidate" ]]; then echo "$candidate"; return; fi
+  echo "go not found: install Go or set GO=/path/to/go" >&2
+  exit 1
+}
+
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 bin_dir="${CREW_BIN_DIR:-$HOME/.local/bin}"
 unit_dir="$HOME/.config/systemd/user"
@@ -84,7 +96,7 @@ if [[ "$mode" == uninstall ]]; then
 fi
 
 mkdir -p "$bin_dir" "$unit_dir"
-(cd "$repo_dir" && CGO_ENABLED=0 go build -o "$bin_dir/crew-claude.new" ./cmd/crew-claude)
+(cd "$repo_dir" && CGO_ENABLED=0 "$(find_go)" build -o "$bin_dir/crew-claude.new" ./cmd/crew-claude)
 mv "$bin_dir/crew-claude.new" "$bin_dir/crew-claude"
 
 cat > "$unit_dir/crew-claude.service" <<EOF
