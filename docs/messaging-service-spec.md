@@ -45,10 +45,20 @@ sender and recipient address, v1 text body, `correlation_id`, optional
 `reply_to_message_id`, `activation_policy`, `created_at`, `expires_at`, and the
 sender/recipient binding-generation snapshots.
 
-V1 defines `wake_when_idle` as the default activation policy. It means “deliver
-without interrupting current work, then activate when a safe idle boundary is
-available,” not “steer the active turn.” An optional `never_wake` policy supports
-opportunistic delivery only; it is not the baseline collaboration behavior.
+The sender chooses one of three activation policies. None of them cancels or
+interrupts a turn.
+
+| Policy | Target busy | Target idle | Target not running |
+| --- | --- | --- | --- |
+| `next_turn` (default) | delivered as the next turn | delivered as a new turn | queued until the session starts again |
+| `next_step` | seen at the active turn's next step boundary | delivered as a new turn | queued until the session starts again |
+| `no_wake` | seen at the next step boundary | queued | queued |
+
+An adapter reports which policies it can deliver through its binding
+capabilities (`deliver_next_step` for reaching an active turn). A `next_step`
+message to an adapter that cannot reach an active turn waits for the next turn:
+later than asked, never earlier. The retired v1 names `wake_when_idle` and
+`never_wake` are still accepted and stored as `next_turn` and `no_wake`.
 
 `operation_id` and `message_id` have different jobs. Exact retries return the
 original result; idempotency is scoped by stable `producer_id`, and reusing its
@@ -72,6 +82,10 @@ authentication claim. Any future operator/system ingress uses an explicit
 service-owned origin instead of impersonating an agent address.
 
 ### Session projection and event log
+
+Frozen as of the 2026-10 redesign: still readable, but drivers no longer write
+to it and nothing new builds on it. Whether to delete it is decided once the
+first redesign slice is proven (`docs/messaging-redesign.md`).
 
 The same local database holds a bounded, runtime-neutral projection for clients
 that need to discover adapter-owned work. A session has a stable service ID,
@@ -121,15 +135,17 @@ native acceptance/insertion. Processed, read, and replied are separate facts.
 
 Only explicit adapter claiming actuates work. Listing, resolving, mailbox
 inspection, history, and replay never create, claim, wake, retry, or cancel
-delivery work. `wake_when_idle` never cancels, steers, or injects the message
-into a busy turn. While the target is busy, the adapter may surface a
+delivery work. A `next_turn` delivery never reaches a busy turn; a `next_step`
+delivery reaches it only through a `deliver_next_step` dispatch, which the
+runtime takes at its next step boundary without cancelling the turn. For
+`next_turn` work while the target is busy, the adapter may surface a
 runtime-specific pending notification or register a durable next-turn follow-up.
 If it cannot do that durably, the fabric delivery remains queued. When the
 target reaches an idle boundary—or is already inactive—the adapter may
 resume/activate it and deliver the message as the next turn.
 
-`never_wake` may insert only at an adapter-defined safe boundary in an already
-active target; otherwise it remains queued. A crashed adapter's pre-dispatch
+`no_wake` may be delivered only at the next step boundary of an already active
+target; otherwise it remains queued. A crashed adapter's pre-dispatch
 claim safely expires back to the queue; a dispatch already begun must be
 reconciled. Exact duplicate API retries never create a second delivery or wake.
 
@@ -197,10 +213,10 @@ The first selection suite proves:
 
 1. Two unrelated DSH root sessions bind two addresses.
 2. Idempotent send creates one message and queued delivery.
-3. `wake_when_idle` sent to a busy target never steers, cancels, or mutates its active turn.
+3. `next_turn` sent to a busy target never reaches, cancels, or mutates its active turn; `next_step` reaches it only at a step boundary and never cancels it.
 4. A capable adapter surfaces a pending notification or durable next-turn follow-up while busy; otherwise the fabric keeps the delivery queued.
 5. At the idle boundary, the adapter wakes/resumes the target and FIFO-drains eligible work.
-6. Optional `never_wake` work remains queued while the target is inactive.
+6. `no_wake` work remains queued while the target is idle or inactive.
 7. Delivered occurs only after native acceptance of the message or durable next-turn insertion, never from a notification alone.
 8. A correlated reply can schedule the original sender under the same non-interrupting policy.
 9. Restart retains queue and bindings.

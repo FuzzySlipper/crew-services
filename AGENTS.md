@@ -62,11 +62,14 @@ crosses the native runtime boundary. Keep accepted, native insertion, processed,
 read, and replied as separate facts. Never let inspection/replay/history cause
 claiming, waking, retrying, cancelling, or delivery.
 
-Treat wake intent and interruption as separate concepts. The default messaging
-policy is non-interrupting wake-on-idle: adapters may advertise pending work to
-a busy runtime, but must not steer, cancel, or inject the full message into its
-active turn. Runtime-specific adapters own activation and idle detection; the
-fabric owns the durable policy and pending delivery.
+Treat waking, steering and interrupting as separate concepts. The sender picks
+an activation policy: `next_turn` (the default) never touches an active turn,
+`next_step` may put the message in front of an active turn at its next step
+boundary, and `no_wake` never starts a turn. Steering is only ever that
+sender-chosen, non-cancelling `next_step` delivery; nothing in the fabric
+cancels or interrupts a turn. Drivers post into each runtime's own inbox and
+own idle detection; they do not supervise runtime processes. The fabric owns
+the durable policy and pending delivery. See `docs/messaging-redesign.md`.
 
 This repository may be edited concurrently. Preserve unrelated work, inspect
 status before modifying files, do not reset/clean/revert others' changes, and do

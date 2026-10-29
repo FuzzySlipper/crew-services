@@ -21,9 +21,14 @@ Rusty Crew, DSH, the Codex app server, and future transports are evidence and
 adapter targets, not the core contract. The current implementation is one
 boring local Go binary with SQLite and loopback JSON/HTTP.
 
-The fabric records durable delivery, non-interrupting wake-on-idle intent,
-claim/dispatch/reconciliation state, and optional reply rounds; runtime adapters
-decide how to notify, resume, or activate their native agents.
+The fabric records durable delivery, the sender's activation policy
+(`next_turn`, `next_step` or `no_wake`; none of them interrupts),
+claim/dispatch/reconciliation state, and optional reply rounds; runtime drivers
+decide how to deliver into, resume, or activate their native agents. Drivers
+register each session they drive with `POST /v1/session-addresses` and get a
+stable `s/…` address for it. The session projection and event log are frozen:
+still readable, but no longer extended. The direction is in
+[docs/messaging-redesign.md](docs/messaging-redesign.md).
 
 ## Run locally
 
