@@ -780,3 +780,133 @@ func TestExecutableFingerprintTracksVersionAndFile(t *testing.T) {
 		t.Fatalf("missing executable fingerprint %q", missing)
 	}
 }
+
+// TestRestartNeverClosesServerUnderConcurrentlyStartedTurn interleaves the
+// race lane B used to lose: B fingerprints the updated executable while every
+// worker is idle, lane A then validates its worker and starts a turn on the
+// old executable, and only then does B try to restart.
+func TestRestartNeverClosesServerUnderConcurrentlyStartedTurn(t *testing.T) {
+	r, old, servers, _ := restartableFixture(t)
+	old.starts = make(chan string, 1)
+	a, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	var mu sync.Mutex
+	version := "codex-cli 0.163.0"
+	entered, gate := make(chan struct{}), make(chan struct{})
+	gated := true
+	r.executable = func(context.Context) string {
+		mu.Lock()
+		if gated {
+			// Lane B: it has seen the update and found no turn running.
+			gated = false
+			mu.Unlock()
+			close(entered)
+			<-gate
+			return "codex-cli 0.165.0"
+		}
+		defer mu.Unlock()
+		return version
+	}
+	acquired := make(chan error, 1)
+	go func() {
+		_, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", "")
+		acquired <- e
+	}()
+	<-entered
+	// Lane A passes its own freshness check on the old executable and starts
+	// its turn while B is between its check and its restart.
+	done := make(chan error, 1)
+	go func() { done <- r.Run(context.Background(), a, "", func(review.Completion) error { return nil }) }()
+	thread, turn, _ := strings.Cut(<-old.starts, "/")
+	close(gate)
+	if e := <-acquired; !errors.Is(e, review.ErrRuntimeUnavailable) {
+		t.Fatalf("restart attempt under a running turn = %v, want ErrRuntimeUnavailable", e)
+	}
+	old.mu.Lock()
+	closed := old.closed
+	old.mu.Unlock()
+	if closed || len(*servers) != 1 {
+		t.Fatalf("old server closed=%v servers=%d while a turn was running", closed, len(*servers))
+	}
+	mu.Lock()
+	version = "codex-cli 0.165.0"
+	mu.Unlock()
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); !errors.Is(e, review.ErrRuntimeUnavailable) {
+		t.Fatalf("second restart attempt under the running turn = %v", e)
+	}
+	if _, e := old.handler(context.Background(), call(thread, turn, "looks_good")); e != nil {
+		t.Fatal(e)
+	}
+	old.finish(thread, turn)
+	if e := <-done; e != nil {
+		t.Fatalf("active turn = %v, want it to complete on the old server", e)
+	}
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); e != nil {
+		t.Fatal(e)
+	}
+	old.mu.Lock()
+	closed = old.closed
+	old.mu.Unlock()
+	if !closed || len(*servers) != 2 {
+		t.Fatalf("old server closed=%v servers=%d, want restart once the turn ended", closed, len(*servers))
+	}
+}
+
+// TestRestartBeforeReservationReleasesWorker covers the other order: the
+// restart wins, so the turn must not start an old thread on the new server.
+func TestRestartBeforeReservationReleasesWorker(t *testing.T) {
+	r, old, servers, executable := restartableFixture(t)
+	a, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	*executable = "codex-cli 0.165.0"
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); e != nil {
+		t.Fatal(e)
+	}
+	if e := r.Run(context.Background(), a, "", func(review.Completion) error { return nil }); !errors.Is(e, review.ErrRuntimeUnavailable) {
+		t.Fatalf("Run on a worker of the replaced server = %v, want ErrRuntimeUnavailable", e)
+	}
+	fresh := (*servers)[1]
+	if len(fresh.turnOptions) != 0 || len(old.turnOptions) != 0 {
+		t.Fatalf("turn started: old=%d fresh=%d", len(old.turnOptions), len(fresh.turnOptions))
+	}
+}
+
+// TestLostServerDuringAnotherTurnDefersRestart covers the thread-start
+// fallback: a failed start must not restart under another running turn.
+func TestLostServerDuringAnotherTurnDefersRestart(t *testing.T) {
+	r, old, servers, _ := restartableFixture(t)
+	old.starts = make(chan string, 1)
+	a, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	done := make(chan error, 1)
+	go func() { done <- r.Run(context.Background(), a, "", func(review.Completion) error { return nil }) }()
+	thread, turn, _ := strings.Cut(<-old.starts, "/")
+	old.mu.Lock()
+	old.startErr = errors.New("thread/start failed")
+	old.mu.Unlock()
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); !errors.Is(e, review.ErrRuntimeUnavailable) {
+		t.Fatalf("Acquire after a failed start under a running turn = %v, want ErrRuntimeUnavailable", e)
+	}
+	old.mu.Lock()
+	closed := old.closed
+	old.mu.Unlock()
+	if closed || len(*servers) != 1 {
+		t.Fatalf("restarted under a running turn: closed=%v servers=%d", closed, len(*servers))
+	}
+	if _, e := old.handler(context.Background(), call(thread, turn, "looks_good")); e != nil {
+		t.Fatal(e)
+	}
+	old.finish(thread, turn)
+	if e := <-done; e != nil {
+		t.Fatal(e)
+	}
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); e != nil || len(*servers) != 2 {
+		t.Fatalf("Acquire once idle err=%v servers=%d, want the deferred restart", e, len(*servers))
+	}
+}

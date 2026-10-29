@@ -47,8 +47,11 @@ type Runtime struct {
 	// broken asks for a restart once no turn is running, after a turn showed
 	// the app-server can no longer run tools or the server itself was lost.
 	broken bool
-	// restartMu serializes freshness checks and restarts.
-	restartMu sync.Mutex
+	// serverMu fences restarts from use of the server. Starting a thread, and
+	// a turn from validating its worker until the turn ends, hold it shared;
+	// a restart takes it exclusively and only with TryLock, so it is deferred,
+	// never waited for, while any thread start or turn is in progress.
+	serverMu sync.RWMutex
 }
 type worker struct {
 	id, threadID   string
@@ -120,38 +123,34 @@ func (r *Runtime) ensureFresh(ctx context.Context) error {
 	if r.factory == nil {
 		return nil
 	}
-	r.restartMu.Lock()
-	defer r.restartMu.Unlock()
-	r.mu.Lock()
-	broken := r.broken
-	r.mu.Unlock()
 	current := ""
 	if r.executable != nil {
 		current = r.executable(ctx)
 	}
-	changed := current != "" && current != r.started
-	if !broken && !changed {
+	if !r.needsRestart(current) {
 		return nil
 	}
-	r.mu.Lock()
-	busy := false
-	for _, w := range r.workers {
-		busy = busy || w.busy
+	if !r.serverMu.TryLock() {
+		return fmt.Errorf("Codex App Server needs a restart after the running review: %w", review.ErrRuntimeUnavailable)
 	}
-	r.mu.Unlock()
-	reason := "a review turn found it unable to run tools"
-	if changed {
-		reason = "the Codex executable changed on disk"
+	defer r.serverMu.Unlock()
+	// Another lane may have restarted it while this one fingerprinted.
+	if !r.needsRestart(current) {
+		return nil
 	}
-	if busy {
-		return fmt.Errorf("Codex App Server needs a restart because %s, after the running review: %w", reason, review.ErrRuntimeUnavailable)
-	}
-	if e := r.restartLocked(ctx); e != nil {
+	if e := r.restartLocked(ctx, current); e != nil {
 		// Keep the job queued: a review cannot run until a server starts.
-		return fmt.Errorf("restart Codex App Server because %s: %w: %w", reason, e, review.ErrRuntimeUnavailable)
+		return fmt.Errorf("restart Codex App Server: %w: %w", e, review.ErrRuntimeUnavailable)
 	}
-	r.started = current
 	return nil
+}
+
+// needsRestart reports whether the server is broken or was started from an
+// executable other than current. An unknown ("") current is no change.
+func (r *Runtime) needsRestart(current string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.broken || current != "" && current != r.started
 }
 func NewWithServer(ctx context.Context, server codexadapter.EphemeralServer, capacity int, profilePath string) (*Runtime, error) {
 	return newWithServer(ctx, server, capacity, profilePath, "", "")
@@ -194,42 +193,42 @@ func (r *Runtime) Acquire(ctx context.Context, task review.TaskKey, _ string, wo
 			r.mu.Unlock()
 		}
 	}()
-	if e := r.ensureFresh(ctx); e != nil {
-		return nil, e
-	}
-	thread, e := r.server.StartEphemeralThread(ctx, codexadapter.EphemeralThreadOptions{CWD: workspace, DeveloperInstructions: r.profile, DynamicTools: completionTool(), ReadOnly: true})
-	if e != nil && r.factory != nil {
-		if restartErr := r.restart(ctx); restartErr != nil {
-			return nil, fmt.Errorf("Codex App Server lost (%v); restart: %w", e, restartErr)
+	for attempt := 0; ; attempt++ {
+		if e := r.ensureFresh(ctx); e != nil {
+			return nil, e
 		}
-		thread, e = r.server.StartEphemeralThread(ctx, codexadapter.EphemeralThreadOptions{CWD: workspace, DeveloperInstructions: r.profile, DynamicTools: completionTool(), ReadOnly: true})
+		r.serverMu.RLock()
+		r.mu.Lock()
+		server := r.server
+		r.mu.Unlock()
+		thread, e := server.StartEphemeralThread(ctx, codexadapter.EphemeralThreadOptions{CWD: workspace, DeveloperInstructions: r.profile, DynamicTools: completionTool(), ReadOnly: true})
+		if e == nil {
+			// Registered before the fence lifts, so a later restart releases it.
+			w := &worker{id: id, threadID: thread.ID, task: task}
+			r.mu.Lock()
+			r.reserved--
+			reserved = false
+			r.workers[id] = w
+			r.mu.Unlock()
+			r.serverMu.RUnlock()
+			return w, nil
+		}
+		r.serverMu.RUnlock()
+		if r.factory == nil || attempt > 0 {
+			return nil, e
+		}
+		// Treat the server as lost: the next freshness check restarts it, or
+		// defers this job while another review still uses it.
+		r.mu.Lock()
+		r.broken = true
+		r.mu.Unlock()
 	}
-	if e != nil {
-		return nil, e
-	}
-	w := &worker{id: id, threadID: thread.ID, task: task}
-	r.mu.Lock()
-	r.reserved--
-	reserved = false
-	r.workers[id] = w
-	r.mu.Unlock()
-	return w, nil
-}
-func (r *Runtime) restart(ctx context.Context) error {
-	r.restartMu.Lock()
-	defer r.restartMu.Unlock()
-	if e := r.restartLocked(ctx); e != nil {
-		return e
-	}
-	if r.executable != nil {
-		r.started = r.executable(ctx)
-	}
-	return nil
 }
 
-// restartLocked replaces the app-server; the caller holds restartMu. Every
+// restartLocked replaces the app-server and records current as the
+// executable it started from; the caller holds serverMu exclusively. Every
 // worker of the old server is released.
-func (r *Runtime) restartLocked(ctx context.Context) error {
+func (r *Runtime) restartLocked(ctx context.Context, current string) error {
 	r.mu.Lock()
 	factory := r.factory
 	old := r.server
@@ -254,6 +253,7 @@ func (r *Runtime) restartLocked(ctx context.Context) error {
 	r.mu.Lock()
 	r.server = next
 	r.broken = false
+	r.started = current
 	r.mu.Unlock()
 	return nil
 }
@@ -266,6 +266,10 @@ func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, com
 	if e := r.ensureFresh(ctx); e != nil {
 		return e
 	}
+	// From validating the worker until its turn ends, no restart can replace
+	// the server under it; a restart before this point released the worker.
+	r.serverMu.RLock()
+	defer r.serverMu.RUnlock()
 	w, e := r.require(raw)
 	if e != nil {
 		return e
