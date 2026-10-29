@@ -148,7 +148,26 @@ func (d *Driver) Start(ctx context.Context) error {
 	d.mu.Lock()
 	d.lease = lease
 	d.mu.Unlock()
+	d.refreshCapabilities(ctx)
 	return nil
+}
+
+// refreshCapabilities re-registers every known session so its binding carries
+// the current Capabilities (an older build claimed durable_next_turn).
+// Registration is idempotent and keeps the address and generation.
+func (d *Driver) refreshCapabilities(ctx context.Context) {
+	for _, s := range d.snapshot() {
+		binding, err := d.fabric.RegisterSessionAddress(ctx, fabricclient.SessionAddressRequest{AdapterID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), NativeKey: s.SessionID, Capabilities: Capabilities})
+		if err != nil {
+			d.log.Warn("refresh session capabilities", "session", s.SessionID, "error", err)
+			continue
+		}
+		d.mu.Lock()
+		if current, ok := d.sessions[s.SessionID]; ok {
+			current.Address, current.Generation = binding.Address, binding.Generation
+		}
+		d.mu.Unlock()
+	}
 }
 
 func (d *Driver) leaseToken() string {
