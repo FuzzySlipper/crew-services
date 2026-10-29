@@ -108,12 +108,21 @@ automatically.
 Each driver is a separate command in this repository. Core packages never
 import a driver.
 
-**Claude Code (`crew-claude`, new).**
-- *Registration:* a user-level SessionStart hook posts the session's `session_id`, `cwd`, messaging socket path and token to the driver. These are kept as adapter-private binding data, never returned in client JSON. On a trusted single-user box that is acceptable, but it is a local secret at rest.
-- *Busy or idle:* the driver learns it from cheap hooks: UserPromptSubmit or PreToolUse marks the session busy, Stop marks it idle. `next_turn` deliveries to a busy session wait for Stop.
-- *Delivery:* by writing to the inbox socket, which needs `crossSessionInbound: accept`. The receipt is acceptance on the socket.
-- *Loss window:* the socket queue is in memory, so a message accepted just before the process exits can be lost. The contract already says `delivered` means native acceptance, not "read". Close the window later with an optional read fact from a hook if it matters.
-- *Fallback:* the socket's wire format is not documented beyond its auth line. If it cannot be driven reliably, the fallback is an `asyncRewake` hook that waits on the driver and exits 2 with the message. That wakes the session whether idle or busy, but it is subject to a hook timeout.
+**Claude Code (`crew-claude`, built in #10452).**
+- *Inbox protocol (Claude Code 2.1.310, read from the client and checked live):*
+  - Connect to `CLAUDE_CODE_MESSAGING_SOCKET`.
+  - Optionally send `{"type":"auth","token":…}` first.
+  - Then write one JSON line per message: `{"msgV":1,"msg_id":"<uuid>","type":"user","message":{"role":"user","content":"<text>"},"priority":"next"|"later"}`.
+  - The session answers nothing on the connection. Held, denied and expired messages are reported only as `peer_message_status` frames to a sender's own inbox, which the driver doesn't have.
+  - `next` is read between tool calls of an active turn, or starts a turn when idle. `later` is held until the current turn ends. `now` preempts and is never used.
+- *Registration:* a user-level SessionStart hook (`crew-claude hook session-start`) sends the session id, socket and token to the driver and puts the session's address into context. The socket and token change on every process restart, so they stay in the driver's 0600 state file (`~/.local/state/crew-claude/sessions.json`), not in the fabric binding.
+- *Busy or idle:* UserPromptSubmit marks the session busy and Stop marks it idle. A session with no socket file is not running.
+- *Delivery:* `deliver_next_step` goes out with priority `next`. Every other delivery goes out with `later`, so stale busy/idle state can make a message late but never early.
+  - The driver dials before it records the dispatch, so a session that is gone sends the claim back to the queue.
+  - A write that fails after the dispatch is recorded becomes `outcome_unknown` and is never retried blindly.
+- *Inbound control:* the installer sets `crossSessionInbound: accept`. Without it, a session that bypasses permission prompts holds the driver's messages for approval.
+- *Loss window:* the session's queue is in memory, so a message accepted just before the process exits can be lost. `delivered` means the socket accepted it, not that it was read.
+- The `asyncRewake` fallback was not needed.
 
 **Codex (`crew-codex`, reworked).**
 - *Registration:* through a SessionStart hook (thread id), or by watching the daemon's `thread/started`.

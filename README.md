@@ -69,6 +69,31 @@ The project deliberately does not promise Rusty Crew compatibility, remote
 deployment, federation, authentication frameworks, or a UI. Those are not
 implementation omissions; they are outside the first slice.
 
+## Claude Code driver
+
+`crew-claude` delivers fabric messages into Claude Code sessions through each
+session's own inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`). It never starts,
+stops or interrupts a session: a `next_step` message is read between tool calls
+of the active turn, and anything else waits for the turn to end or starts a turn
+in an idle session. Install it with:
+
+```bash
+scripts/install-crew-claude.sh
+```
+
+That builds `~/.local/bin/crew-claude` and starts `crew-claude.service`. It also
+adds four things to `~/.claude/settings.json`, after backing it up:
+- a SessionStart hook that registers the session and tells it its crew address;
+- UserPromptSubmit and Stop hooks that report busy and idle;
+- `crossSessionInbound: accept`.
+
+Each hook makes one loopback call with a short timeout and always exits 0, so a
+stopped driver doesn't break sessions. `--service-only` skips the settings
+change. `--fill-notify` adds a PreToolUse hook that fills `notify_address` on
+`submit_task_for_review`; enable it only once Den accepts that field. Undo it all
+with `--uninstall`. Sessions started before installation get no address until
+they restart.
+
 ## Codex-backed review runner
 
 `crew-review` is the first managed review runtime. It admits durable review
