@@ -10,6 +10,9 @@ func TestClaimActionPolicyTable(t *testing.T) {
 	steer := []string{store.CapabilityDeliverWhenIdle, store.CapabilityDurableNextTurn, store.CapabilityWakeInactive, store.CapabilityDeliverNextStep}
 	plain := []string{store.CapabilityDeliverWhenIdle, store.CapabilityDurableNextTurn, store.CapabilityWakeInactive}
 	idleOnly := []string{store.CapabilityDeliverWhenIdle}
+	// noWake can deliver to a busy or idle target but cannot start a session
+	// that is not running (Claude, for example).
+	noWakeInactive := []string{store.CapabilityDeliverWhenIdle, store.CapabilityDurableNextTurn, store.CapabilityDeliverNextStep}
 	cases := []struct {
 		policy, availability string
 		caps                 []string
@@ -20,6 +23,10 @@ func TestClaimActionPolicyTable(t *testing.T) {
 		{store.PolicyNextTurn, store.AvailabilityIdle, steer, "deliver_at_idle", ""},
 		{store.PolicyNextTurn, store.AvailabilityInactive, steer, "wake_then_deliver", ""},
 		{store.PolicyNextTurn, store.AvailabilityBusy, idleOnly, "", "not_eligible"},
+		// A target that is not running is woken in the background only when
+		// the adapter advertises wake_inactive; otherwise the work stays queued.
+		{store.PolicyNextTurn, store.AvailabilityInactive, noWakeInactive, "", "not_eligible"},
+		{store.PolicyNextStep, store.AvailabilityInactive, noWakeInactive, "", "not_eligible"},
 		// next_step reaches the active turn when the adapter can, and otherwise
 		// waits for the next turn: later than asked, never earlier.
 		{store.PolicyNextStep, store.AvailabilityBusy, steer, "deliver_next_step", ""},
@@ -32,7 +39,8 @@ func TestClaimActionPolicyTable(t *testing.T) {
 		{store.PolicyNoWake, store.AvailabilityBusy, steer, "deliver_next_step", ""},
 		{store.PolicyNoWake, store.AvailabilityBusy, plain, "", "not_eligible"},
 		{store.PolicyNoWake, store.AvailabilityIdle, steer, "", "not_eligible"},
-		{store.PolicyNoWake, store.AvailabilityInactive, steer, "", "not_eligible"},
+		{store.PolicyNoWake, store.AvailabilityInactive, steer, "", "not_eligible"}, // queued even with wake_inactive
+		{store.PolicyNoWake, store.AvailabilityInactive, noWakeInactive, "", "not_eligible"},
 		// Retired names stored on older rows keep their meaning.
 		{"wake_when_idle", store.AvailabilityIdle, plain, "deliver_at_idle", ""},
 		{"never_wake", store.AvailabilityIdle, plain, "", "not_eligible"},

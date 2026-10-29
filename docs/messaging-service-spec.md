@@ -57,9 +57,9 @@ interrupts a turn.
 
 | Policy | Target busy | Target idle | Target not running |
 | --- | --- | --- | --- |
-| `next_turn` (default) | delivered as the next turn | delivered as a new turn | queued until the session starts again |
-| `next_step` | seen at the active turn's next step boundary | delivered as a new turn | queued until the session starts again |
-| `no_wake` | seen at the next step boundary | queued | queued |
+| `next_turn` (default) | delivered as the next turn | delivered as a new turn | woken in the background and delivered if the adapter advertises `wake_inactive`; otherwise queued until the session starts again |
+| `next_step` | seen at the active turn's next step boundary | delivered as a new turn | woken in the background and delivered if the adapter advertises `wake_inactive`; otherwise queued until the session starts again |
+| `no_wake` | seen at the next step boundary | queued | queued, even if the adapter advertises `wake_inactive` |
 
 An adapter reports which policies it can deliver through its binding
 capabilities (`deliver_next_step` for reaching an active turn). A `next_step`
@@ -151,13 +151,20 @@ runtime takes at its next step boundary without cancelling the turn. For
 `next_turn` work while the target is busy, the adapter may surface a
 runtime-specific pending notification or register a durable next-turn follow-up.
 If it cannot do that durably, the fabric delivery remains queued. When the
-target reaches an idle boundary—or is already inactive—the adapter may
-resume/activate it and deliver the message as the next turn.
+target reaches an idle boundary, the adapter delivers the message as a new
+turn. When the target is not running, `next_turn` and `next_step` work is
+claimable as a background wake only by an adapter that advertises
+`wake_inactive` (for example Codex thread resume or a DSH cold session); it
+resumes the session and delivers the message as its next turn. For an adapter
+without `wake_inactive` (for example Claude) the delivery stays queued until
+the session starts again.
 
 `no_wake` may be delivered only at the next step boundary of an already active
-target; otherwise it remains queued. A crashed adapter's pre-dispatch
-claim safely expires back to the queue; a dispatch already begun must be
-reconciled. Exact duplicate API retries never create a second delivery or wake.
+target; otherwise it remains queued, and it never wakes a session that is not
+running, even through an adapter that advertises `wake_inactive`. A crashed
+adapter's pre-dispatch claim safely expires back to the queue; a dispatch
+already begun must be reconciled. Exact duplicate API retries never create a
+second delivery or wake.
 
 This is API idempotency and leased delivery, not exactly-once processing. An
 adapter uses `delivery_id` plus a native receipt to reconcile ambiguous native
@@ -225,7 +232,7 @@ The first selection suite proves:
 2. Idempotent send creates one message and queued delivery.
 3. `next_turn` sent to a busy target never reaches, cancels, or mutates its active turn; `next_step` reaches it only at a step boundary and never cancels it.
 4. A capable adapter surfaces a pending notification or durable next-turn follow-up while busy; otherwise the fabric keeps the delivery queued.
-5. At the idle boundary, the adapter wakes/resumes the target and FIFO-drains eligible work.
+5. At the idle boundary, the adapter FIFO-drains eligible work; a target that is not running is woken in the background only through an adapter that advertises `wake_inactive`, and otherwise its work stays queued.
 6. `no_wake` work remains queued while the target is idle or inactive.
 7. Delivered occurs only after native acceptance of the message or durable next-turn insertion, never from a notification alone.
 8. A correlated reply can schedule the original sender under the same non-interrupting policy.
