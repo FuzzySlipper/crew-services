@@ -24,3 +24,10 @@ func TestRenderMessageWithUnknownSender(t *testing.T) {
 		t.Fatalf("unexpected header: %q", got)
 	}
 }
+
+func TestRenderMessageFromServiceOriginHasNoReplyLine(t *testing.T) {
+	got := RenderMessage("system/crew-review", "m3", "gate failed", "crew-claude", nil)
+	if strings.Contains(got, "To reply") {
+		t.Fatalf("service notice offers a reply: %q", got)
+	}
+}
