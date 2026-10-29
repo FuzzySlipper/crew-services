@@ -66,6 +66,9 @@ capabilities (`deliver_next_step` for reaching an active turn). A `next_step`
 message to an adapter that cannot reach an active turn waits for the next turn:
 later than asked, never earlier. The retired v1 names `wake_when_idle` and
 `never_wake` are still accepted and stored as `next_turn` and `no_wake`.
+Either spelling is the same request for idempotency, including for operations
+accepted before the rename, whose stored fingerprints were hashed with the
+retired name: an exact retry after the upgrade replays the original record.
 
 `operation_id` and `message_id` have different jobs. Exact retries return the
 original result; idempotency is scoped by stable `producer_id`, and reusing its

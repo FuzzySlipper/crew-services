@@ -69,7 +69,7 @@ func (s *Service) BeginRound(ctx context.Context, request BeginRoundRequest) (Be
 		return BeginRoundResult{}, mapStoreError(err)
 	}
 	if lookup.Found {
-		if lookup.Fingerprint != fingerprint {
+		if lookup.Fingerprint != fingerprint && !matchesLegacyFingerprint(lookup.Fingerprint, root, func(legacy SubmitMessageRequest) (string, error) { return roundFingerprint(legacy, request.RoundTTL) }) {
 			return BeginRoundResult{}, &Error{Code: CodeOperationConflict, Err: store.ErrOperationConflict}
 		}
 		lookup.Result.Replayed = true

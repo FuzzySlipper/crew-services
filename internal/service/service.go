@@ -242,7 +242,7 @@ func (s *Service) SubmitMessage(ctx context.Context, request SubmitMessageReques
 		return SubmitMessageResult{}, mapStoreError(err)
 	}
 	if lookup.Found {
-		if lookup.Fingerprint != fingerprint {
+		if lookup.Fingerprint != fingerprint && !matchesLegacyFingerprint(lookup.Fingerprint, request, messageFingerprint) {
 			return SubmitMessageResult{}, &Error{Code: CodeOperationConflict, Err: store.ErrOperationConflict}
 		}
 		return SubmitMessageResult{Message: lookup.Message, Delivery: lookup.Delivery, Replayed: true}, nil
@@ -258,6 +258,25 @@ func (s *Service) SubmitMessage(ctx context.Context, request SubmitMessageReques
 	now := s.clock.Now().UTC()
 	result, err := s.store.SubmitMessage(ctx, now, store.SubmitMessageRequest{ProducerID: request.ProducerID, LeaseToken: request.LeaseToken, OperationID: request.OperationID, Fingerprint: fingerprint, MessageID: messageID, DeliveryID: deliveryID, SenderAddress: request.SenderAddress, RecipientAddress: request.RecipientAddress, Body: request.Body, CorrelationID: request.CorrelationID, ReplyToMessageID: request.ReplyToMessageID, ActivationPolicy: request.ActivationPolicy, ExpiresAt: now.Add(request.TTL), ExpectedSenderGeneration: request.ExpectedSenderGeneration, ExpectedRecipientGeneration: request.ExpectedRecipientGeneration})
 	return result, mapReplyError(err)
+}
+
+// legacyPolicyNames are the activation policy spellings operations accepted
+// before schema v8 normalized the stored values. Their fingerprints were hashed
+// with these names (an omitted policy defaulted to wake_when_idle), and
+// migration 8 copied those fingerprints unchanged.
+var legacyPolicyNames = map[string]string{store.PolicyNextTurn: "wake_when_idle", store.PolicyNoWake: "never_wake"}
+
+// matchesLegacyFingerprint reports whether stored is the fingerprint a
+// pre-v8 service computed for this (already normalized) request, so an exact
+// retry of an operation accepted before the upgrade still replays.
+func matchesLegacyFingerprint(stored string, request SubmitMessageRequest, fingerprint func(SubmitMessageRequest) (string, error)) bool {
+	legacy, ok := legacyPolicyNames[request.ActivationPolicy]
+	if !ok {
+		return false
+	}
+	request.ActivationPolicy = legacy
+	value, err := fingerprint(request)
+	return err == nil && value == stored
 }
 
 func messageFingerprint(request SubmitMessageRequest) (string, error) {
