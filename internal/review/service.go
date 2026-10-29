@@ -27,6 +27,9 @@ type Service struct {
 	// finalized, when set, observes each job after Den's receipt is stored.
 	finalized FinalizedHook
 
+	// notifier, when set, delivers outbox notices to the messaging fabric.
+	notifier Notifier
+
 	// runtimeCheck, when set, probes the reviewer runtime on operator request.
 	runtimeCheck RuntimeChecker
 	// lastWorkspace is the checkout of the most recently started review, the

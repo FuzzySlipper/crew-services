@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"crew-services/internal/fabricclient"
 	"crew-services/internal/review"
 	"crew-services/internal/reviewcodex"
 	"crew-services/internal/reviewden"
@@ -50,6 +51,13 @@ type commandConfig struct {
 	// after Den records a looks_good review of one of its managed submissions.
 	looksGoodHooks map[string]string
 	hookTimeout    time.Duration
+	// fabricURL is the crew-messaging fabric that receives submission notices
+	// such as a failed check gate; empty disables delivery (notices are still
+	// recorded and wait).
+	fabricURL string
+	// fabricInstance is crew-review's stable fabric instance ID, so a restart
+	// takes over its own producer lease.
+	fabricInstance string
 }
 
 type repeatString []string
@@ -115,6 +123,19 @@ func run(args []string) error {
 		}
 		options = append(options, review.WithFinalizedHook(hooks))
 	}
+	if cfg.fabricURL != "" {
+		fabric, err := fabricclient.New(cfg.fabricURL)
+		if err != nil {
+			_ = runtime.Close()
+			return err
+		}
+		notifier, err := review.NewFabricNotifier(fabric, review.SystemClock{}, review.FabricNotifierConfig{InstanceID: cfg.fabricInstance})
+		if err != nil {
+			_ = runtime.Close()
+			return err
+		}
+		options = append(options, review.WithNotifier(notifier))
+	}
 	svc, err := review.New(store, den, runtime, cfg.profile, options...)
 	if err != nil {
 		_ = runtime.Close()
@@ -132,6 +153,13 @@ func run(args []string) error {
 			logger.Printf("review submission loop: %v", err)
 		}
 	})
+	// Notices run on their own loop at the submission interval, so a slow or
+	// unavailable fabric never delays review admission.
+	noticesDone := startRunLoop(ctx, cfg.submissionInterval, svc.SendNotices, func(err error) {
+		if ctx.Err() == nil {
+			logger.Printf("review notice loop: %v", err)
+		}
+	})
 	server := &http.Server{Addr: cfg.listen, Handler: review.NewHandler(svc)}
 	go func() {
 		<-ctx.Done()
@@ -144,6 +172,7 @@ func run(args []string) error {
 	stop()
 	<-loopDone
 	<-submissionsDone
+	<-noticesDone
 	closeErr := svc.Close()
 	if hooks != nil {
 		hooks.Wait()
@@ -178,6 +207,8 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 		submissionInterval: 30 * time.Second,
 		sourceGrace:        15 * time.Minute,
 		hookTimeout:        45 * time.Minute,
+		fabricURL:          envOr(getenv, "CREW_REVIEW_FABRIC_URL", "http://127.0.0.1:8787"),
+		fabricInstance:     envOr(getenv, "CREW_REVIEW_FABRIC_INSTANCE", "crew-review-local"),
 	}
 	if raw := strings.TrimSpace(getenv("CREW_REVIEW_RUN_INTERVAL")); raw != "" {
 		interval, err := time.ParseDuration(raw)
@@ -231,8 +262,14 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	flags.DurationVar(&cfg.sourceGrace, "source-grace", cfg.sourceGrace, "how long a submission waits for the review checkout to contain its commit")
 	flags.Var(&looksGoodHooks, "looks-good-hook", "owner/name=/absolute/executable run after a looks_good review of that repository; repeatable; overrides CREW_REVIEW_LOOKS_GOOD_HOOKS")
 	flags.DurationVar(&cfg.hookTimeout, "hook-timeout", cfg.hookTimeout, "time limit for one looks_good hook run")
+	flags.StringVar(&cfg.fabricURL, "fabric-url", cfg.fabricURL, "crew-messaging URL for submission notices; \"off\" disables delivery")
+	flags.StringVar(&cfg.fabricInstance, "fabric-instance", cfg.fabricInstance, "stable crew-messaging instance ID")
 	if err := flags.Parse(args); err != nil {
 		return commandConfig{}, err
+	}
+	cfg.fabricURL = strings.TrimSpace(cfg.fabricURL)
+	if strings.EqualFold(cfg.fabricURL, "off") {
+		cfg.fabricURL = ""
 	}
 	cfg.workspaceRoots = filepath.SplitList(strings.TrimSpace(getenv("CREW_REVIEW_WORKSPACE_ROOTS")))
 	if len(workspaceRoots) > 0 {

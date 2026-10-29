@@ -69,6 +69,27 @@ func OpenSQLite(ctx context.Context, path string, clock Clock, capacity int) (*S
 		db.Close()
 		return nil, fmt.Errorf("migrate crew review submissions: %w", err)
 	}
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('crew_review_submissions') WHERE name='notify_address'`).Scan(&columns); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if columns == 0 {
+		if _, err = db.ExecContext(ctx, `ALTER TABLE crew_review_submissions ADD COLUMN notify_address TEXT NOT NULL DEFAULT ''`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate crew review submission notify address: %w", err)
+		}
+	}
+	// The notice outbox. A row is written in the transaction that records the
+	// submission outcome it reports, and its operation_id is the fabric
+	// idempotency key, so retries after a crash cannot send it twice.
+	if _, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS crew_review_notices (operation_id TEXT PRIMARY KEY, submission_id TEXT NOT NULL, kind TEXT NOT NULL, recipient TEXT NOT NULL, body TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', message_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, sent_at TEXT NOT NULL DEFAULT '')`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate crew review notices: %w", err)
+	}
+	if _, err = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS crew_review_notices_pending ON crew_review_notices(state, created_at)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate crew review notice index: %w", err)
+	}
 	if err = s.Recover(ctx); err != nil {
 		db.Close()
 		return nil, err

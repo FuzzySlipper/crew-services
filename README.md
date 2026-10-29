@@ -124,7 +124,8 @@ instructions beside it in `reviewer.md`. `CREW_REVIEW_LISTEN`,
 `CREW_REVIEW_DB`, `CREW_REVIEW_MODEL`, `CREW_REVIEW_REASONING_EFFORT`,
 `DEN_MCP_TOKEN`, `CREW_REVIEW_PROFILE`, `CREW_REVIEW_CAPACITY`,
 `CREW_REVIEW_RUN_INTERVAL`, `CREW_REVIEW_SUBMISSION_INTERVAL`,
-`CREW_REVIEW_SOURCE_GRACE`, and `CODEX_COMMAND` may be supplied through the
+`CREW_REVIEW_SOURCE_GRACE`, `CREW_REVIEW_FABRIC_URL`,
+`CREW_REVIEW_FABRIC_INSTANCE`, and `CODEX_COMMAND` may be supplied through the
 environment; all have corresponding flags where they affect the process.
 The command starts a fixed number of bounded runner lanes (one durable job per
 lane at a time), reports `backend: "codex"` from `GET /v1/review-pool`, and
@@ -207,6 +208,31 @@ round-scoped job admission are durable in the
 local SQLite file, so an uncertain retry reconciles instead of starting a
 second job. An unavailable crew-review backend is returned as an actionable
 retryable result; there is no automatic Rusty fallback.
+
+A submission may carry an optional `notify_address`, a crew fabric address
+(usually the submitting session's). It is delivery metadata, not part of the
+submission's material: a repeat that adds or changes it updates the stored
+address instead of conflicting. When the submission's gate fails, crew-review
+writes a notice to an outbox table (`crew_review_notices`) in the same SQLite
+transaction that records `gate_failed`, and a separate background loop (same
+`-submission-interval`) submits pending notices to crew-messaging at
+`-fabric-url` (`CREW_REVIEW_FABRIC_URL`, default `http://127.0.0.1:8787`;
+`off` disables delivery). crew-review registers as the fabric producer
+`crew-review` (stable instance `-fabric-instance`, default `crew-review-local`)
+and binds its service-owned origin address `system/crew-review` to itself; the
+fabric only accepts a sender address bound to the submitting producer. Each
+notice uses `operation_id = submission/<id>/gate_failed/<gate handle>`, where
+the gate handle is Den's gate ID, suffixed `.<attempt>` from the second
+attempt on, because Den reopens the same gate when a failed one is registered
+again. Fabric idempotency makes a retry after a crash or lost reply safe, so a
+failed gate yields exactly one accepted notice. Notices are sent with the
+`next_step` policy and a 24h TTL, and state the task, commit, ref, the checks
+that did not pass with their job links, and what to do next. An outbox row is
+`pending` until the fabric accepts it (`sent`); it becomes `abandoned` if the
+fabric refuses it outright or has not accepted it within 24 hours (for example
+an address that was never registered). An unavailable fabric only delays
+notices; it never blocks or delays review admission. Without a
+`notify_address` no notice is written.
 
 Den Web's contextual manual action uses
 `GET /v1/projects/{project_id}/tasks/{task_id}/manual-review` to read a

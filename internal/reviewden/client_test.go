@@ -189,7 +189,13 @@ func TestRequestReviewAndGitHubGateMethodsMapDenAuthority(t *testing.T) {
 			writeToolResult(w, map[string]any{
 				"id": 44, "project_id": "dsh-crew", "task_id": 7416, "repository": "owner/repo",
 				"commit_sha": reviewDenTestSHA, "ref": "main", "status": "failed",
-				"terminal_reason": "required_checks_missing", "failure_summary": "lint was not observed",
+				"terminal_reason": "required_checks_missing", "failure_summary": "lint was not observed", "attempt": 2,
+				"check_runs": []map[string]any{
+					{"name": "test", "status": "completed", "conclusion": "failure", "details_url": "https://github.com/owner/repo/actions/runs/1/job/2"},
+					{"name": "build", "status": "completed", "conclusion": "success", "details_url": "https://github.com/owner/repo/actions/runs/1/job/3"},
+					{"name": "slow", "status": "in_progress", "details_url": "https://github.com/owner/repo/actions/runs/1/job/4"},
+				},
+				"missing_required_checks": []string{"lint"},
 			})
 		default:
 			t.Fatalf("unexpected Den tool %q", request.Params.Name)
@@ -217,6 +223,13 @@ func TestRequestReviewAndGitHubGateMethodsMapDenAuthority(t *testing.T) {
 	failed, err := client.GetGitHubCheckGate(context.Background(), gateRequest)
 	if err != nil || failed.Status != "failed" || failed.TerminalReason != "required_checks_missing" || failed.FailureSummary != "lint was not observed" {
 		t.Fatalf("failed gate=%+v err=%v", failed, err)
+	}
+	wantChecks := []review.GateCheck{{Name: "test", Conclusion: "failure", URL: "https://github.com/owner/repo/actions/runs/1/job/2"}, {Name: "lint", Conclusion: "missing"}}
+	if failed.Attempt != 2 || len(failed.FailedChecks) != len(wantChecks) || failed.FailedChecks[0] != wantChecks[0] || failed.FailedChecks[1] != wantChecks[1] {
+		t.Fatalf("failed gate checks=%+v attempt=%d", failed.FailedChecks, failed.Attempt)
+	}
+	if len(pending.FailedChecks) != 0 {
+		t.Fatalf("pending gate reported failed checks %+v", pending.FailedChecks)
 	}
 	if len(calls) != 3 || calls[0]["name"] != "request_review" || calls[1]["name"] != "watch_github_checks" || calls[2]["name"] != "get_github_check_gate" {
 		t.Fatalf("calls=%v", calls)
@@ -255,7 +268,7 @@ func TestManualReviewMethodsUseCanonicalTaskAndNoInventedSourceSHA(t *testing.T)
 		case "get_task_context":
 			writeToolResult(w, map[string]any{
 				"schema_version": "1", "project_id": "dsh-crew", "task_id": 7416,
-				"task":            map[string]any{"id": 7416, "project_id": "dsh-crew", "status": "review", "description": "review this"},
+				"task":            map[string]any{"id": 7416, "project_id": "dsh-crew", "status": "review", "title": "Manual review", "description": "review this"},
 				"recent_messages": []map[string]any{{"id": 5, "content": "ready"}},
 				"workflow":        map[string]any{"current_review_round": map[string]any{"id": 19}, "current_verdict": "looks_good"},
 			})
@@ -271,7 +284,7 @@ func TestManualReviewMethodsUseCanonicalTaskAndNoInventedSourceSHA(t *testing.T)
 		t.Fatal(err)
 	}
 	task, err := client.GetTaskContext(context.Background(), review.TaskKey{ProjectID: "dsh-crew", TaskID: 7416})
-	if err != nil || task.Status != "review" || task.CurrentReviewRoundID != 19 || task.CurrentReviewVerdict != "looks_good" {
+	if err != nil || task.Status != "review" || task.CurrentReviewRoundID != 19 || task.CurrentReviewVerdict != "looks_good" || task.Title != "Manual review" {
 		t.Fatalf("task=%+v err=%v", task, err)
 	}
 	request := review.ManualReviewRequest{ProjectID: "dsh-crew", TaskID: 7416, Ref: "main", Reviewer: "@reviewer", Preamble: "review current code on main"}

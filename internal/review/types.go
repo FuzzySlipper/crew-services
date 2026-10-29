@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -75,6 +76,50 @@ type GateEvidence struct {
 	Handle         string `json:"handle,omitempty"`
 	TerminalReason string `json:"terminal_reason,omitempty"`
 	FailureSummary string `json:"failure_summary,omitempty"`
+	// Attempt counts Den's evaluations of one gate: Den reopens the same gate
+	// (same Handle) when a failed or timed-out gate is registered again, so a
+	// gate failure is identified by Handle and Attempt together.
+	Attempt int64 `json:"attempt,omitempty"`
+	// FailedChecks names the required checks that did not pass, with links
+	// to their jobs. It is notice material only and is never part of a job
+	// admission.
+	FailedChecks []GateCheck `json:"failed_checks,omitempty"`
+}
+
+// GateCheck is one required check that kept a gate from passing.
+type GateCheck struct {
+	Name       string `json:"name"`
+	Conclusion string `json:"conclusion,omitempty"`
+	URL        string `json:"url,omitempty"`
+}
+
+// failureHandle identifies one failed evaluation of a gate.
+func (g GateEvidence) failureHandle() string {
+	if g.Attempt > 1 {
+		return g.Handle + "." + strconv.FormatInt(g.Attempt, 10)
+	}
+	return g.Handle
+}
+
+// admissionGate is the gate evidence a job admission carries: notice-only
+// material is dropped so the admission material hash is unchanged by it.
+func (g GateEvidence) admissionGate() GateEvidence {
+	g.Attempt = 0
+	g.FailedChecks = nil
+	return g
+}
+
+func sameGate(a, b GateEvidence) bool {
+	if len(a.FailedChecks) != len(b.FailedChecks) {
+		return false
+	}
+	for i := range a.FailedChecks {
+		if a.FailedChecks[i] != b.FailedChecks[i] {
+			return false
+		}
+	}
+	return a.Repository == b.Repository && a.Ref == b.Ref && a.CommitSHA == b.CommitSHA && a.Status == b.Status &&
+		a.Handle == b.Handle && a.TerminalReason == b.TerminalReason && a.FailureSummary == b.FailureSummary && a.Attempt == b.Attempt
 }
 
 type Admission struct {
@@ -164,6 +209,8 @@ type TaskContext struct {
 	Status               string
 	CurrentReviewRoundID int64
 	CurrentReviewVerdict string
+	// Title is informational; it is used only in notices.
+	Title string
 }
 
 // SubmissionRequest is the runtime-neutral managed review entry point. It is
@@ -182,6 +229,11 @@ type SubmissionRequest struct {
 	Reviewer        string   `json:"reviewer,omitempty"`
 	SupersedesRound *int64   `json:"supersedes_round,omitempty"`
 	SupersedeReason string   `json:"supersede_reason,omitempty"`
+	// NotifyAddress is the crew fabric address told about outcomes of this
+	// submission that need the submitter, such as a failed check gate. It is
+	// delivery metadata: it is not part of the material hash, and a resend
+	// that adds or changes it updates the submission instead of forking it.
+	NotifyAddress string `json:"notify_address,omitempty"`
 
 	// IdempotencyKey is transport metadata, not part of the public MCP tool
 	// schema. A direct HTTP caller may supply Idempotency-Key; the Den gateway
@@ -265,6 +317,10 @@ type SubmissionTransition struct {
 	Gate          *GateEvidence
 	JobID         *string
 	Failure       *string
+	// Notice, when set, is recorded as a pending outbox notice in the same
+	// transaction as the transition. A notice whose operation ID already
+	// exists is kept as it is.
+	Notice *Notice
 }
 
 // SubmissionReceipt is intentionally provider-neutral. It reports Den

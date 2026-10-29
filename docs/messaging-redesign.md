@@ -162,6 +162,13 @@ not to watch gates, which is right, but it leaves them blind.
 4. **Message.** The notice states the task, the commit, the failed check names
    with job links, and what to do: fix it, or re-run the check and resubmit
    with the same arguments. It is sent with `next_step` and a 24h TTL.
+   *As built:* the outbox is `crew_review_notices` in the crew-review
+   database (`pending` → `sent`, or `abandoned` when the fabric refuses the
+   notice or has not accepted it within the 24h TTL). The gate handle is Den's
+   gate ID plus `.<attempt>` from the second attempt on, since Den reopens the
+   same gate ID on re-registration. crew-review registers as producer
+   `crew-review` and binds `system/crew-review` to itself, which is all the
+   fabric needs to accept that sender; no core change was required.
 5. **Later notices.** `source_missing`, `stale`, `job_admitted` and review
    outcomes (`changes_requested`) can use the same outbox once the first one
    works.

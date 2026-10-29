@@ -309,6 +309,7 @@ type taskContextTask struct {
 	ID        int64  `json:"id"`
 	ProjectID string `json:"project_id"`
 	Status    string `json:"status"`
+	Title     string `json:"title"`
 }
 
 type taskContextWorkflow struct {
@@ -417,7 +418,7 @@ func decodeTaskContext(data json.RawMessage, key review.TaskKey) (review.TaskCon
 	if err != nil {
 		return review.TaskContext{}, nil, nil, err
 	}
-	return review.TaskContext{ProjectID: projectID, TaskID: taskID, Status: strings.TrimSpace(task.Status), CurrentReviewRoundID: currentRoundID, CurrentReviewVerdict: strings.TrimSpace(response.Workflow.CurrentVerdict)}, append(json.RawMessage(nil), response.Task...), append(json.RawMessage(nil), response.RecentMessages...), nil
+	return review.TaskContext{ProjectID: projectID, TaskID: taskID, Status: strings.TrimSpace(task.Status), CurrentReviewRoundID: currentRoundID, CurrentReviewVerdict: strings.TrimSpace(response.Workflow.CurrentVerdict), Title: strings.TrimSpace(task.Title)}, append(json.RawMessage(nil), response.Task...), append(json.RawMessage(nil), response.RecentMessages...), nil
 }
 
 func taskContextCurrentReviewRoundID(raw json.RawMessage) (int64, error) {
@@ -581,6 +582,58 @@ type gateResponse struct {
 	TerminalReason string   `json:"terminal_reason"`
 	FailureSummary string   `json:"failure_summary"`
 	RequiredChecks []string `json:"required_checks"`
+	Attempt        int64    `json:"attempt"`
+	CheckRuns      []struct {
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+		URL        string `json:"url"`
+		DetailsURL string `json:"details_url"`
+	} `json:"check_runs"`
+	MissingRequiredChecks []string `json:"missing_required_checks"`
+}
+
+// failedChecks lists the required checks that kept a finished gate from
+// passing, with links to their jobs. Checks that passed or were skipped are
+// left out, and so are still-running checks unless the gate timed out.
+func (response gateResponse) failedChecks() []review.GateCheck {
+	status := strings.TrimSpace(response.Status)
+	if status == "pending" || status == "passed" {
+		return nil
+	}
+	var checks []review.GateCheck
+	for _, run := range response.CheckRuns {
+		conclusion := strings.TrimSpace(run.Conclusion)
+		switch {
+		case strings.TrimSpace(run.Status) != "completed":
+			if status != "timed_out" {
+				continue
+			}
+			conclusion = firstNonEmpty(strings.TrimSpace(run.Status), "not finished")
+		case conclusion == "success" || conclusion == "neutral" || conclusion == "skipped":
+			continue
+		}
+		url := strings.TrimSpace(run.DetailsURL)
+		if url == "" {
+			url = strings.TrimSpace(run.URL)
+		}
+		checks = append(checks, review.GateCheck{Name: strings.TrimSpace(run.Name), Conclusion: conclusion, URL: url})
+	}
+	for _, name := range response.MissingRequiredChecks {
+		if name = strings.TrimSpace(name); name != "" {
+			checks = append(checks, review.GateCheck{Name: name, Conclusion: "missing"})
+		}
+	}
+	return checks
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (c *Client) WatchGitHubChecks(ctx context.Context, request review.GateRequest) (review.GateEvidence, error) {
@@ -632,6 +685,8 @@ func parseGateResponse(data json.RawMessage, request review.GateRequest) (review
 		Handle:         strconv.FormatInt(gateID, 10),
 		TerminalReason: strings.TrimSpace(response.TerminalReason),
 		FailureSummary: strings.TrimSpace(response.FailureSummary),
+		Attempt:        response.Attempt,
+		FailedChecks:   response.failedChecks(),
 	}, nil
 }
 

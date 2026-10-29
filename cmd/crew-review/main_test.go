@@ -50,6 +50,22 @@ func TestParseConfigUsesFlagsAndEnvironment(t *testing.T) {
 	}
 }
 
+func TestFabricConfig(t *testing.T) {
+	cfg, err := parseConfig(nil, func(string) string { return "" })
+	if err != nil || cfg.fabricURL != "http://127.0.0.1:8787" || cfg.fabricInstance != "crew-review-local" {
+		t.Fatalf("default fabric config=%q/%q err=%v", cfg.fabricURL, cfg.fabricInstance, err)
+	}
+	env := map[string]string{"CREW_REVIEW_FABRIC_URL": "http://127.0.0.1:9999", "CREW_REVIEW_FABRIC_INSTANCE": "box"}
+	cfg, err = parseConfig(nil, func(name string) string { return env[name] })
+	if err != nil || cfg.fabricURL != "http://127.0.0.1:9999" || cfg.fabricInstance != "box" {
+		t.Fatalf("env fabric config=%q/%q err=%v", cfg.fabricURL, cfg.fabricInstance, err)
+	}
+	cfg, err = parseConfig([]string{"-fabric-url", "off"}, func(name string) string { return env[name] })
+	if err != nil || cfg.fabricURL != "" {
+		t.Fatalf("disabled fabric config=%q err=%v", cfg.fabricURL, err)
+	}
+}
+
 func TestParseConfigSelectsDSHBackend(t *testing.T) {
 	env := map[string]string{
 		"CREW_REVIEW_BACKEND": "dsh",

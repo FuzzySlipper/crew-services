@@ -78,12 +78,25 @@ func (s *Service) SubmitTaskForReview(ctx context.Context, request SubmissionReq
 		record, err = s.reviseSubmission(ctx, store, normalized, idempotencyKey, materialHash)
 		replayed = err == nil
 	}
+	if err == nil && normalized.NotifyAddress != "" && normalized.NotifyAddress != record.Request.NotifyAddress {
+		record, err = s.updateNotifyAddress(ctx, store, record, normalized.NotifyAddress)
+	}
 	if err != nil {
 		return SubmissionReceipt{}, replayed, err
 	}
 	receipt, err := s.advanceSubmission(ctx, store, record, true)
 	receipt.Replayed = replayed
 	return receipt, replayed, err
+}
+
+// updateNotifyAddress records a notify address added or changed by a resend.
+// The address is delivery metadata, so it never forks the submission.
+func (s *Service) updateNotifyAddress(ctx context.Context, store SubmissionStore, record SubmissionRecord, address string) (SubmissionRecord, error) {
+	addresses, ok := store.(NotifyAddressStore)
+	if !ok {
+		return record, nil
+	}
+	return addresses.SetSubmissionNotifyAddress(ctx, record.ID, address)
 }
 
 // reviseSubmission accepts a corrected summary or reviewer for the same
@@ -173,6 +186,11 @@ func normalizeSubmissionRequest(request SubmissionRequest) (SubmissionRequest, e
 	request.ReviewSummary = strings.TrimSpace(request.ReviewSummary)
 	request.Reviewer = strings.TrimSpace(request.Reviewer)
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
+	notifyAddress, err := normalizeNotifyAddress(request.NotifyAddress)
+	if err != nil {
+		return SubmissionRequest{}, err
+	}
+	request.NotifyAddress = notifyAddress
 	if request.Reviewer == "" {
 		request.Reviewer = defaultSubmissionAuthor
 	}
@@ -243,6 +261,7 @@ func submissionTargetKey(request SubmissionRequest) string {
 }
 
 func submissionMaterialHash(request SubmissionRequest) (string, error) {
+	request.NotifyAddress = ""
 	material, err := json.Marshal(request)
 	if err != nil {
 		return "", fmt.Errorf("encode review submission material: %w", err)
@@ -319,7 +338,7 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 	gate := record.Gate
 	if len(record.Request.RequiredChecks) == 0 {
 		gate = noRequiredChecksGate(record.Request)
-		if record.Gate != gate || record.Phase != SubmissionGatePassed {
+		if !sameGate(record.Gate, gate) || record.Phase != SubmissionGatePassed {
 			record, err = s.transitionSubmission(ctx, store, record, SubmissionTransition{
 				Phase:   SubmissionGatePassed,
 				Gate:    &gate,
@@ -343,6 +362,7 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 			Phase:   gatePhase(gate.Status),
 			Gate:    &gate,
 			Failure: emptyStringPtr(),
+			Notice:  gatePhaseNotice(record, gate, task.Title),
 		})
 		if err != nil {
 			return SubmissionReceipt{}, err
@@ -360,6 +380,7 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 				Phase:   gatePhase(gate.Status),
 				Gate:    &gate,
 				Failure: emptyStringPtr(),
+				Notice:  gatePhaseNotice(record, gate, task.Title),
 			})
 			if err != nil {
 				return SubmissionReceipt{}, err
@@ -383,7 +404,7 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 		if reason == "" {
 			reason = "unknown"
 		}
-		return s.submissionGateFailed(ctx, store, record, gate, "github gate is "+reason)
+		return s.submissionGateFailed(ctx, store, record, gate, task.Title, "github gate is "+reason)
 	}
 	if record.Phase != SubmissionGatePassed && record.Phase != SubmissionSourcePending {
 		record, err = s.transitionSubmission(ctx, store, record, SubmissionTransition{Phase: SubmissionGatePassed, Gate: &gate, Failure: emptyStringPtr()})
@@ -423,7 +444,7 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 		Reviewer:       record.Request.Reviewer,
 		Workspace:      current.Workspace,
 		Branch:         record.Request.Ref,
-		Gate:           gate,
+		Gate:           gate.admissionGate(),
 		Source: &ReviewSource{
 			Repository: record.Request.Repository, CommitSHA: record.Request.CommitSHA,
 			Ref: record.Request.Ref, BaseCommit: record.Request.BaseCommit,
@@ -487,6 +508,15 @@ func noRequiredChecksGate(request SubmissionRequest) GateEvidence {
 	}
 }
 
+// gatePhaseNotice attaches the gate-failure notice to whichever transition
+// first records a failed gate, so the notice is written atomically with it.
+func gatePhaseNotice(record SubmissionRecord, gate GateEvidence, taskTitle string) *Notice {
+	if gatePhase(gate.Status) != SubmissionGateFailed {
+		return nil
+	}
+	return gateFailedNotice(record, gate, taskTitle)
+}
+
 func gatePhase(status string) SubmissionPhase {
 	if status == "pending" {
 		return SubmissionGatePending
@@ -534,8 +564,8 @@ func (s *Service) submissionStale(ctx context.Context, store SubmissionStore, re
 	return receipt, nil
 }
 
-func (s *Service) submissionGateFailed(ctx context.Context, store SubmissionStore, record SubmissionRecord, gate GateEvidence, message string) (SubmissionReceipt, error) {
-	updated, err := s.transitionSubmission(ctx, store, record, SubmissionTransition{Phase: SubmissionGateFailed, Gate: &gate, Failure: &message})
+func (s *Service) submissionGateFailed(ctx context.Context, store SubmissionStore, record SubmissionRecord, gate GateEvidence, taskTitle, message string) (SubmissionReceipt, error) {
+	updated, err := s.transitionSubmission(ctx, store, record, SubmissionTransition{Phase: SubmissionGateFailed, Gate: &gate, Failure: &message, Notice: gateFailedNotice(record, gate, taskTitle)})
 	if err != nil {
 		return SubmissionReceipt{}, err
 	}

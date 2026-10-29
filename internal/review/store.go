@@ -46,6 +46,11 @@ type SubmissionRevisionStore interface {
 	RetireSubmission(ctx context.Context, id string, idempotencyKey string) error
 }
 
+// NotifyAddressStore records a notify address supplied by a resend.
+type NotifyAddressStore interface {
+	SetSubmissionNotifyAddress(ctx context.Context, id, address string) (SubmissionRecord, error)
+}
+
 // SubmissionAdvanceStore lists unfinished submissions so the service can move
 // them forward without callers retrying.
 type SubmissionAdvanceStore interface {

@@ -11,6 +11,15 @@ import (
 	"github.com/google/uuid"
 )
 
+const submissionColumns = "id,idem_key,material_hash,request_json,phase,review_round_id,gate_json,job_id,failure,created_at,updated_at,notify_address"
+
+// storedRequest is the request material kept in request_json. The notify
+// address lives in its own column because a resend may change it.
+func storedRequest(request SubmissionRequest) ([]byte, error) {
+	request.NotifyAddress = ""
+	return json.Marshal(request)
+}
+
 func (s *SQLiteStore) AdmitSubmission(ctx context.Context, request SubmissionRequest, idempotencyKey, materialHash string) (SubmissionRecord, bool, error) {
 	if request.ProjectID == "" || request.TaskID <= 0 || request.Repository == "" || request.CommitSHA == "" || request.Ref == "" || request.ReviewSummary == "" || request.Reviewer == "" {
 		return SubmissionRecord{}, false, errors.New("invalid review submission")
@@ -18,13 +27,13 @@ func (s *SQLiteStore) AdmitSubmission(ctx context.Context, request SubmissionReq
 	if idempotencyKey == "" || materialHash == "" {
 		return SubmissionRecord{}, false, errors.New("submission idempotency and material hashes are required")
 	}
-	requestJSON, err := json.Marshal(request)
+	requestJSON, err := storedRequest(request)
 	if err != nil {
 		return SubmissionRecord{}, false, fmt.Errorf("encode review submission: %w", err)
 	}
 	now := stamp(s.clock.Now())
 	id := uuid.NewString()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO crew_review_submissions(id,idem_key,material_hash,request_json,phase,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, idempotencyKey, materialHash, string(requestJSON), SubmissionAccepted, now, now)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO crew_review_submissions(id,idem_key,material_hash,request_json,phase,created_at,updated_at,notify_address) VALUES(?,?,?,?,?,?,?,?)`, id, idempotencyKey, materialHash, string(requestJSON), SubmissionAccepted, now, now, request.NotifyAddress)
 	if err == nil {
 		record, getErr := s.GetSubmission(ctx, id)
 		return record, false, getErr
@@ -41,7 +50,7 @@ func (s *SQLiteStore) AdmitSubmission(ctx context.Context, request SubmissionReq
 }
 
 func (s *SQLiteStore) GetSubmission(ctx context.Context, id string) (SubmissionRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,idem_key,material_hash,request_json,phase,review_round_id,gate_json,job_id,failure,created_at,updated_at FROM crew_review_submissions WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT `+submissionColumns+` FROM crew_review_submissions WHERE id=?`, id)
 	return scanSubmission(row)
 }
 
@@ -93,7 +102,7 @@ func (s *SQLiteStore) LatestReusableSubmission(ctx context.Context, projectID st
 }
 
 func (s *SQLiteStore) SubmissionByKey(ctx context.Context, idempotencyKey string) (SubmissionRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,idem_key,material_hash,request_json,phase,review_round_id,gate_json,job_id,failure,created_at,updated_at FROM crew_review_submissions WHERE idem_key=?`, idempotencyKey)
+	row := s.db.QueryRowContext(ctx, `SELECT `+submissionColumns+` FROM crew_review_submissions WHERE idem_key=?`, idempotencyKey)
 	return scanSubmission(row)
 }
 
@@ -104,12 +113,12 @@ func (s *SQLiteStore) ReviseSubmission(ctx context.Context, revision SubmissionR
 	if revision.ID == "" || revision.ExpectedHash == "" || revision.MaterialHash == "" {
 		return SubmissionRecord{}, errors.New("invalid review submission revision")
 	}
-	requestJSON, err := json.Marshal(revision.Request)
+	requestJSON, err := storedRequest(revision.Request)
 	if err != nil {
 		return SubmissionRecord{}, fmt.Errorf("encode review submission: %w", err)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE crew_review_submissions SET request_json=?, material_hash=?, phase=?, review_round_id=CASE WHEN ?=1 THEN 0 ELSE review_round_id END, failure='', updated_at=? WHERE id=? AND material_hash=? AND phase<>?`,
-		string(requestJSON), revision.MaterialHash, SubmissionAccepted, boolInt(revision.ResetRound), stamp(s.clock.Now()), revision.ID, revision.ExpectedHash, SubmissionJobAdmitted)
+	result, err := s.db.ExecContext(ctx, `UPDATE crew_review_submissions SET request_json=?, notify_address=CASE WHEN ?<>'' THEN ? ELSE notify_address END, material_hash=?, phase=?, review_round_id=CASE WHEN ?=1 THEN 0 ELSE review_round_id END, failure='', updated_at=? WHERE id=? AND material_hash=? AND phase<>?`,
+		string(requestJSON), revision.Request.NotifyAddress, revision.Request.NotifyAddress, revision.MaterialHash, SubmissionAccepted, boolInt(revision.ResetRound), stamp(s.clock.Now()), revision.ID, revision.ExpectedHash, SubmissionJobAdmitted)
 	if err != nil {
 		return SubmissionRecord{}, err
 	}
@@ -173,8 +182,8 @@ func scanSubmission(row scanner) (SubmissionRecord, error) {
 	var requestJSON, gateJSON sql.NullString
 	var roundID sql.NullInt64
 	var phase string
-	var createdAt, updatedAt string
-	if err := row.Scan(&record.ID, &record.IdempotencyKey, &record.MaterialHash, &requestJSON, &phase, &roundID, &gateJSON, &record.JobID, &record.Failure, &createdAt, &updatedAt); err != nil {
+	var createdAt, updatedAt, notifyAddress string
+	if err := row.Scan(&record.ID, &record.IdempotencyKey, &record.MaterialHash, &requestJSON, &phase, &roundID, &gateJSON, &record.JobID, &record.Failure, &createdAt, &updatedAt, &notifyAddress); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SubmissionRecord{}, ErrNotFound
 		}
@@ -183,6 +192,7 @@ func scanSubmission(row scanner) (SubmissionRecord, error) {
 	if err := json.Unmarshal([]byte(requestJSON.String), &record.Request); err != nil {
 		return SubmissionRecord{}, fmt.Errorf("decode review submission %s: %w", record.ID, err)
 	}
+	record.Request.NotifyAddress = notifyAddress
 	record.Phase = SubmissionPhase(phase)
 	if roundID.Valid {
 		record.ReviewRoundID = roundID.Int64
@@ -228,12 +238,33 @@ func (s *SQLiteStore) TransitionSubmission(ctx context.Context, id string, expec
 		failureSet = 1
 		failure = *transition.Failure
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE crew_review_submissions SET phase=?, review_round_id=CASE WHEN ?=1 THEN ? ELSE review_round_id END, gate_json=CASE WHEN ?=1 THEN ? ELSE gate_json END, job_id=CASE WHEN ?=1 THEN ? ELSE job_id END, failure=CASE WHEN ?=1 THEN ? ELSE failure END, updated_at=? WHERE id=? AND phase=?`, transition.Phase, roundSet, roundID, boolInt(gateSet), gateJSON, jobSet, jobID, failureSet, failure, stamp(s.clock.Now()), id, expected)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return SubmissionRecord{}, err
+	}
+	defer tx.Rollback()
+	now := stamp(s.clock.Now())
+	result, err := tx.ExecContext(ctx, `UPDATE crew_review_submissions SET phase=?, review_round_id=CASE WHEN ?=1 THEN ? ELSE review_round_id END, gate_json=CASE WHEN ?=1 THEN ? ELSE gate_json END, job_id=CASE WHEN ?=1 THEN ? ELSE job_id END, failure=CASE WHEN ?=1 THEN ? ELSE failure END, updated_at=? WHERE id=? AND phase=?`, transition.Phase, roundSet, roundID, boolInt(gateSet), gateJSON, jobSet, jobID, failureSet, failure, now, id, expected)
 	if err != nil {
 		return SubmissionRecord{}, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
+		return SubmissionRecord{}, err
+	}
+	if rows == 1 && transition.Notice != nil {
+		notice := transition.Notice
+		if notice.OperationID == "" || notice.SubmissionID != id || notice.Recipient == "" || notice.Body == "" {
+			return SubmissionRecord{}, errors.New("invalid review submission notice")
+		}
+		// A notice for the same operation (the same failed gate) is kept as
+		// it is: it may already be sent.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO crew_review_notices(operation_id,submission_id,kind,recipient,body,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(operation_id) DO NOTHING`,
+			notice.OperationID, id, notice.Kind, notice.Recipient, notice.Body, NoticePending, now, now); err != nil {
+			return SubmissionRecord{}, fmt.Errorf("record review submission notice: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return SubmissionRecord{}, err
 	}
 	if rows != 1 {
@@ -258,4 +289,81 @@ var (
 	_ ManualReviewSubmissionStore = (*SQLiteStore)(nil)
 	_ SubmissionRevisionStore     = (*SQLiteStore)(nil)
 	_ SubmissionAdvanceStore      = (*SQLiteStore)(nil)
+)
+
+func (s *SQLiteStore) SetSubmissionNotifyAddress(ctx context.Context, id, address string) (SubmissionRecord, error) {
+	if id == "" || address == "" {
+		return SubmissionRecord{}, errors.New("invalid review submission notify address")
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE crew_review_submissions SET notify_address=? WHERE id=?`, address, id); err != nil {
+		return SubmissionRecord{}, err
+	}
+	return s.GetSubmission(ctx, id)
+}
+
+const noticeColumns = `operation_id,submission_id,kind,recipient,body,state,attempts,last_error,message_id,created_at,updated_at,sent_at`
+
+// ListPendingNotices returns pending notices, oldest first.
+func (s *SQLiteStore) ListPendingNotices(ctx context.Context, limit int) ([]Notice, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	return s.queryNotices(ctx, `SELECT `+noticeColumns+` FROM crew_review_notices WHERE state=? ORDER BY created_at, operation_id LIMIT ?`, NoticePending, limit)
+}
+
+func (s *SQLiteStore) ListSubmissionNotices(ctx context.Context, submissionID string) ([]Notice, error) {
+	return s.queryNotices(ctx, `SELECT `+noticeColumns+` FROM crew_review_notices WHERE submission_id=? ORDER BY created_at, operation_id`, submissionID)
+}
+
+func (s *SQLiteStore) queryNotices(ctx context.Context, query string, args ...any) ([]Notice, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	notices := make([]Notice, 0)
+	for rows.Next() {
+		var notice Notice
+		var kind, state, createdAt, updatedAt, sentAt string
+		if err := rows.Scan(&notice.OperationID, &notice.SubmissionID, &kind, &notice.Recipient, &notice.Body, &state, &notice.Attempts, &notice.LastError, &notice.MessageID, &createdAt, &updatedAt, &sentAt); err != nil {
+			return nil, err
+		}
+		notice.Kind, notice.State = NoticeKind(kind), NoticeState(state)
+		notice.CreatedAt, notice.UpdatedAt = parse(createdAt), parse(updatedAt)
+		if sentAt != "" {
+			notice.SentAt = parse(sentAt)
+		}
+		notices = append(notices, notice)
+	}
+	return notices, rows.Err()
+}
+
+// MarkNoticeSent records the fabric's acceptance. Only a pending notice moves.
+func (s *SQLiteStore) MarkNoticeSent(ctx context.Context, operationID, messageID string) error {
+	now := stamp(s.clock.Now())
+	_, err := s.db.ExecContext(ctx, `UPDATE crew_review_notices SET state=?, message_id=?, attempts=attempts+1, last_error='', sent_at=?, updated_at=? WHERE operation_id=? AND state=?`, NoticeSent, messageID, now, now, operationID, NoticePending)
+	return err
+}
+
+func (s *SQLiteStore) MarkNoticeAttempt(ctx context.Context, operationID, failure string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE crew_review_notices SET attempts=attempts+1, last_error=?, updated_at=? WHERE operation_id=? AND state=?`, boundedNoticeError(failure), stamp(s.clock.Now()), operationID, NoticePending)
+	return err
+}
+
+func (s *SQLiteStore) MarkNoticeAbandoned(ctx context.Context, operationID, reason string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE crew_review_notices SET state=?, last_error=?, updated_at=? WHERE operation_id=? AND state=?`, NoticeAbandoned, boundedNoticeError(reason), stamp(s.clock.Now()), operationID, NoticePending)
+	return err
+}
+
+func boundedNoticeError(message string) string {
+	const limit = 2048
+	if len(message) > limit {
+		return message[:limit]
+	}
+	return message
+}
+
+var (
+	_ NoticeStore        = (*SQLiteStore)(nil)
+	_ NotifyAddressStore = (*SQLiteStore)(nil)
 )
