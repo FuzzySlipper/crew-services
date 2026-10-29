@@ -66,7 +66,12 @@ if mode == "install":
             entry["matcher"] = matcher
         hooks.setdefault(event, []).append(entry)
     add("SessionStart", "session-start")
+    # UserPromptSubmit marks the session busy; it and PostToolUse (after every
+    # tool call) run only inside an active turn, so they are how crew-claude
+    # hands no_wake messages to a turn as additionalContext without ever
+    # starting one. Both return nothing when no message is pending.
     add("UserPromptSubmit", "busy")
+    add("PostToolUse", "step", matcher="*")
     add("Stop", "idle")
     # A turn that ends on an API error (expired login, overload) fires
     # StopFailure instead of Stop; without it the session would stay busy.

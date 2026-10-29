@@ -95,7 +95,10 @@ type Dispatch struct {
 	Socket     string `json:"socket"`
 	Transcript string `json:"transcript"`
 	Offset     int64  `json:"offset"`
-	Enqueued   bool   `json:"enqueued,omitempty"`
+	// Via is "hook" for a message returned as an in-turn hook's
+	// additionalContext, and empty for an inbox post.
+	Via      string `json:"via,omitempty"`
+	Enqueued bool   `json:"enqueued,omitempty"`
 	// Inserted records that the transcript showed the message in the
 	// conversation. It is saved before the acknowledgement is sent, so a failed
 	// acknowledgement is retried (with the same operation ID) instead of being
@@ -121,7 +124,19 @@ type Driver struct {
 	dispatches map[string]*Dispatch
 	pumpMu     sync.Mutex
 	wake       chan struct{}
+	// noWakeHeld marks sessions whose fabric head is a no_wake message the
+	// pump released, so passes do not keep claiming it while it waits for an
+	// in-turn hook. Any hook from the session clears it.
+	noWakeHeld map[string]time.Time
 }
+
+// noWakeHoldFor is how long the pump leaves a released no_wake head alone
+// before it looks again (a lost hook call must not strand it).
+const noWakeHoldFor = 30 * time.Second
+
+// turnContextBudget bounds the driver's side of an in-turn hook call, well
+// inside the hook's own 1.5s.
+const turnContextBudget = time.Second
 
 func New(fabric Fabric, inbox Inbox, now func() time.Time, cfg Config, log *slog.Logger) (*Driver, error) {
 	if cfg.LeaseDuration == 0 {
@@ -136,7 +151,7 @@ func New(fabric Fabric, inbox Inbox, now func() time.Time, cfg Config, log *slog
 	if cfg.QueuedTimeout == 0 {
 		cfg.QueuedTimeout = 6 * time.Hour
 	}
-	d := &Driver{fabric: fabric, inbox: inbox, now: now, cfg: cfg, log: log, sessions: map[string]*Session{}, dispatches: map[string]*Dispatch{}, wake: make(chan struct{}, 1)}
+	d := &Driver{fabric: fabric, inbox: inbox, now: now, cfg: cfg, log: log, sessions: map[string]*Session{}, dispatches: map[string]*Dispatch{}, wake: make(chan struct{}, 1), noWakeHeld: map[string]time.Time{}}
 	if err := d.load(); err != nil {
 		return nil, err
 	}
@@ -191,6 +206,7 @@ func (d *Driver) RegisterSession(ctx context.Context, r Registration) (string, e
 		return "", fmt.Errorf("register session address: %w", err)
 	}
 	d.mu.Lock()
+	delete(d.noWakeHeld, r.SessionID)
 	d.sessions[r.SessionID] = &Session{SessionID: r.SessionID, Socket: r.Socket, Token: r.Token, Cwd: r.Cwd, Transcript: r.Transcript, Address: binding.Address, Generation: binding.Generation, SeenAt: d.now().UTC()}
 	err = d.saveLocked()
 	d.mu.Unlock()
@@ -204,6 +220,7 @@ func (d *Driver) SetBusy(sessionID string, busy bool) {
 	d.mu.Lock()
 	s, ok := d.sessions[sessionID]
 	if ok {
+		delete(d.noWakeHeld, sessionID)
 		s.Busy = busy
 		s.SeenAt = d.now().UTC()
 		_ = d.saveLocked()
@@ -367,6 +384,12 @@ func (d *Driver) deliverOne(ctx context.Context, sessionID string) (bool, error)
 	}
 	token := d.leaseToken()
 	now := d.now().UTC()
+	d.mu.Lock()
+	heldAt, held := d.noWakeHeld[sessionID]
+	d.mu.Unlock()
+	if held && now.Sub(heldAt) < noWakeHoldFor {
+		return false, nil
+	}
 	claim, err := d.fabric.Claim(ctx, fabricclient.ClaimRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("claim", s.Address, now), RecipientAddress: s.Address, RecipientGeneration: s.Generation, Availability: d.availability(s), ClaimDuration: d.cfg.ClaimDuration.String()})
 	if err != nil {
 		return false, fmt.Errorf("claim: %w", err)
@@ -383,11 +406,16 @@ func (d *Driver) deliverOne(ctx context.Context, sessionID string) (bool, error)
 	if action == "" {
 		action = delivery.DispatchAction
 	}
-	release := func(cause error) error {
-		if _, err := d.fabric.Release(ctx, delivery.DeliveryID, fabricclient.ClaimTokenRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("release", delivery.DeliveryID, now), ClaimToken: claim.ClaimToken}); err != nil {
-			return fmt.Errorf("release after %v: %w", cause, err)
-		}
-		return nil
+	release := d.releaser(ctx, token, claim, now)
+	if policy, _ := normalizePolicy(claim.Message.ActivationPolicy); policy == "no_wake" {
+		// Every inbox frame can start a turn: "next" landing during a turn's
+		// final, tool-free response starts a new one after Stop. A no_wake
+		// message therefore never goes to the socket. It waits in the fabric
+		// for the session's next in-turn hook (TurnContext).
+		d.mu.Lock()
+		d.noWakeHeld[sessionID] = now
+		d.mu.Unlock()
+		return false, release(errors.New("no_wake waits for an in-turn hook"))
 	}
 	// Open the socket before recording the dispatch: a session that is gone
 	// sends the claim back to the queue instead of leaving it unknown.
@@ -431,20 +459,21 @@ func (d *Driver) deliverOne(ctx context.Context, sessionID string) (bool, error)
 //
 // "next" is read at the active turn's next step boundary, but it also starts a
 // turn on an idle session, and Claude Code has no frame that enters only an
-// active turn. So a no_wake message goes out only while the session is busy,
-// and a next_turn message only while it is idle (a "later" frame to a busy
-// session would sit in the session's in-memory queue, which an exit loses).
+// active turn. So no_wake never reaches the inbox (see deliverOne), and a
+// next_turn message goes out only while the session is idle (a "later" frame
+// to a busy session would sit in the session's in-memory queue, which an exit
+// loses).
 func (d *Driver) priorityFor(action, policy, sessionID string) (string, string) {
 	s, ok := d.session(sessionID)
 	if !ok {
 		return "", "session no longer registered"
 	}
 	policy, _ = normalizePolicy(policy)
+	if policy == "no_wake" {
+		return "", "no_wake is never posted to the inbox"
+	}
 	switch action {
 	case "deliver_next_step":
-		if !s.Busy && policy == "no_wake" {
-			return "", "no_wake target went idle"
-		}
 		return PriorityNext, ""
 	case "deliver_at_idle":
 		if s.Busy {
@@ -528,6 +557,8 @@ func (d *Driver) reconcile(ctx context.Context, s Session, head fabricclient.Del
 		// response replays the first acknowledgement.
 		request.OperationID = "crew-claude/ack/" + p.DeliveryID
 		_, err = d.fabric.Acknowledge(ctx, p.DeliveryID, request)
+	case p.Via == "hook" && age > d.cfg.AcceptTimeout:
+		outcome = "outcome_unknown: hook context never reached the transcript"
 	case !p.Enqueued && age > d.cfg.AcceptTimeout:
 		outcome = "outcome_unknown: never queued by the session"
 	case p.Enqueued && p.Socket != s.Socket:
@@ -575,6 +606,107 @@ func (d *Driver) keepDispatch(p Dispatch) error {
 	}
 	*current = p
 	return d.saveLocked()
+}
+
+// releaser returns the claim to the queue. It runs even after the caller's
+// context ended, so a hook that gave up does not leave the claim to expire.
+func (d *Driver) releaser(ctx context.Context, token string, claim fabricclient.Claim, now time.Time) func(error) error {
+	return func(cause error) error {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if _, err := d.fabric.Release(ctx, claim.Delivery.DeliveryID, fabricclient.ClaimTokenRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("release", claim.Delivery.DeliveryID, now), ClaimToken: claim.ClaimToken}); err != nil {
+			return fmt.Errorf("release after %v: %w", cause, err)
+		}
+		return nil
+	}
+}
+
+// TurnContext is called by a hook that runs only inside an active turn
+// (UserPromptSubmit as a turn starts, PostToolUse after each tool call). It
+// returns at most one crew message for the hook to hand back as
+// additionalContext, which Claude Code adds to that turn and records in the
+// transcript; it can never start a turn. This is the only way a no_wake
+// message reaches a Claude Code session, and it also carries a next_step
+// message it claims. A message already handed out this way is settled from
+// the transcript first, so consecutive tool calls drain the address in order.
+// An empty result means nothing is pending for an active turn.
+func (d *Driver) TurnContext(ctx context.Context, sessionID string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, turnContextBudget)
+	defer cancel()
+	d.mu.Lock()
+	s, ok := d.sessions[sessionID]
+	if ok {
+		delete(d.noWakeHeld, sessionID)
+		if !s.Busy {
+			s.Busy = true
+			s.SeenAt = d.now().UTC()
+			_ = d.saveLocked()
+		}
+	}
+	d.mu.Unlock()
+	if !ok {
+		return "", nil
+	}
+	for i := 0; i < 5; i++ {
+		text, settled, err := d.turnOne(ctx, sessionID)
+		if err != nil || text != "" || !settled {
+			return text, err
+		}
+	}
+	return "", nil
+}
+
+// turnOne claims the head for an active turn and returns its text, or settles
+// a head already handed out (settled reports that, so the caller looks again).
+func (d *Driver) turnOne(ctx context.Context, sessionID string) (string, bool, error) {
+	s, ok := d.session(sessionID)
+	if !ok {
+		return "", false, nil
+	}
+	token := d.leaseToken()
+	now := d.now().UTC()
+	claim, err := d.fabric.Claim(ctx, fabricclient.ClaimRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("claim", s.Address, now), RecipientAddress: s.Address, RecipientGeneration: s.Generation, Availability: "busy", ClaimDuration: d.cfg.ClaimDuration.String()})
+	if err != nil {
+		return "", false, fmt.Errorf("claim: %w", err)
+	}
+	if !claim.Claimed || claim.Delivery == nil || claim.Message == nil {
+		if claim.Reason == "head_dispatching" && claim.Head != nil {
+			settled, err := d.reconcile(ctx, s, *claim.Head)
+			return "", settled, err
+		}
+		return "", false, nil
+	}
+	delivery := claim.Delivery
+	action := claim.DispatchAction
+	if action == "" {
+		action = delivery.DispatchAction
+	}
+	release := d.releaser(ctx, token, claim, now)
+	if action != "deliver_next_step" {
+		return "", false, release(errors.New("unexpected dispatch action " + action + " for an active turn"))
+	}
+	text := d.render(ctx, *claim.Message)
+	if ctx.Err() != nil {
+		// The hook has given up waiting: nothing would reach the turn.
+		return "", false, release(ctx.Err())
+	}
+	ref := delivery.DeliveryID
+	if _, err := d.fabric.Begin(ctx, delivery.DeliveryID, fabricclient.DispatchRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("begin", delivery.DeliveryID, now), ClaimToken: claim.ClaimToken, NativeAttemptRef: ref}); err != nil {
+		return "", false, fmt.Errorf("begin dispatch: %w", err)
+	}
+	// From here the delivery stays dispatching until the transcript shows the
+	// hook's context. A hook output that never lands becomes outcome_unknown
+	// after AcceptTimeout and is never handed out again.
+	pending := &Dispatch{DeliveryID: delivery.DeliveryID, MessageID: claim.Message.MessageID, MsgID: nativeMessageID(delivery.DeliveryID), Ref: ref, SessionID: s.SessionID, Socket: s.Socket, Transcript: s.Transcript, Offset: fileSize(s.Transcript), Via: "hook", PostedAt: now}
+	d.mu.Lock()
+	d.dispatches[pending.DeliveryID] = pending
+	saveErr := d.saveLocked()
+	d.mu.Unlock()
+	if saveErr != nil {
+		d.log.Warn("save driver state", "error", saveErr)
+	}
+	d.log.Info("handed to the active turn through a hook", "session", s.SessionID, "address", s.Address, "delivery", delivery.DeliveryID, "policy", claim.Message.ActivationPolicy)
+	return text, false, nil
 }
 
 // render is the text the session reads, naming the sender when Lookup knows it.

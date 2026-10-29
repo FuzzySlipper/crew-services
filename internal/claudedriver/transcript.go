@@ -26,6 +26,13 @@ import (
 // A message the session held, refused or dropped produces neither, and the
 // queue is lost if the process exits before the message enters the
 // conversation.
+//
+// A message the driver hands to an active turn through a hook's
+// additionalContext (UserPromptSubmit, PostToolUse) enters the conversation as
+// {"type":"attachment","attachment":{"type":"hook_additional_context",
+// "content":["<text>"],"hookEvent":"PostToolUse",…}}, written right after the
+// hook returns and sent to the model with the turn's next request. It has no
+// msg_id, so it is matched by the "(crew message <id>)" marker in its text.
 
 // transcriptScan is what one pass over new transcript lines found.
 type transcriptScan struct {
@@ -75,6 +82,9 @@ func scanTranscript(path string, offset int64, msgID, marker string) (transcript
 		case bytes.Contains(line, id) && carriesMsgID(line, msgID):
 			out.Inserted = true
 			return out, nil
+		case marker != "" && bytes.Contains(line, mark) && isHookContext(line, marker):
+			out.Inserted = true
+			return out, nil
 		case marker != "" && bytes.Contains(line, mark) && isEnqueue(line, marker):
 			out.Enqueued = true
 		}
@@ -104,6 +114,27 @@ func carriesMsgID(line []byte, msgID string) bool {
 		return entry.Origin.MsgID == msgID
 	case "attachment":
 		return entry.Attachment.Origin.MsgID == msgID
+	}
+	return false
+}
+
+// isHookContext reports whether line is hook additional context that carries
+// marker, that is, a message the driver returned from an in-turn hook.
+func isHookContext(line []byte, marker string) bool {
+	var entry struct {
+		Type       string `json:"type"`
+		Attachment struct {
+			Type    string   `json:"type"`
+			Content []string `json:"content"`
+		} `json:"attachment"`
+	}
+	if json.Unmarshal(line, &entry) != nil || entry.Type != "attachment" || entry.Attachment.Type != "hook_additional_context" {
+		return false
+	}
+	for _, text := range entry.Attachment.Content {
+		if bytes.Contains([]byte(text), []byte(marker)) {
+			return true
+		}
 	}
 	return false
 }

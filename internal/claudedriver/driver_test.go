@@ -296,20 +296,57 @@ func TestDeliveryFollowsPolicyAndTurnState(t *testing.T) {
 		t.Fatalf("native ids=%q %q", sent[0].msgID, sent[1].msgID)
 	}
 
-	// no_wake waits while idle and goes out with the next busy turn.
+	// no_wake never goes to the socket, idle or busy: it reaches the active
+	// turn through the next in-turn hook.
 	h.send(t, "quiet", address, "fyi", "no_wake")
 	h.driver.Pump(h.ctx)
-	if n := len(h.inbox.sent()); n != 2 {
-		t.Fatalf("no_wake delivered while idle (%d posts)", n)
-	}
 	h.driver.SetBusy("session-1", true)
 	h.driver.Pump(h.ctx)
-	if sent := h.inbox.sent(); len(sent) != 3 || sent[2].priority != claudedriver.PriorityNext {
-		t.Fatalf("no_wake while busy=%#v", sent)
+	if n := len(h.inbox.sent()); n != 2 {
+		t.Fatalf("no_wake posted to the inbox (%d posts)", n)
 	}
+	if event, text := h.hook(t, h.driver, "session-1", "step", true); event != "PostToolUse" || !strings.Contains(text, "fyi") {
+		t.Fatalf("step hook=%q %q", event, text)
+	}
+	h.driver.Pump(h.ctx)
 	if got := h.states(t, address); strings.Join(got, ",") != "delivered,delivered,delivered" {
 		t.Fatalf("final states=%v", got)
 	}
+}
+
+// hook runs an in-turn hook against the driver's API the way Claude Code
+// would and, when it returns additionalContext and lands is set, writes the
+// hook_additional_context attachment Claude Code records for it. It returns
+// the output's hookEventName and context.
+func (h *harness) hook(t *testing.T, d *claudedriver.Driver, sessionID, event string, lands bool) (string, string) {
+	t.Helper()
+	api := httptest.NewServer(claudedriver.Handler(d))
+	defer api.Close()
+	out := claudedriver.RunHook(h.ctx, api.URL, event, claudedriver.HookInput{SessionID: sessionID}, claudedriver.HookEnv{})
+	if len(out) == 0 {
+		return "", ""
+	}
+	var parsed struct {
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("hook output %s: %v", out, err)
+	}
+	o := parsed.HookSpecificOutput
+	if lands && o.AdditionalContext != "" {
+		appendTranscript(h.transcript(sessionID), hookContextLine(o.HookEventName, o.AdditionalContext))
+	}
+	return o.HookEventName, o.AdditionalContext
+}
+
+// hookContextLine is what Claude Code 2.1.312 writes for a hook's
+// additionalContext (checked against a real PostToolUse hook).
+func hookContextLine(event, text string) string {
+	line, _ := json.Marshal(map[string]any{"type": "attachment", "attachment": map[string]any{"type": "hook_additional_context", "content": []string{text}, "hookName": event + ":Bash", "toolUseID": "toolu_1", "hookEvent": event}})
+	return string(line)
 }
 
 // Busy next_turn work is never handed to the session's in-memory queue: it
@@ -360,43 +397,155 @@ func TestBusyNextTurnWaitsForIdleAcrossExit(t *testing.T) {
 	}
 }
 
-// A Stop hook that lands in the middle of a pass must not let a no_wake
-// message out as a "next" frame, which would start a turn on the idle
-// session.
-func TestStopDuringAPassHoldsNoWake(t *testing.T) {
+// Every inbox frame can start a turn ("next" landing during a final,
+// tool-free response starts one after Stop), so no_wake never goes to the
+// socket, whatever the turn state or timing. It goes out only as
+// additionalContext of a hook that runs inside an active turn, one message
+// per hook call, in the address's order.
+func TestNoWakeGoesOnlyThroughInTurnHooks(t *testing.T) {
 	h := newHarness(t)
 	sock := h.socket(t, "six")
 	address := h.register(t, h.driver, "session-6", sock)
 	h.driver.SetBusy("session-6", true)
-	h.send(t, "step", address, "gate failed", "next_step")
 	h.send(t, "quiet-1", address, "fyi one", "no_wake")
 	h.send(t, "quiet-2", address, "fyi two", "no_wake")
-
-	// Stop arrives while the first message is being posted: the rest of the
-	// batch must see the session idle.
-	posts := 0
-	h.inbox.onDial = func(string) {
-		posts++
-		if posts == 2 {
-			// Between the second claim (made busy) and its write.
-			h.driver.SetBusy("session-6", false)
-		}
+	h.send(t, "step", address, "gate failed", "next_step")
+	for i := 0; i < 4; i++ {
+		h.driver.Pump(h.ctx)
+		h.clock.Advance(31 * time.Second)
 	}
+	h.driver.SetBusy("session-6", false)
 	h.driver.Pump(h.ctx)
-	sent := h.inbox.sent()
-	if len(sent) != 1 || !strings.Contains(sent[0].text, "gate failed") {
-		t.Fatalf("posts=%#v", sent)
+	if n := len(h.inbox.sent()); n != 0 {
+		t.Fatalf("no_wake posted to the inbox (%d posts)", n)
 	}
-	if got := h.states(t, address); strings.Join(got, ",") != "delivered,queued,queued" {
+	if got := h.states(t, address); strings.Join(got, ",") != "queued,queued,queued" {
+		t.Fatalf("before any hook=%v", got)
+	}
+
+	// A turn starts: UserPromptSubmit carries the first message.
+	event, text := h.hook(t, h.driver, "session-6", "busy", true)
+	if event != "UserPromptSubmit" || !strings.Contains(text, "fyi one") || strings.Contains(text, "fyi two") {
+		t.Fatalf("busy hook=%q %q", event, text)
+	}
+	if got := h.states(t, address); strings.Join(got, ",") != "dispatching,queued,queued" {
+		t.Fatalf("after the busy hook=%v", got)
+	}
+	// Each tool call settles the previous one from the transcript and carries
+	// the next; the next_step message behind them rides the same way.
+	if _, text := h.hook(t, h.driver, "session-6", "step", true); !strings.Contains(text, "fyi two") {
+		t.Fatalf("second step=%q", text)
+	}
+	if _, text := h.hook(t, h.driver, "session-6", "step", true); !strings.Contains(text, "gate failed") {
+		t.Fatalf("third step=%q", text)
+	}
+	if event, text := h.hook(t, h.driver, "session-6", "step", true); event != "" || text != "" {
+		t.Fatalf("nothing pending, yet the hook returned %q %q", event, text)
+	}
+	if got := h.states(t, address); strings.Join(got, ",") != "delivered,delivered,delivered" {
+		t.Fatalf("final=%v", got)
+	}
+	if n := len(h.inbox.sent()); n != 0 {
+		t.Fatalf("inbox posts=%d, want 0", n)
+	}
+}
+
+// A hook whose context never reaches the transcript (the hook timed out, the
+// process died) leaves the delivery outcome_unknown, never handed out again.
+func TestLostHookContextBecomesUnknown(t *testing.T) {
+	h := newHarness(t)
+	address := h.register(t, h.driver, "session-11", h.socket(t, "eleven"))
+	h.send(t, "quiet", address, "fyi", "no_wake")
+	h.send(t, "after", address, "next one", "no_wake")
+	_, first := h.hook(t, h.driver, "session-11", "step", false)
+	if !strings.Contains(first, "fyi") {
+		t.Fatalf("step=%q", first)
+	}
+	if _, text := h.hook(t, h.driver, "session-11", "step", true); text != "" {
+		t.Fatalf("handed out behind an unsettled head: %q", text)
+	}
+	// A quoted copy of the text in a tool result does not count.
+	quote, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []map[string]string{{"type": "tool_result", "content": first}}}})
+	appendTranscript(h.transcript("session-11"), string(quote))
+	h.clock.Advance(61 * time.Second)
+	if _, text := h.hook(t, h.driver, "session-11", "step", true); !strings.Contains(text, "next one") {
+		t.Fatalf("after the bound=%q", text)
+	}
+	if got := h.states(t, address); strings.Join(got, ",") != "outcome_unknown/native_outcome_unknown,dispatching" {
 		t.Fatalf("states=%v", got)
 	}
+}
 
-	// The next busy turn takes both.
-	h.inbox.onDial = nil
-	h.driver.SetBusy("session-6", true)
+// In-turn hooks return nothing, quickly, when no message is pending for an
+// active turn: no work, an unknown session, a subagent's tool call, or a
+// next_turn head (which waits for idle and holds back what follows it).
+func TestTurnContextIsEmptyWhenNothingIsPending(t *testing.T) {
+	h := newHarness(t)
+	address := h.register(t, h.driver, "session-12", h.socket(t, "twelve"))
+	if event, text := h.hook(t, h.driver, "session-12", "step", true); event != "" || text != "" {
+		t.Fatalf("no work: %q %q", event, text)
+	}
+	if event, text := h.hook(t, h.driver, "nobody", "step", true); event != "" || text != "" {
+		t.Fatalf("unknown session: %q %q", event, text)
+	}
+	h.send(t, "quiet", address, "fyi", "no_wake")
+	api := httptest.NewServer(claudedriver.Handler(h.driver))
+	defer api.Close()
+	if out := claudedriver.RunHook(h.ctx, api.URL, "step", claudedriver.HookInput{SessionID: "session-12", AgentID: "agent-1"}, claudedriver.HookEnv{}); len(out) != 0 {
+		t.Fatalf("subagent tool call got the session's message: %s", out)
+	}
+	if got := h.states(t, address); strings.Join(got, ",") != "queued" {
+		t.Fatalf("states=%v", got)
+	}
+	if out := claudedriver.RunHook(h.ctx, "http://127.0.0.1:1", "step", claudedriver.HookInput{SessionID: "session-12"}, claudedriver.HookEnv{}); len(out) != 0 {
+		t.Fatalf("unreachable driver produced output: %s", out)
+	}
+}
+
+// The fabric delivers an address in order. A no_wake behind a next_turn head
+// waits while that head waits for idle; a no_wake head on an idle session
+// holds back a next_turn behind it until a turn starts.
+func TestNoWakeKeepsAddressOrder(t *testing.T) {
+	h := newHarness(t)
+	sock := h.socket(t, "thirteen")
+	address := h.register(t, h.driver, "session-13", sock)
+	h.driver.SetBusy("session-13", true)
+	h.send(t, "turn", address, "after your turn", "next_turn")
+	h.send(t, "quiet", address, "fyi", "no_wake")
+	if _, text := h.hook(t, h.driver, "session-13", "step", true); text != "" {
+		t.Fatalf("no_wake passed a waiting next_turn head: %q", text)
+	}
+	h.driver.SetBusy("session-13", false)
 	h.driver.Pump(h.ctx)
-	if sent := h.inbox.sent(); len(sent) != 3 || sent[1].priority != claudedriver.PriorityNext || sent[2].priority != claudedriver.PriorityNext {
-		t.Fatalf("busy again=%#v", sent)
+	sent := h.inbox.sent()
+	if len(sent) != 1 || sent[0].priority != claudedriver.PriorityLater || !strings.Contains(sent[0].text, "after your turn") {
+		t.Fatalf("idle posts=%#v", sent)
+	}
+	// That post starts a turn; its UserPromptSubmit carries the no_wake.
+	if _, text := h.hook(t, h.driver, "session-13", "busy", true); !strings.Contains(text, "fyi") {
+		t.Fatalf("busy hook=%q", text)
+	}
+
+	// Idle again, with a no_wake at the head and a next_turn behind it.
+	h.hook(t, h.driver, "session-13", "step", true)
+	h.driver.SetBusy("session-13", false)
+	h.send(t, "quiet-2", address, "fyi again", "no_wake")
+	h.send(t, "turn-2", address, "wake me", "next_turn")
+	h.driver.Pump(h.ctx)
+	if n := len(h.inbox.sent()); n != 1 {
+		t.Fatalf("posted past a no_wake head (%d posts)", n)
+	}
+	if _, text := h.hook(t, h.driver, "session-13", "busy", true); !strings.Contains(text, "fyi again") {
+		t.Fatalf("busy hook=%q", text)
+	}
+	h.hook(t, h.driver, "session-13", "step", true)
+	h.driver.SetBusy("session-13", false)
+	h.driver.Pump(h.ctx)
+	if sent := h.inbox.sent(); len(sent) != 2 || !strings.Contains(sent[1].text, "wake me") {
+		t.Fatalf("after the turn=%#v", sent)
+	}
+	if got := h.states(t, address); strings.Join(got, ",") != "delivered,delivered,delivered,delivered" {
+		t.Fatalf("final=%v", got)
 	}
 }
 

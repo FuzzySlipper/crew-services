@@ -2,7 +2,7 @@
 // through each session's own inbox socket.
 //
 //	crew-claude serve [flags]   run the driver
-//	crew-claude hook EVENT      run as a Claude Code hook (session-start, busy, idle, fill-notify)
+//	crew-claude hook EVENT      run as a Claude Code hook (session-start, busy, step, idle, fill-notify)
 //	crew-claude send [--policy P] --to ADDRESS TEXT...
 //	                            send a crew message from this Claude session
 //	crew-claude who             list Claude and Codex sessions with crew addresses

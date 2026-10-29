@@ -52,6 +52,16 @@ func Handler(d *Driver) http.Handler {
 		d.SetBusy(r.PathValue("sessionID"), body.Busy)
 		w.WriteHeader(http.StatusNoContent)
 	})
+	// Called by hooks that run only inside an active turn. The response's
+	// context, when not empty, is a crew message for the hook to return as
+	// additionalContext.
+	mux.HandleFunc("POST /v1/sessions/{sessionID}/turn-context", func(w http.ResponseWriter, r *http.Request) {
+		text, err := d.TurnContext(r.Context(), r.PathValue("sessionID"))
+		if err != nil {
+			d.log.Warn("turn context", "session", r.PathValue("sessionID"), "error", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"context": text})
+	})
 	mux.HandleFunc("GET /v1/sessions", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"sessions": d.Sessions()})
 	})
@@ -87,11 +97,14 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 // HookInput is the part of Claude Code's hook stdin the driver reads.
 type HookInput struct {
-	SessionID      string          `json:"session_id"`
-	Cwd            string          `json:"cwd"`
-	TranscriptPath string          `json:"transcript_path"`
-	ToolName       string          `json:"tool_name"`
-	ToolInput      json.RawMessage `json:"tool_input"`
+	SessionID      string `json:"session_id"`
+	Cwd            string `json:"cwd"`
+	TranscriptPath string `json:"transcript_path"`
+	// AgentID is set when the hook fires inside a subagent, whose context
+	// and transcript are not the session's own.
+	AgentID   string          `json:"agent_id"`
+	ToolName  string          `json:"tool_name"`
+	ToolInput json.RawMessage `json:"tool_input"`
 }
 
 // HookEnv carries the session's own inbox, which Claude Code exports to hooks.
@@ -119,11 +132,29 @@ func RunHook(ctx context.Context, driverURL, event string, in HookInput, env Hoo
 			return nil
 		}
 		return hookOutput("SessionStart", map[string]any{"additionalContext": fmt.Sprintf("Your crew messaging address is %s. Crew services (for example crew-review, when a review check gate fails) send messages to this session there; pass it as notify_address where a tool accepts one.", out.Address)})
-	case "busy", "idle":
+	case "busy", "step":
+		// UserPromptSubmit (busy) and PostToolUse (step) run only inside an
+		// active turn, so context they return can never start one. The call
+		// also marks the session busy.
+		if in.SessionID == "" || in.AgentID != "" {
+			return nil
+		}
+		var out struct {
+			Context string `json:"context"`
+		}
+		if err := client.do(ctx, http.MethodPost, "/v1/sessions/"+url.PathEscape(in.SessionID)+"/turn-context", map[string]string{}, &out); err != nil || out.Context == "" {
+			return nil
+		}
+		hookEvent := "PostToolUse"
+		if event == "busy" {
+			hookEvent = "UserPromptSubmit"
+		}
+		return hookOutput(hookEvent, map[string]any{"additionalContext": out.Context})
+	case "idle":
 		if in.SessionID == "" {
 			return nil
 		}
-		_ = client.do(ctx, http.MethodPost, "/v1/sessions/"+url.PathEscape(in.SessionID)+"/state", map[string]bool{"busy": event == "busy"}, nil)
+		_ = client.do(ctx, http.MethodPost, "/v1/sessions/"+url.PathEscape(in.SessionID)+"/state", map[string]bool{"busy": false}, nil)
 		return nil
 	case "fill-notify":
 		return fillNotify(ctx, client, in)
