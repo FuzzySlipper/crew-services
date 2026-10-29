@@ -198,6 +198,10 @@ type Frame struct {
 	Held     bool   `json:"held"`
 	Video    bool   `json:"video"`
 	Cameras  string `json:"cameras,omitempty"`
+	// View and Overlays are X-Rusty-Frame-View and X-Rusty-Frame-Overlays:
+	// the inspection view drawn and the overlay sets drawn, when asked for.
+	View     string `json:"view,omitempty"`
+	Overlays string `json:"overlays,omitempty"`
 	Payload  []byte `json:"-"`
 }
 
@@ -222,14 +226,28 @@ func ParseFrame(data []byte) (Frame, error) {
 		Format: format, Held: data[33]&1 != 0, Video: data[33]&2 != 0, Payload: data[headerLength : headerLength+payloadLength]}, nil
 }
 
+// CaptureOptions asks frames/capture for a size, an inspection view instead
+// of the product's composition, and the overlays inspection shows.
+type CaptureOptions struct {
+	Width, Height int
+	View          string
+	Overlays      bool
+}
+
 // Capture draws one lossless world frame for a tool without becoming a
 // viewer, so no page or window changes size. Zero width/height uses the
 // output's own size. The UI overlay is never in it.
-func (h *Host) Capture(ctx context.Context, width, height int) (Frame, error) {
+func (h *Host) Capture(ctx context.Context, options CaptureOptions) (Frame, error) {
 	query := url.Values{"format": {"png"}}
-	if width > 0 && height > 0 {
-		query.Set("width", fmt.Sprint(width))
-		query.Set("height", fmt.Sprint(height))
+	if options.Width > 0 && options.Height > 0 {
+		query.Set("width", fmt.Sprint(options.Width))
+		query.Set("height", fmt.Sprint(options.Height))
+	}
+	if options.View != "" {
+		query.Set("view", options.View)
+	}
+	if options.Overlays {
+		query.Set("overlays", "1")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -248,5 +266,7 @@ func (h *Host) Capture(ctx context.Context, width, height int) (Frame, error) {
 		return Frame{}, fmt.Errorf("frame capture: %w", err)
 	}
 	frame.Cameras = response.Header.Get("X-Rusty-Frame-Cameras")
+	frame.View = response.Header.Get("X-Rusty-Frame-View")
+	frame.Overlays = response.Header.Get("X-Rusty-Frame-Overlays")
 	return frame, nil
 }

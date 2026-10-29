@@ -51,6 +51,20 @@ type Request struct {
 	// Desktop points window and os-input at the whole Windows desktop
 	// instead of the session's instance window.
 	Desktop bool `json:"desktop,omitempty"`
+	// Inspection views, overlays and scene readouts (inspect.go).
+	Anchor   string   `json:"anchor,omitempty"`
+	Framing  string   `json:"framing,omitempty"`
+	Target   string   `json:"target,omitempty"`
+	Handle   *uint64  `json:"handle,omitempty"`
+	Factor   *float64 `json:"factor,omitempty"`
+	Kind     string   `json:"kind,omitempty"`
+	Name     string   `json:"name,omitempty"`
+	View     string   `json:"view,omitempty"`
+	Depth    *int     `json:"depth,omitempty"`
+	Layer    string   `json:"layer,omitempty"`
+	Page     *int     `json:"page,omitempty"`
+	Overlays bool     `json:"overlays,omitempty"`
+	Player   bool     `json:"player,omitempty"`
 }
 
 type runner struct {
@@ -144,7 +158,15 @@ func (r *runner) run(ctx context.Context, q Request) (map[string]any, error) {
 	case "camera":
 		return r.camera(ctx, q)
 	case "world-frame", "capture":
-		return r.capture(ctx, r.directory, "world", q.Width, q.Height)
+		return r.capture(ctx, r.directory, "world", CaptureOptions{Width: q.Width, Height: q.Height, Overlays: q.Overlays})
+	case "view":
+		return r.view(ctx, q)
+	case "overlay", "scene":
+		command, err := inspectCommand(q)
+		if err != nil {
+			return nil, err
+		}
+		return r.host.Debug(ctx, command)
 	case "act":
 		return r.withCapture(ctx, q, func() (map[string]any, error) { return r.act(ctx, q.ID, q.MS, nil, nil, 2000) })
 	case "jump":
@@ -226,7 +248,8 @@ func (r *runner) discover(ctx context.Context) (map[string]any, error) {
 		has[name] = true
 	}
 	operations := []string{"discover", "observe", "action", "look", "time", "advance", "drawing", "frame", "camera", "targets", "route", "world-frame", "act", "survey", "record"}
-	for op, command := range map[string]string{"interaction": "interaction.inspect", "grid": "spatial.grid", "probe": "spatial.probe", "clearance": "spatial.clearance", "jump-plan": "playtest.jump-plan"} {
+	for op, command := range map[string]string{"interaction": "interaction.inspect", "grid": "spatial.grid", "probe": "spatial.probe", "clearance": "spatial.clearance", "jump-plan": "playtest.jump-plan",
+		"view": "engine.inspect.view", "overlay": "engine.inspect.overlay", "scene": "engine.scene.objects"} {
 		if has[command] {
 			operations = append(operations, op)
 		}
@@ -251,9 +274,9 @@ func (r *runner) discover(ctx context.Context) (map[string]any, error) {
 	return result, nil
 }
 
-// capture saves one world frame as world-<step>-<id>.png.
-func (r *runner) capture(ctx context.Context, directory, prefix string, width, height int) (map[string]any, error) {
-	frame, err := r.host.Capture(ctx, width, height)
+// capture saves one world frame as <prefix>-step-<step>-<id>.png.
+func (r *runner) capture(ctx context.Context, directory, prefix string, options CaptureOptions) (map[string]any, error) {
+	frame, err := r.host.Capture(ctx, options)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +293,7 @@ func (r *runner) withCapture(ctx context.Context, q Request, act func() (map[str
 	if err != nil || !q.Capture {
 		return result, err
 	}
-	shot, captureErr := r.capture(ctx, r.directory, "action", q.Width, q.Height)
+	shot, captureErr := r.capture(ctx, r.directory, "action", CaptureOptions{Width: q.Width, Height: q.Height})
 	if captureErr != nil {
 		result["captureError"] = captureErr.Error()
 		return result, nil
@@ -653,7 +676,7 @@ func (r *runner) survey(ctx context.Context, q Request) (map[string]any, error) 
 			failure = err.Error()
 			break
 		}
-		shot, err := r.capture(ctx, directory, fmt.Sprint(i), q.Width, q.Height)
+		shot, err := r.capture(ctx, directory, fmt.Sprint(i), CaptureOptions{Width: q.Width, Height: q.Height})
 		if err != nil {
 			failure = err.Error()
 			break
@@ -706,7 +729,7 @@ func (r *runner) record(ctx context.Context, q Request) (map[string]any, error) 
 	var frames []map[string]any
 	advanced := 0.0
 	capture := func() error {
-		shot, err := r.capture(ctx, directory, fmt.Sprintf("%05d", len(frames)), q.Width, q.Height)
+		shot, err := r.capture(ctx, directory, fmt.Sprintf("%05d", len(frames)), CaptureOptions{Width: q.Width, Height: q.Height})
 		if err != nil {
 			return err
 		}

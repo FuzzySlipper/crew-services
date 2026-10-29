@@ -30,10 +30,12 @@ type fakeHost struct {
 	moved     float64
 	held      map[string]bool
 	stream    chan string
+	views     map[string]bool
+	captures  []string // frames/capture queries
 }
 
 func newFakeHost() *fakeHost {
-	return &fakeHost{revision: 1, next: 1, held: map[string]bool{}, stream: make(chan string, 64)}
+	return &fakeHost{revision: 1, next: 1, held: map[string]bool{}, stream: make(chan string, 64), views: map[string]bool{}}
 }
 
 func (f *fakeHost) binding() map[string]string {
@@ -146,13 +148,62 @@ func (f *fakeHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case command == "refuse":
 			http.Error(w, "usage: refuse", http.StatusUnprocessableEntity)
 			return
+		case strings.HasPrefix(command, "engine.inspect.view "):
+			parts := strings.Fields(command)
+			id := ""
+			if len(parts) > 2 {
+				id = parts[2]
+			}
+			switch {
+			case parts[1] == "create":
+				f.views[id] = true
+			case parts[1] == "list":
+			case !f.views[id]:
+				http.Error(w, "INSPECT_NO_VIEW: no inspection view "+id, http.StatusUnprocessableEntity)
+				return
+			case parts[1] == "close":
+				delete(f.views, id)
+			}
+			answer = map[string]any{"views": len(f.views)}
 		default:
 			answer = map[string]any{}
 		}
 		json.NewEncoder(w).Encode(answer)
+	case runtimePrefix + "/frames/capture":
+		f.captures = append(f.captures, r.URL.RawQuery)
+		view := r.URL.Query().Get("view")
+		if view != "" && !f.views[view] {
+			w.WriteHeader(http.StatusInternalServerError)
+			io.WriteString(w, `{"accepted":false,"error":{"code":"PRODUCT_HOST_CAPTURE","diagnostic":"INSPECT_NO_VIEW: no inspection view `+view+`"}}`)
+			return
+		}
+		w.Header().Set("X-Rusty-Frame-Cameras", `[{"position":[0,1,0]}]`)
+		if view != "" {
+			w.Header().Set("X-Rusty-Frame-View", `{"id":"`+view+`","presentationSeconds":0.5}`)
+		}
+		if r.URL.Query().Get("overlays") == "1" {
+			w.Header().Set("X-Rusty-Frame-Overlays", `{"inspect.targets":3}`)
+		}
+		w.Write(rsf1(uint64(len(f.captures)), uint64(f.step), []byte("png")))
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// rsf1 is a held PNG capture frame.
+func rsf1(sequence, step uint64, payload []byte) []byte {
+	frame := make([]byte, 40+len(payload))
+	copy(frame, "RSF1")
+	le := binary.LittleEndian
+	le.PutUint32(frame[4:], 40)
+	le.PutUint64(frame[8:], sequence)
+	le.PutUint64(frame[16:], step)
+	le.PutUint32(frame[24:], 4)
+	le.PutUint32(frame[28:], 2)
+	frame[32], frame[33] = 3, 1
+	le.PutUint32(frame[36:], uint32(len(payload)))
+	copy(frame[40:], payload)
+	return frame
 }
 
 func startFake(t *testing.T) (*fakeHost, *Host) {

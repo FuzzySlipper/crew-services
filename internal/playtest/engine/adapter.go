@@ -25,6 +25,7 @@ func capabilities() map[string]any {
 		"pointer_buttons":  true,
 		"gamepad":          true,
 		"frame_capture":    "runtime frames/capture: lossless world frame named by its simulation step; no product UI",
+		"inspection_views": "assist view/overlay/scene: Engine inspection views, overlays and scene readouts; view captures named by step and view",
 		"browser_inspect":  false,
 		"dom_actions":      false,
 		"absolute_pointer": false,
@@ -180,7 +181,7 @@ func (a *Adapter) Observe(ctx context.Context, leaseID string) (map[string]any, 
 		return nil, err
 	}
 	started := time.Now().UTC()
-	frame, err := host.Capture(ctx, 0, 0)
+	frame, err := host.Capture(ctx, CaptureOptions{})
 	ended := time.Now().UTC()
 	if err != nil {
 		return nil, err
@@ -204,12 +205,15 @@ func (a *Adapter) Observe(ctx context.Context, leaseID string) (map[string]any, 
 
 func frameFacts(frame Frame) map[string]any {
 	facts := map[string]any{"captureSequence": frame.Sequence, "step": frame.Step, "held": frame.Held, "video": frame.Video}
-	if frame.Cameras != "" {
-		var cameras any
-		if json.Unmarshal([]byte(frame.Cameras), &cameras) == nil {
-			facts["cameras"] = cameras
+	for key, header := range map[string]string{"cameras": frame.Cameras, "view": frame.View, "overlays": frame.Overlays} {
+		if header == "" {
+			continue
+		}
+		var value any
+		if json.Unmarshal([]byte(header), &value) == nil {
+			facts[key] = value
 		} else {
-			facts["cameras"] = frame.Cameras
+			facts[key] = header
 		}
 	}
 	return facts
