@@ -730,7 +730,12 @@ func (d *Driver) dispatch(ctx context.Context, native Native, threadID, action, 
 func (d *Driver) wakeQueued(ctx context.Context, native Native, t target) (bool, NativeThread) {
 	queued, err := native.QueueList(ctx, t.ThreadID)
 	if err != nil {
-		d.log.Warn("list queue of not-loaded thread failed", "thread", t.ThreadID, "error", err)
+		// An archived thread refuses this; it has nothing to wake.
+		level := slog.LevelWarn
+		if IsRejection(err) {
+			level = slog.LevelDebug
+		}
+		d.log.Log(ctx, level, "list queue of not-loaded thread failed", "thread", t.ThreadID, "error", err)
 		return false, NativeThread{}
 	}
 	owed := ""
