@@ -1,9 +1,11 @@
 # Messaging redesign: durable core, thin drivers
 
-Status: draft for discussion, 2026-10-28. Nothing here is implemented, and it
-does not yet change `AGENTS.md` or the [messaging service
-specification](messaging-service-spec.md). Where the two disagree, the spec is
-still what the code does.
+Status: built, 2026-10-29. Proposed on 2026-10-28 and implemented under campaign
+#10448 (#10449–#10456); the sections below describe what was built, with
+*as built* notes where it differs from the proposal. Lasting contract rules
+live in the [messaging service specification](messaging-service-spec.md) and
+`AGENTS.md`; where this note and the spec disagree, the spec is what the code
+does. End-to-end evidence: [gate-failure slice evidence](evidence/gate-failure-slice.md).
 
 ## Why now
 
@@ -244,6 +246,8 @@ Crew-review and the fabric must both be restartable at any point in between.
 
 ### Order of work
 
+All five steps are done (#10449, #10451/#10455, #10452, #10453, #10450/#10454).
+
 1. Fabric: the policy rename/extension and session-address adoption. Freeze
    the projection endpoints.
 2. crew-review: `notify_address` and the notice outbox. Den schema field.
@@ -260,17 +264,29 @@ Crew-review and the fabric must both be restartable at any point in between.
 - **Per driver:** a fake runtime endpoint plus one live check: an idle session
   wakes, a busy one sees the note at its next step, and nothing is cancelled.
 - **End to end:** a deliberately failing required check on a scratch task.
+  *As built:* recorded in [evidence/gate-failure-slice.md](evidence/gate-failure-slice.md)
+  (#10456): busy, idle, exited-then-resumed, restarts with the fabric down,
+  and a passing re-run, for Claude Code; idle and busy for Codex and DSH.
 
 ## Open questions
 
-- Retire the session projection, event log and SSE, or keep them frozen? I
-  found no reader outside this repo.
+Resolved during the campaign:
+
+- *Retire the session projection?* Yes. Nothing read it after 2026-09-04 and its
+  only client was the retired dsh-crew plugin; migration 9 dropped its tables
+  (#10456).
+- *Store the Claude messaging token in the fabric?* No. The token stays in
+  crew-claude's own state file (`~/.local/state/crew-claude/sessions.json`,
+  0600); the fabric never sees runtime credentials.
+- *Revise `AGENTS.md` and the spec?* Done: waking, steering and interrupting are
+  separate concepts, and the spec carries the activation table and the removed
+  projection.
+
+Still open:
+
 - Is `next_turn` the right default for agent-to-agent messages, or should
   everything default to `next_step`?
-- Is it acceptable to store the Claude messaging token in the fabric database
-  (0600, loopback-only box)?
-- Do Codex queued submissions survive a daemon restart? They are on disk,
-  but this is untested.
-- Once this is agreed: revise `AGENTS.md` (the "must not steer" rule and the
-  wake-intent wording) and the spec's activation-policy and projection
-  sections.
+- Do Codex queued submissions survive a daemon restart? They are on disk, but
+  this is untested.
+- DSH `no_wake`: the web API has no insert that cannot start a turn, so
+  crew-dsh narrows the window instead of closing it (#10454).
