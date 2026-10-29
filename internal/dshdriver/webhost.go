@@ -240,41 +240,17 @@ func (h *WebHost) call(ctx context.Context, method string, args any, timeout tim
 }
 
 func (h *WebHost) callOnce(ctx context.Context, method string, args any, timeout time.Duration, out any) error {
-	base, err := h.connect(ctx)
-	if err != nil {
-		return err
-	}
 	rpcID := newRPCID()
 	body, err := json.Marshal(map[string]any{"type": "client-request", "rpcId": rpcID, "method": method, "payload": map[string]any{"args": args}})
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/"+method, bytes.NewReader(body))
+	status, data, err := h.post(ctx, "/api/"+method, body, timeout, method)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := h.http.Do(req)
-	if err != nil {
-		var opErr *net.OpError
-		if errors.As(err, &opErr) && opErr.Op == "dial" {
-			h.disconnect()
-			return &notSentError{err}
-		}
-		return fmt.Errorf("dsh %s: %w", method, err)
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
-	if err != nil {
-		return fmt.Errorf("dsh %s: read response: %w", method, err)
-	}
-	if resp.StatusCode == http.StatusUnauthorized {
-		return errUnauthorized
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("dsh %s: HTTP %s: %s", method, resp.Status, strings.TrimSpace(string(data)))
+	if status != http.StatusOK {
+		return fmt.Errorf("dsh %s: HTTP %d: %s", method, status, strings.TrimSpace(string(data)))
 	}
 	var envelope struct {
 		Type   string `json:"type"`
@@ -307,6 +283,41 @@ func (h *WebHost) callOnce(ctx context.Context, method string, args any, timeout
 		return fmt.Errorf("dsh %s: unreadable value: %w", method, err)
 	}
 	return nil
+}
+
+// post sends one authenticated JSON POST to the host and returns the status
+// and body. A 401 comes back as errUnauthorized, a failed dial as a
+// notSentError.
+func (h *WebHost) post(ctx context.Context, path string, body []byte, timeout time.Duration, method string) (int, []byte, error) {
+	base, err := h.connect(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := h.http.Do(req)
+	if err != nil {
+		var opErr *net.OpError
+		if errors.As(err, &opErr) && opErr.Op == "dial" {
+			h.disconnect()
+			return 0, nil, &notSentError{err}
+		}
+		return 0, nil, fmt.Errorf("dsh %s: %w", method, err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return 0, nil, fmt.Errorf("dsh %s: read response: %w", method, err)
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return 0, nil, errUnauthorized
+	}
+	return resp.StatusCode, data, nil
 }
 
 func newRPCID() string {
@@ -366,6 +377,63 @@ func (h *WebHost) Prompt(ctx context.Context, p PromptRequest) error {
 		return fmt.Errorf("dsh session/prompt: response without accepted:true")
 	}
 	return nil
+}
+
+// InjectPath is the dsh-crew-inject plugin's route (dsh-crew
+// plugins/crew-inject). It is on the host's authenticated /api channel.
+const InjectPath = "/api/crew-inject/inject"
+
+// InjectMissing is the error code Inject returns when the host answers 404:
+// the dsh-crew-inject plugin is not installed, and nothing was inserted.
+const InjectMissing = "crew-inject/missing"
+
+// Inject puts one message into a live root session's next-step inbox through
+// the dsh-crew-inject plugin, which calls agent.inject: it never wakes the
+// agent. A running turn takes it at its next step boundary; an idle agent
+// keeps it for the first step of its next turn. RequestID is recorded as the
+// message's source.rpcId, as session/prompt records it, and the plugin
+// deduplicates on it. It returns nil only for `accepted:true`.
+func (h *WebHost) Inject(ctx context.Context, p PromptRequest) error {
+	body, err := json.Marshal(map[string]string{"sessionId": p.SessionID, "requestId": p.RequestID, "content": p.Text})
+	if err != nil {
+		return err
+	}
+	for attempt := 0; ; attempt++ {
+		status, data, err := h.post(ctx, InjectPath, body, h.promptTimeout, "crew-inject")
+		if errors.Is(err, errUnauthorized) {
+			h.disconnect()
+			if attempt == 0 {
+				continue
+			}
+			return &notSentError{err}
+		}
+		if err != nil {
+			return err
+		}
+		return injectResult(status, data)
+	}
+}
+
+func injectResult(status int, data []byte) error {
+	var out struct {
+		Accepted bool   `json:"accepted"`
+		Code     string `json:"code"`
+		Message  string `json:"message"`
+	}
+	if status == http.StatusNotFound {
+		return &RemoteError{Method: "crew-inject", Code: InjectMissing, Message: "the dsh-crew-inject plugin is not installed in the web host"}
+	}
+	if json.Unmarshal(data, &out) != nil {
+		return fmt.Errorf("dsh crew-inject: HTTP %d: unreadable response", status)
+	}
+	switch {
+	case status == http.StatusOK && out.Accepted:
+		return nil
+	case (status == http.StatusBadRequest || status == http.StatusConflict) && out.Code != "":
+		// The plugin refused before inserting anything.
+		return &RemoteError{Method: "crew-inject", Code: out.Code, Message: out.Message}
+	}
+	return fmt.Errorf("dsh crew-inject: HTTP %d without accepted:true", status)
 }
 
 // HasRequest reports whether a session holds the prompt with requestID: still

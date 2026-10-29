@@ -15,9 +15,10 @@ import (
 )
 
 // Capabilities every crew-dsh binding advertises. session/prompt mode:'steer'
-// reaches a running agent at its next step boundary; mode:'queue' becomes the
-// next turn, and the host persists the inbox in the session log; and the host
-// resumes a cold session before admitting a prompt.
+// reaches a running agent at its next step boundary, and the dsh-crew-inject
+// plugin's agent.inject does so without ever waking it; mode:'queue' becomes
+// the next turn, and the host persists the inbox in the session log; and the
+// host resumes a cold session before admitting a prompt.
 var Capabilities = []string{"deliver_next_step", "deliver_when_idle", "durable_next_turn", "wake_inactive"}
 
 // Native is the part of the DSH web host the driver uses. *WebHost
@@ -27,6 +28,9 @@ type Native interface {
 	State(ctx context.Context, sessionID string) (SessionState, error)
 	Events(ctx context.Context, sessionID string, maxMessages int) ([]Event, error)
 	Prompt(ctx context.Context, p PromptRequest) error
+	// Inject inserts into the next-step inbox without waking the agent (the
+	// dsh-crew-inject plugin); see WebHost.Inject.
+	Inject(ctx context.Context, p PromptRequest) error
 }
 
 // Fabric is the part of the fabric API the driver uses.
@@ -411,11 +415,11 @@ func attemptSubject(deliveryID string, attempt int) string {
 	return fmt.Sprintf("%s/%d", deliveryID, attempt)
 }
 
-// modeFor maps the sender's policy to a prompt mode: next_step and no_wake
-// steer (seen at the next step boundary), next_turn queues (the next turn).
+// modeFor maps the sender's policy to a prompt mode: next_step steers (seen
+// at the next step boundary, waking an idle agent), next_turn queues (the
+// next turn). no_wake never goes through session/prompt; see deliverOne.
 func modeFor(policy string) string {
-	switch policy {
-	case "next_step", "no_wake", "never_wake":
+	if policy == "next_step" {
 		return "steer"
 	}
 	return "queue"
@@ -466,22 +470,11 @@ func (d *Driver) deliverOne(ctx context.Context, t target, availability string) 
 	}
 	// Read the session before recording the dispatch: if the host is gone,
 	// the claim goes back to the queue instead of becoming unknown.
-	state, err := d.native.State(ctx, t.SessionID)
-	if err != nil {
+	if _, err := d.native.State(ctx, t.SessionID); err != nil {
 		if releaseErr := release("session state unreadable"); releaseErr != nil {
 			return false, releaseErr
 		}
 		return false, fmt.Errorf("read session state: %w", err)
-	}
-	if c.noWake && !state.Running {
-		// A no_wake message only rides along with a turn already running: a
-		// steer would start a turn on an idle session. It waits in the fabric
-		// for the next running turn.
-		if err := release("no_wake with no running turn"); err != nil {
-			return false, err
-		}
-		d.log.Info("no_wake message left pending: no running turn", "session", t.SessionID, "address", t.Address, "delivery", c.delivery.DeliveryID)
-		return false, nil
 	}
 	if _, err := d.fabric.Begin(ctx, c.delivery.DeliveryID, fabricclient.DispatchRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("begin", c.attempt), ClaimToken: claim.ClaimToken, NativeAttemptRef: c.ref}); err != nil {
 		return false, fmt.Errorf("begin dispatch: %w", err)
@@ -494,25 +487,30 @@ func (d *Driver) deliverOne(ctx context.Context, t target, availability string) 
 // or, when its answer is ambiguous, from what the session holds. A prompt is
 // sent again only after the session was checked, after the host's
 // inbox-to-history window, and found not to hold it.
+//
+// A no_wake message goes in with Inject (agent.inject), never with
+// session/prompt: a steer wakes an idle agent, and the turn the fabric saw
+// running can end between any state read and the steer's admission. Inject
+// never starts a turn, so there is no window to check for: a running turn
+// takes the message at its next step, and an agent whose turn just ended
+// keeps it for the first step of its next turn. It is never steered instead.
 func (d *Driver) dispatch(ctx context.Context, c claimed, prompt PromptRequest) (bool, error) {
+	send := d.native.Prompt
+	if c.noWake {
+		send = d.native.Inject
+	}
 	for sends := 0; ; {
-		if c.noWake {
-			// Re-check right before the steer, so a turn that just ended is
-			// not woken by it. Nothing was sent, so the message goes back to
-			// the fabric queue as the address head.
-			state, err := d.native.State(ctx, c.t.SessionID)
-			if err != nil || !state.Running {
-				reason := "turn_ended"
-				if err != nil {
-					reason = "state_unreadable"
-				}
-				return false, d.notInserted(ctx, c, reason, err)
-			}
-		}
-		err := d.native.Prompt(ctx, prompt)
+		err := send(ctx, prompt)
 		sends++
 		if err == nil {
 			return true, d.acknowledge(ctx, c, "accepted")
+		}
+		if ErrorCode(err) == InjectMissing {
+			// The web host has no dsh-crew-inject route, so nothing went in.
+			// The message goes back as the address head; it is never steered.
+			d.log.Warn("no_wake message not delivered: the dsh-crew-inject plugin is not installed in the DSH web host", "session", c.t.SessionID, "delivery", c.delivery.DeliveryID)
+			d.refused(c.t.SessionID)
+			return false, d.notInserted(ctx, c, "inject_unavailable", err)
 		}
 		// Wait out the window in which the host has taken the item from the
 		// inbox but not yet written the user message, then look for it.

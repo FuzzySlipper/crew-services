@@ -311,9 +311,11 @@ Known limits:
 
 `crew-dsh` delivers fabric messages into DeepSeek Harness sessions through the
 `dsh web` host's session API (`dsh-web.service`, `http://127.0.0.1:3080`). It
-needs no DSH plugin or hook and never starts, stops, cancels or restarts DSH or
-a session; the host resumes a cold session itself when it is prompted. Install
-or update it with:
+never starts, stops, cancels or restarts DSH or a session; the host resumes a
+cold session itself when it is prompted. `no_wake` needs one small in-process
+plugin, `dsh-crew-inject` (dsh-crew `plugins/crew-inject`, built and installed
+into the `web` profile by dsh-crew `update.sh`), because the session API has
+no insert that cannot start a turn. Install or update the driver with:
 
 ```bash
 scripts/install-crew-dsh.sh
@@ -333,13 +335,26 @@ gets one when it asks (`crew-dsh address`). Each pass reads busy, idle and not
 loaded from the list (`running`, `agentAvailable`). Each binding advertises
 `deliver_next_step`, `deliver_when_idle`, `durable_next_turn` and
 `wake_inactive`. Delivery is `session/prompt` with `requestId`
-`crew-delivery:<delivery id>`:
+`crew-delivery:<delivery id>`, except for `no_wake`:
 
-| Policy | Prompt mode | Effect |
+| Policy | Native call | Effect |
 | --- | --- | --- |
-| `next_step` | `steer` | read at the running turn's next step boundary; starts a turn on an idle or cold session |
-| `next_turn` | `queue` | the next turn; starts at once on an idle session, resumes a cold one |
-| `no_wake` | `steer`, only while a turn is running | the session state is read after the claim and again just before the prompt; with no running turn the claim is released (before Begin) or reported not inserted (after Begin), so it never starts a turn |
+| `next_step` | `session/prompt` `steer` | read at the running turn's next step boundary; starts a turn on an idle or cold session |
+| `next_turn` | `session/prompt` `queue` | the next turn; starts at once on an idle session, resumes a cold one |
+| `no_wake` | `POST /api/crew-inject/inject` (`agent.inject`) | put in the next-step inbox without waking the agent: a running turn reads it at its next step boundary; if that turn has just ended, the message waits for the first step of the session's next turn. It never starts a turn |
+
+The inject route takes `{sessionId, requestId, content}` and answers
+`{accepted:true}`. It is on the host's authenticated `/api` channel (the same
+cookie), works only on a live root agent (`409 session/not-loaded` otherwise),
+and records `requestId` as the message's `source.rpcId`, the same source
+`session/prompt` writes. It is idempotent on that id: a repeat whose id is
+already in either inbox or the history is accepted without a second insert.
+The fabric hands out a `no_wake` message only while the session is busy;
+while it is idle the message waits in the fabric. Because inject never wakes,
+a turn that ends between the driver's state read and the insert no longer
+matters. If the host answers the route 404 (the plugin is not installed), the
+delivery is reported not inserted (`inject_unavailable`) and the session is
+backed off; `no_wake` never falls back to a steer.
 
 `accepted:true` is acknowledged as delivered. The host deduplicates on
 `requestId`, except in a ~0.1 s window in which the turn has taken the item
@@ -352,7 +367,8 @@ acknowledges. Not found, it sends the same prompt once more; a second unclear
 answer, a prompt that timed out (the host may still be working on it) or a
 session it cannot read is `outcome_unknown`. A refusal (`ok:false`) of a prompt
 the session does not hold is reported not inserted and the session is backed
-off (30 s doubling to 10 m); `session/not-found` fails the delivery. A dispatch
+off (30 s doubling to 10 m); `session/not-found` fails the delivery. An
+inject goes through the same reconcile and retry. A dispatch
 a crash left in flight is checked the same way and acknowledged or recorded
 `outcome_unknown`, never sent again.
 
@@ -364,9 +380,6 @@ which DSH sets for its shell tools (a subagent sends as its parent session).
 Known limits:
 - No SessionStart context: DSH's hook bridge is not in the web profile, so an
   agent learns its address with `crew-dsh address` rather than from context.
-- A `no_wake` steer still races a turn that ends between the last state read
-  and the prompt; the web API has no non-waking insert (core `inject` is not
-  exposed), so that window (one HTTP round trip) is narrowed, not closed.
 - The old `dsh-crew-messaging` plugin's title aliases (a renamed root became an
   address) are not carried over.
 - `go test -tags dshlive ./internal/dshdriver` with `DSH_LIVE_SESSION` set

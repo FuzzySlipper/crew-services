@@ -28,6 +28,9 @@ type fakeSession struct {
 	events   []Event
 	turns    int
 	notFound bool
+	// wakes counts the turns a prompt started: session/prompt (queue or
+	// steer) wakes an active agent with no turn running. Inject never does.
+	wakes int
 }
 
 type fakeItem struct {
@@ -62,6 +65,15 @@ type fakeHost struct {
 	onState  func(n int, s *fakeSession)
 	states   int
 	connects int
+	// injects records every dsh-crew-inject call as "session rpcId".
+	injects []string
+	// onInject, when set, runs before an inject is handled, like onPrompt:
+	// "" handles it, "drop-before" or "drop-after" hang up before or after
+	// inserting.
+	onInject func(n int, s *fakeSession) string
+	// noInject makes the host answer the inject route 404, as a web host
+	// without the dsh-crew-inject plugin does.
+	noInject bool
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
@@ -186,6 +198,10 @@ func (h *fakeHost) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if r.URL.Path == InjectPath {
+		h.serveInject(w, r)
+		return
+	}
 	var envelope struct {
 		RPCID   string `json:"rpcId"`
 		Method  string `json:"method"`
@@ -258,7 +274,7 @@ func (h *fakeHost) handle(w http.ResponseWriter, method string, args map[string]
 		queue := []QueuedItem{}
 		for i, item := range s.inbox {
 			placement := "queued"
-			if item.mode == "steer" {
+			if item.mode == "steer" || item.mode == "inject" {
 				placement = "steering"
 			}
 			queue = append(queue, QueuedItem{ID: fmt.Sprintf("q%d", i), Placement: placement, RPCID: item.rpcID})
@@ -301,6 +317,9 @@ func (h *fakeHost) handle(w http.ResponseWriter, method string, args map[string]
 		}
 		s.active = true // a cold session is resumed first
 		if !h.hasRequest(s, request.RequestID) {
+			if !s.running {
+				s.wakes++
+			}
 			s.inbox = append(s.inbox, fakeItem{rpcID: request.RequestID, mode: request.Mode})
 			h.appendEvent(s, "agent/inbox/spliced", map[string]any{"inserted": []any{map[string]any{"source": map[string]any{"kind": "user", "rpcId": request.RequestID}}}})
 		}
@@ -319,6 +338,66 @@ func (h *fakeHost) handle(w http.ResponseWriter, method string, args map[string]
 		return map[string]any{"accepted": true}, ""
 	}
 	return nil, "gateway/not-found"
+}
+
+// serveInject is the dsh-crew-inject plugin: agent.inject into the
+// next-step inbox of a live root agent, deduplicated on the rpcId in the
+// inbox and the history. It never wakes the agent.
+func (h *fakeHost) serveInject(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	missing := h.noInject
+	h.mu.Unlock()
+	if missing {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	var request struct {
+		SessionID string `json:"sessionId"`
+		RequestID string `json:"requestId"`
+		Content   string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.SessionID == "" || request.RequestID == "" || request.Content == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"accepted":false,"code":"gateway/bad-request"}`))
+		return
+	}
+	h.mu.Lock()
+	h.injects = append(h.injects, request.SessionID+" "+request.RequestID)
+	n := len(h.injects)
+	s, ok := h.sessions[request.SessionID]
+	hook := h.onInject
+	h.mu.Unlock()
+	how := ""
+	if hook != nil && ok {
+		how = hook(n, s)
+	}
+	if how == "drop-before" {
+		hangUp(w)
+		return
+	}
+	h.mu.Lock()
+	if !ok || !s.active || s.notFound {
+		h.mu.Unlock()
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"accepted":false,"code":"session/not-loaded"}`))
+		return
+	}
+	if !h.hasRequest(s, request.RequestID) {
+		s.inbox = append(s.inbox, fakeItem{rpcID: request.RequestID, mode: "inject"})
+		h.appendEvent(s, "agent/inbox/spliced", map[string]any{"target": "next-step", "inserted": []any{map[string]any{"source": map[string]any{"kind": "user", "rpcId": request.RequestID}}}})
+	}
+	h.mu.Unlock()
+	if how == "drop-after" {
+		hangUp(w)
+		return
+	}
+	_, _ = w.Write([]byte(`{"accepted":true}`))
+}
+
+func (h *fakeHost) injectCalls() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.injects...)
 }
 
 // admitted counts the prompts with rpcID the session took in: inbox, gap and
@@ -525,7 +604,6 @@ func TestPolicyMapsToPromptMode(t *testing.T) {
 		{"idle next_step steers", "deliver_at_idle", "next_step", "steer", false, true},
 		{"busy next_step steers", "deliver_next_step", "next_step", "steer", true, true},
 		{"busy next_turn queues", "register_next_turn", "next_turn", "queue", true, true},
-		{"busy no_wake steers", "deliver_next_step", "no_wake", "steer", true, true},
 		{"cold next_turn queues and resumes", "wake_then_deliver", "next_turn", "queue", false, false},
 	}
 	for _, tc := range cases {
@@ -574,34 +652,93 @@ func TestAvailabilityFollowsTheSessionList(t *testing.T) {
 	}
 }
 
+// noWakeSettled checks a no_wake delivery of d1 to session-a went in through
+// the inject route only, started no turn, and was acknowledged.
+func noWakeSettled(t *testing.T, h *harness, turnsBefore int) {
+	t.Helper()
+	s := h.host.session("session-a")
+	if calls := h.host.promptCalls(); len(calls) != 0 {
+		t.Fatalf("no_wake went through session/prompt: %v", calls)
+	}
+	if s.wakes != 0 || s.turns != turnsBefore {
+		t.Fatalf("no_wake started a turn: wakes %d, turns %d -> %d", s.wakes, turnsBefore, s.turns)
+	}
+	if n := h.host.admitted("session-a", "crew-delivery:d1"); n != 1 {
+		t.Fatalf("message held %d times, want once in the next-step inbox", n)
+	}
+	if len(h.fabric.acked) != 1 || len(h.fabric.requeued)+len(h.fabric.unknown)+len(h.fabric.released) != 0 {
+		t.Fatalf("acked %v requeued %+v unknown %v released %v", h.fabric.acked, h.fabric.requeued, h.fabric.unknown, h.fabric.released)
+	}
+}
+
 func TestNoWakeNeverStartsATurn(t *testing.T) {
-	t.Run("idle at claim: released, nothing sent", func(t *testing.T) {
+	t.Run("busy no_wake is injected", func(t *testing.T) {
+		h := newHarness(t)
+		h.host.add("session-a", SessionSummary{}, true, true)
+		h.fabric.queue("s/session-a", claimFor("s/session-a", "d1", "deliver_next_step", "no_wake"))
+		h.pump(t)
+		if calls := h.host.injectCalls(); len(calls) != 1 || calls[0] != "session-a crew-delivery:d1" {
+			t.Fatalf("injects = %v", calls)
+		}
+		noWakeSettled(t, h, 0)
+	})
+	t.Run("turn ends after the final state read, before admission", func(t *testing.T) {
+		// The R10454-1 race: every state read says running, and the turn ends
+		// just before the host admits the message. A steer here woke the
+		// agent; an inject leaves it in the next-step inbox for the next turn.
 		h := newHarness(t)
 		h.host.add("session-a", SessionSummary{}, true, true)
 		h.pump(t)
-		h.host.session("session-a").running = false // the turn ended after the list
+		h.host.onInject = func(_ int, s *fakeSession) string {
+			h.host.mu.Lock()
+			s.running = false
+			h.host.mu.Unlock()
+			return ""
+		}
 		h.fabric.queue("s/session-a", claimFor("s/session-a", "d1", "deliver_next_step", "no_wake"))
 		h.pump(t)
-		if len(h.host.promptCalls()) != 0 || len(h.fabric.released) != 1 || len(h.fabric.begun) != 0 {
-			t.Fatalf("prompts %v released %v begun %v", h.host.promptCalls(), h.fabric.released, h.fabric.begun)
+		noWakeSettled(t, h, 0)
+		if h.host.session("session-a").running {
+			t.Fatal("the session is running again")
 		}
 	})
-	t.Run("turn ends after Begin: not inserted", func(t *testing.T) {
+	t.Run("idle at dispatch: inserted, no turn started", func(t *testing.T) {
 		h := newHarness(t)
-		h.host.add("session-a", SessionSummary{}, true, true)
-		h.pump(t)
-		h.host.onState = func(n int, s *fakeSession) {
-			if n == 2 { // the re-check right before the steer
-				s.running = false
-			}
-		}
+		h.host.add("session-a", SessionSummary{}, true, false)
 		h.fabric.queue("s/session-a", claimFor("s/session-a", "d1", "deliver_next_step", "no_wake"))
 		h.pump(t)
-		if len(h.host.promptCalls()) != 0 || len(h.fabric.begun) != 1 || len(h.fabric.requeued) != 1 || h.fabric.requeued[0].Reason != "turn_ended" {
-			t.Fatalf("prompts %v begun %v requeued %+v", h.host.promptCalls(), h.fabric.begun, h.fabric.requeued)
+		noWakeSettled(t, h, 0)
+	})
+	t.Run("ambiguous inject is reconciled, not resent", func(t *testing.T) {
+		h := newHarness(t)
+		h.host.add("session-a", SessionSummary{}, true, true)
+		h.host.onInject = func(int, *fakeSession) string { return "drop-after" }
+		h.fabric.queue("s/session-a", claimFor("s/session-a", "d1", "deliver_next_step", "no_wake"))
+		h.pump(t)
+		if len(h.host.injectCalls()) != 1 || h.waits != 1 {
+			t.Fatalf("injects %v waits %d", h.host.injectCalls(), h.waits)
 		}
-		if len(h.fabric.acked)+len(h.fabric.unknown) != 0 {
-			t.Fatal("a not-inserted delivery was also settled")
+		noWakeSettled(t, h, 0)
+	})
+	t.Run("plugin missing: not inserted, never steered", func(t *testing.T) {
+		h := newHarness(t)
+		h.host.add("session-a", SessionSummary{}, true, true)
+		h.host.noInject = true
+		h.fabric.queue("s/session-a", claimFor("s/session-a", "d1", "deliver_next_step", "no_wake"))
+		h.pump(t)
+		if calls := h.host.promptCalls(); len(calls) != 0 {
+			t.Fatalf("no_wake fell back to session/prompt: %v", calls)
+		}
+		if len(h.fabric.requeued) != 1 || h.fabric.requeued[0].Reason != "inject_unavailable" || len(h.fabric.acked)+len(h.fabric.unknown) != 0 {
+			t.Fatalf("requeued %+v acked %v unknown %v", h.fabric.requeued, h.fabric.acked, h.fabric.unknown)
+		}
+		if h.host.admitted("session-a", "crew-delivery:d1") != 0 {
+			t.Fatal("the message went in")
+		}
+		h.fabric.claimReqs = nil
+		h.pump(t)
+		if len(h.fabric.claimReqs) != 0 {
+			t.Fatal("the session was claimed again at once")
 		}
 	})
 }
