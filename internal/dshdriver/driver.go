@@ -261,9 +261,6 @@ func (d *Driver) refresh(ctx context.Context, sessions []SessionSummary) {
 			d.parents[s.SessionID] = s.ParentSessionID
 			d.mu.Unlock()
 		}
-		if !d.eligible(s) {
-			continue
-		}
 		listed[s.SessionID] = true
 		d.mu.Lock()
 		t, known := d.targets[s.SessionID]
@@ -271,7 +268,9 @@ func (d *Driver) refresh(ctx context.Context, sessions []SessionSummary) {
 			t.State, t.Cwd, t.UpdatedAt = stateOf(s), s.Cwd, time.UnixMilli(s.UpdatedAt).UTC()
 		}
 		d.mu.Unlock()
-		if known {
+		// A session that got its address some other way (crew-dsh address or
+		// send from a blank session) keeps it while the host lists it.
+		if known || !d.eligible(s) {
 			continue
 		}
 		if _, err := d.register(ctx, s); err != nil {

@@ -501,6 +501,14 @@ func TestDiscoveryRegistersRootSessionsOnly(t *testing.T) {
 	if len(got) != len(want) || got["session-root"] != "idle" || got["session-cold"] != "not loaded" {
 		t.Fatalf("sessions = %v, want %v", got, want)
 	}
+	// A blank session that asked for its address keeps it.
+	if _, err := h.d.Address(context.Background(), "session-blank"); err != nil {
+		t.Fatal(err)
+	}
+	h.pump(t)
+	if len(h.d.Sessions()) != 3 {
+		t.Fatalf("sessions after address = %+v", h.d.Sessions())
+	}
 	// A subagent's commands send as its parent session.
 	address, err := h.d.Address(context.Background(), "child")
 	if err != nil || address != "s/session-root" {
