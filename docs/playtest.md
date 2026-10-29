@@ -146,6 +146,78 @@ advancement. Inspect any returned original frame directly; no replay is involved
 A named held action runs for at most 2000 ms, then remaining recording time advances
 with neutral input. Encoder failure preserves originals and its diagnostic.
 
+### Inspection views, overlays and scene readouts
+
+`view`, `overlay` and `scene` carry the Engine's inspection commands
+(`engine.inspect.view`, `engine.inspect.overlay`, `engine.inspect.target list`
+and `engine.scene.*`; rusty-engine `docs/playtest-inspection.md`) and its
+`frames/capture?view=ID&overlays=1` route. They need no page and change
+nothing the product committed: an inspection view is an Engine camera beside
+the player view, and overlays are inspection drawing. Both backends run them
+the same way, the browser backend against its page's product host. crew-services
+checks that each argument is one well-formed word; the Engine decides what it
+means, and a refusal (`INSPECT_NO_VIEW: no inspection view side`, a usage
+line) comes back as the Engine words it.
+
+A side view of a held assembly, with overlays, captured beside the player view
+at one held step, then closed:
+
+```sh
+playtest assist SESSION --json '{"op":"time","mode":"manual"}'
+playtest assist SESSION --json '{"op":"view","mode":"create","id":"side"}'
+playtest assist SESSION --json '{"op":"view","mode":"frame","id":"side","framing":"side"}'
+playtest assist SESSION --json '{"op":"overlay","mode":"show","kind":"sets","view":"side"}'
+playtest assist SESSION --json '{"op":"view","mode":"capture","id":"side","player":true,"overlays":true}'
+playtest assist SESSION --json '{"op":"view","mode":"close","id":"side"}'
+```
+
+`view` modes:
+
+- `list` (default): the views, their cameras, focus points and anchors, and the
+  player's camera. `targets`: the product's inspection targets
+  (`engine.inspect.target list`; needs its `InspectionTargetsDebugModule`).
+- `create` `{id, anchor?}`: a view to the right of the player's camera, looking
+  just in front of it. Without `anchor` it draws only for captures; with one it
+  draws over the page element the product anchors under that name.
+- `close`, `select` `{id}`.
+- `camera` `{id, camera:{position:[x,y,z], yawDegrees, pitchDegrees, fovDegrees?}}`.
+- `orbit` `{id, yaw, pitch}`, `pan` `{id, x, y}`, `zoom` `{id, factor}`: move
+  about the view's focus.
+- `frame` `{id, framing, handle? | target?}`: `framing` is
+  `front|back|left|right|side|top|underside|close`; the subject is a handle from
+  `scene` objects, a product inspection `target`, or (by default) the space just
+  in front of the player's camera, where a held assembly is.
+- `capture` `{id, player?, overlays?, width?, height?}`: draws the view through
+  `frames/capture?view=ID` (960x540 unless sized; `overlays` adds the overlays
+  that view shows). With `player` it then captures the product's composition the
+  same way and answers `{view, player, sameStep}`. Hold time first so both show
+  one step; `sameStep: false` comes with a note.
+
+Each capture writes `view-ID-step-N-<id>.png` or `player-step-N-<id>.png` into
+the session's evidence directory with a `.json` sidecar of the same name. Both
+hold the frame facts (`step`, `held`, capture sequence) and the response
+headers as sent (`X-Rusty-Frame-Cameras`, `X-Rusty-Frame-View` with the view's
+camera and presentation time, `X-Rusty-Frame-Overlays` with the sets drawn and
+their revisions), parsed under `frame`. Over MCP a view capture returns its
+image inline, and with `player` both images. `world-frame` also takes
+`overlays`.
+
+`overlay` `{mode:list|show|hide, kind?, name?, handle?, view?}`: `list` (default)
+reads what is shown and the product's sets. `show`/`hide` with no kind shows
+every set and the Debug layer, or hides everything. Kinds: `sets`, `set` (with
+`name`), `debug-layer`, `camera`, `motion`, `joints`/`bounds`/`ik` (with a
+`handle`), `collision` (optional `x`/`y`/`z` to read around a point, and
+`distance` as its radius in metres). `view` limits `sets` or `set` to one
+inspection view, or `player` for the primary views. What is shown is the
+runtime's, shared by every page attached to it, and stays until hidden.
+
+`scene` `{mode:objects|object|composition|resources, handle?, depth?, layer?, page?}`
+reads the committed scene: `objects` (default) lists objects depth first from
+`handle` or every root, `depth` levels down, on one `layer`
+(`scene|debug|ui|viewmodel|backdrop`), 100 a `page`; `object` describes one
+`handle`; `composition` answers the product's cameras, targets, views and
+presentations; `resources` lists the committed descriptors.
+
 
 ## Captures and frame correlation
 

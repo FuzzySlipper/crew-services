@@ -178,6 +178,36 @@ observer camera as described in the
 [service guide](/home/agent/dev/crew-services/docs/playtest.md#adaptive-engine-playtesting).
 An accepted action is not a confirmed hit, door or pickup: read the result.
 
+### Inspection views, overlays and the scene
+
+To look at something the player camera cannot show well (a held assembly, a
+grip, a hand on a handle), open an Engine inspection view beside the player
+view instead of moving the observer camera. It changes nothing the product
+committed. Hold time so the player view and the view show one step:
+
+```sh
+playtest assist SESSION --json '{"op":"time","mode":"manual"}'
+playtest assist SESSION --json '{"op":"view","mode":"create","id":"side"}'
+playtest assist SESSION --json '{"op":"view","mode":"frame","id":"side","framing":"side"}'
+playtest assist SESSION --json '{"op":"overlay","mode":"show","kind":"sets","view":"side"}'
+playtest assist SESSION --json '{"op":"view","mode":"capture","id":"side","player":true,"overlays":true}'
+playtest assist SESSION --json '{"op":"view","mode":"close","id":"side"}'
+```
+
+`frame` defaults to the space in front of the player's camera; pass `handle`
+(from `{"op":"scene"}` objects) or `target` (from `{"op":"view","mode":"targets"}`)
+to frame something else, and `orbit`/`pan`/`zoom`/`camera` to move the view.
+The capture answers `{view, player, sameStep}`: two step-named PNGs in the
+session's evidence, each with a JSON sidecar holding the `X-Rusty-Frame-View`
+and `X-Rusty-Frame-Overlays` headers. Check `sameStep` before comparing them.
+`overlay` lists, shows or hides sets, the Debug layer, joints, bounds, IK or
+collision; overlays are shared by every page on the runtime, so hide what you
+showed. `scene` reads committed objects, one object, the composition or the
+resources. Engine refusals come back as the Engine words them: read them
+rather than retrying. Overlays and frames show what the Engine drew, not proof
+of contact with a skinned surface. Both backends carry these; see the
+[service guide](/home/agent/dev/crew-services/docs/playtest.md#inspection-views-overlays-and-scene-readouts).
+
 ## Inputs and browser operations
 
 Use profile controls. Raw batches have explicit kinds and millisecond holds:
