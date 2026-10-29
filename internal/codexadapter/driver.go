@@ -56,6 +56,7 @@ type Fabric interface {
 	Release(ctx context.Context, deliveryID string, request fabricclient.ClaimTokenRequest) (fabricclient.Delivery, error)
 	Acknowledge(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
 	Unknown(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
+	Fail(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
 	Submit(ctx context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error)
 }
 
@@ -495,6 +496,14 @@ func (d *Driver) Pump(ctx context.Context) error {
 			delete(d.refused, t.ThreadID)
 			d.mu.Unlock()
 		}
+		if status == "notLoaded" {
+			// A wake that was queued but never took (a failed resume, or a
+			// crash between queueing and resuming) is still owed.
+			if resumed, thread := d.wakeQueued(ctx, native, t); resumed {
+				status = thread.Status
+				statuses[t.ThreadID] = status
+			}
+		}
 		availability := availabilityOf(status)
 		if availability == "" {
 			continue
@@ -597,15 +606,30 @@ func (d *Driver) deliverOne(ctx context.Context, native Native, t target, availa
 	}
 	// Read what the dispatch needs before recording it: if the daemon is gone,
 	// the claim goes back to the queue instead of becoming unknown.
+	release := func() error {
+		_, err := d.fabric.Release(ctx, delivery.DeliveryID, fabricclient.ClaimTokenRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: fmt.Sprintf("crew-codex/release/%s/%d", delivery.DeliveryID, now.UnixNano()), ClaimToken: claim.ClaimToken})
+		return err
+	}
+	noWake := claim.Message.ActivationPolicy == "no_wake"
 	activeTurn := ""
 	if action == "deliver_next_step" {
 		activeTurn, err = native.ActiveTurn(ctx, t.ThreadID)
 	}
 	if err != nil {
-		if _, releaseErr := d.fabric.Release(ctx, delivery.DeliveryID, fabricclient.ClaimTokenRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: fmt.Sprintf("crew-codex/release/%s/%d", delivery.DeliveryID, now.UnixNano()), ClaimToken: claim.ClaimToken}); releaseErr != nil {
+		if releaseErr := release(); releaseErr != nil {
 			return false, fmt.Errorf("release after %v: %w", err, releaseErr)
 		}
 		return false, fmt.Errorf("read active turn: %w", err)
+	}
+	if noWake && (action != "deliver_next_step" || activeTurn == "") {
+		// A no_wake message only rides along with a turn already running. That
+		// turn ended after the claim, so the message waits in the fabric for
+		// the next one; queueing it would start a turn on the idle thread.
+		if err := release(); err != nil {
+			return false, fmt.Errorf("release no_wake with no active turn: %w", err)
+		}
+		d.log.Info("no_wake message left pending: the turn ended", "thread", t.ThreadID, "address", t.Address, "delivery", delivery.DeliveryID)
+		return false, nil
 	}
 	ref := nativeAttempt(delivery.DeliveryID)
 	if _, err := d.fabric.Begin(ctx, delivery.DeliveryID, fabricclient.DispatchRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("begin", delivery.DeliveryID), ClaimToken: claim.ClaimToken, NativeAttemptRef: ref}); err != nil {
@@ -613,7 +637,27 @@ func (d *Driver) deliverOne(ctx context.Context, native Native, t target, availa
 	}
 	clientID := ClientMessageID(delivery.DeliveryID)
 	text := d.render(ctx, *claim.Message)
-	how, err := d.dispatch(ctx, native, t.ThreadID, action, activeTurn, text, clientID)
+	how, err := d.dispatch(ctx, native, t.ThreadID, action, activeTurn, text, clientID, noWake)
+	if errors.Is(err, errSteerRefused) {
+		// Codex refused the steer, so nothing went in, and a no_wake message
+		// must not be queued in its place. The dispatch has begun and cannot
+		// go back to the queue: record the definite non-insertion as failed,
+		// unless the message turns out to be in Codex after all.
+		accepted, checkErr := nativeHas(ctx, native, t.ThreadID, clientID)
+		if checkErr != nil || !accepted {
+			request := fabricclient.ReconcileRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("fail", delivery.DeliveryID), NativeAttemptRef: ref}
+			settle, settled := d.fabric.Fail, "failed"
+			if checkErr != nil {
+				settle, settled, request.OperationID = d.fabric.Unknown, "outcome unknown", opID("unknown", delivery.DeliveryID)
+			}
+			if _, settleErr := settle(ctx, delivery.DeliveryID, request); settleErr != nil {
+				return false, fmt.Errorf("record %s after %v: %w", settled, err, settleErr)
+			}
+			d.log.Warn("no_wake steer refused; delivery "+settled, "thread", t.ThreadID, "address", t.Address, "delivery", delivery.DeliveryID, "error", err)
+			return false, nil
+		}
+		how, err = "reconciled", nil
+	}
 	if err != nil {
 		// The native outcome is ambiguous: look for the message before
 		// settling, and never send it again.
@@ -626,23 +670,34 @@ func (d *Driver) deliverOne(ctx context.Context, native Native, t target, availa
 		}
 		how = "reconciled"
 	}
+	if action == "wake_then_deliver" {
+		// The queued item is on disk; loading the thread lets Codex start it.
+		// Resume before acknowledging, so a failed acknowledgement cannot skip
+		// the wake. A failed resume is retried by wakeQueued while the item
+		// stays in the thread's queue.
+		if err := native.Resume(ctx, t.ThreadID); err != nil {
+			d.log.Warn("resume after queueing failed; retried while the item stays queued", "thread", t.ThreadID, "error", err)
+		}
+	}
 	if _, err := d.fabric.Acknowledge(ctx, delivery.DeliveryID, fabricclient.ReconcileRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("ack", delivery.DeliveryID), NativeAttemptRef: ref}); err != nil {
 		return true, fmt.Errorf("acknowledge: %w", err)
 	}
 	d.log.Info("delivered", "thread", t.ThreadID, "address", t.Address, "delivery", delivery.DeliveryID, "action", action, "native", how)
-	if action == "wake_then_deliver" {
-		// The queued item is on disk; loading the thread lets Codex start it.
-		if err := native.Resume(ctx, t.ThreadID); err != nil {
-			d.log.Warn("resume after queueing failed; the item runs when the thread is next loaded", "thread", t.ThreadID, "error", err)
-		}
-	}
 	return true, nil
 }
 
+// errSteerRefused marks a steer Codex refused, for a message that may not
+// fall back to the queue.
+var errSteerRefused = errors.New("steer refused")
+
 // dispatch makes the one native call for a claimed delivery and says how the
-// message went in. An error means the outcome is unknown; a request Codex
-// refused before the message got in falls back where that is safe.
-func (d *Driver) dispatch(ctx context.Context, native Native, threadID, action, activeTurn, text, clientID string) (string, error) {
+// message went in. An error means the outcome is unknown, except
+// errSteerRefused; a request Codex refused before the message got in falls
+// back to the queue where that is safe, which is never for no_wake.
+func (d *Driver) dispatch(ctx context.Context, native Native, threadID, action, activeTurn, text, clientID string, noWake bool) (string, error) {
+	if noWake && (action != "deliver_next_step" || activeTurn == "") {
+		return "", fmt.Errorf("%w: no active turn for a no_wake message", errSteerRefused)
+	}
 	if action == "deliver_next_step" && activeTurn != "" {
 		err := native.Steer(ctx, threadID, activeTurn, text, clientID)
 		if err == nil {
@@ -650,6 +705,9 @@ func (d *Driver) dispatch(ctx context.Context, native Native, threadID, action, 
 		}
 		if !IsRejection(err) {
 			return "", err
+		}
+		if noWake {
+			return "", fmt.Errorf("%w: %v", errSteerRefused, err)
 		}
 		// The turn ended (or changed) in the meantime: the steer had no
 		// effect, so the next turn takes it instead.
@@ -662,6 +720,42 @@ func (d *Driver) dispatch(ctx context.Context, native Native, threadID, action, 
 		return "", fmt.Errorf("thread/queue/add returned client id %q", queued.ClientUserMessageID)
 	}
 	return "queued", nil
+}
+
+// wakeQueued resumes a thread the daemon has not loaded when its native queue
+// still holds crew deliveries: the wake of a wake_then_deliver is owed until
+// the thread is loaded, and only resuming it lets Codex start the queued item.
+// Nothing is queued again. It reports whether the thread was resumed, with a
+// fresh read of it.
+func (d *Driver) wakeQueued(ctx context.Context, native Native, t target) (bool, NativeThread) {
+	queued, err := native.QueueList(ctx, t.ThreadID)
+	if err != nil {
+		d.log.Warn("list queue of not-loaded thread failed", "thread", t.ThreadID, "error", err)
+		return false, NativeThread{}
+	}
+	owed := ""
+	for _, item := range queued {
+		if strings.HasPrefix(item.ClientUserMessageID, "crew-delivery:") {
+			owed = item.ClientUserMessageID
+			break
+		}
+	}
+	if owed == "" {
+		return false, NativeThread{}
+	}
+	if err := native.Resume(ctx, t.ThreadID); err != nil {
+		d.log.Warn("resume for queued crew delivery failed; retried on a later pass", "thread", t.ThreadID, "queued", owed, "error", err)
+		return false, NativeThread{}
+	}
+	d.log.Info("resumed thread for queued crew delivery", "thread", t.ThreadID, "address", t.Address, "queued", owed)
+	thread, err := native.ReadThread(ctx, t.ThreadID)
+	if err != nil {
+		return false, NativeThread{}
+	}
+	d.mu.Lock()
+	d.read[t.ThreadID] = thread
+	d.mu.Unlock()
+	return true, thread
 }
 
 // reconcileStuck settles this driver's own dispatch that a crash or lost

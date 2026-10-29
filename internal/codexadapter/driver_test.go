@@ -30,9 +30,12 @@ type fakeNative struct {
 	// response would.
 	queueKeeps bool
 	steerKeeps bool
-	queued     map[string][]QueuedSubmission
-	turns      map[string][]NativeTurn
-	calls      []string
+	// resumeErr fails thread/resume; a successful resume makes a notLoaded
+	// thread idle, as loading it does.
+	resumeErr error
+	queued    map[string][]QueuedSubmission
+	turns     map[string][]NativeTurn
+	calls     []string
 }
 
 func newFakeNative() *fakeNative {
@@ -107,6 +110,13 @@ func (f *fakeNative) Resume(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("resume " + id)
+	if f.resumeErr != nil {
+		return f.resumeErr
+	}
+	if thread, ok := f.threads[id]; ok && thread.Status == "notLoaded" {
+		thread.Status = "idle"
+		f.threads[id] = thread
+	}
 	return nil
 }
 
@@ -133,6 +143,8 @@ type fakeFabric struct {
 	acked     []string
 	unknown   []string
 	released  []string
+	failed    []string
+	ackErr    error
 	submitted []fabricclient.MessageRequest
 }
 
@@ -202,8 +214,17 @@ func (f *fakeFabric) Release(_ context.Context, id string, _ fabricclient.ClaimT
 func (f *fakeFabric) Acknowledge(_ context.Context, id string, _ fabricclient.ReconcileRequest) (fabricclient.Delivery, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.ackErr != nil {
+		return fabricclient.Delivery{}, f.ackErr
+	}
 	f.acked = append(f.acked, id)
 	return fabricclient.Delivery{DeliveryID: id, State: "delivered"}, nil
+}
+func (f *fakeFabric) Fail(_ context.Context, id string, _ fabricclient.ReconcileRequest) (fabricclient.Delivery, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failed = append(f.failed, id)
+	return fabricclient.Delivery{DeliveryID: id, State: "failed"}, nil
 }
 func (f *fakeFabric) Unknown(_ context.Context, id string, _ fabricclient.ReconcileRequest) (fabricclient.Delivery, error) {
 	f.mu.Lock()
@@ -595,5 +616,194 @@ func TestThreadTheDaemonKeepsRefusingIsForgotten(t *testing.T) {
 	}
 	if _, ok := d.Address("thread-gone"); ok {
 		t.Fatal("forgotten thread still has an address")
+	}
+}
+
+func noWakeClaim(address, deliveryID string) fabricclient.Claim {
+	claim := claimFor(address, deliveryID, "deliver_next_step")
+	claim.Message.ActivationPolicy = "no_wake"
+	return claim
+}
+
+func TestNoWakeStaysPendingWhenTheTurnEndedBeforeDispatch(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	// The thread read as active, so the fabric offered deliver_next_step, but
+	// the turn is gone by the time the driver looks for it.
+	address := loadedThread(t, d, native, "thread-1", "active")
+	fabric.claims[address] = []fabricclient.Claim{noWakeClaim(address, "d1")}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(native.callsWith("queue ")) != 0 || len(native.callsWith("steer")) != 0 {
+		t.Fatalf("a no_wake message reached an idle thread: %v", native.calls)
+	}
+	if !slices.Equal(fabric.released, []string{"d1"}) || len(fabric.begun) != 0 || len(fabric.acked) != 0 || len(fabric.failed) != 0 {
+		t.Fatalf("released %v begun %v acked %v failed %v", fabric.released, fabric.begun, fabric.acked, fabric.failed)
+	}
+}
+
+func TestNoWakeSteerRefusedAfterBeginFailsWithoutQueueing(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	address := loadedThread(t, d, native, "thread-1", "active")
+	native.active["thread-1"] = "turn-7"
+	native.steerErr = &rpcError{Code: -32600, Message: "no active turn to steer"}
+	fabric.claims[address] = []fabricclient.Claim{noWakeClaim(address, "d1")}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(native.callsWith("queue ")) != 0 {
+		t.Fatalf("a refused no_wake steer fell back to the queue: %v", native.calls)
+	}
+	if len(native.callsWith("steer")) != 1 || !slices.Equal(fabric.begun, []string{"d1 codex:d1"}) {
+		t.Fatalf("steer %v begun %v", native.callsWith("steer"), fabric.begun)
+	}
+	// A refused steer inserted nothing: the begun dispatch is a definite
+	// failure, not an unknown outcome or a delivery.
+	if !slices.Equal(fabric.failed, []string{"d1"}) || len(fabric.acked) != 0 || len(fabric.unknown) != 0 {
+		t.Fatalf("failed %v acked %v unknown %v", fabric.failed, fabric.acked, fabric.unknown)
+	}
+}
+
+func TestNoWakeSteersAnActiveTurn(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	address := loadedThread(t, d, native, "thread-1", "active")
+	native.active["thread-1"] = "turn-7"
+	fabric.claims[address] = []fabricclient.Claim{noWakeClaim(address, "d1")}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := native.callsWith("steer"); !slices.Equal(got, []string{"steer thread-1 turn-7 crew-delivery:d1"}) || !slices.Equal(fabric.acked, []string{"d1"}) {
+		t.Fatalf("steer %v acked %v", got, fabric.acked)
+	}
+}
+
+// notLoadedTarget registers thread-1 as a known thread the daemon has not loaded.
+func notLoadedTarget(t *testing.T, d *Driver, native *fakeNative) string {
+	t.Helper()
+	if _, err := d.RegisterThread(context.Background(), "thread-1"); err != nil {
+		t.Fatal(err)
+	}
+	address, _ := d.Address("thread-1")
+	native.threads["thread-1"] = NativeThread{ID: "thread-1", Status: "notLoaded", AcceptsInput: true}
+	return address
+}
+
+func wakeCalls(native *fakeNative) []string {
+	var order []string
+	for _, call := range native.callsWith("") {
+		if strings.HasPrefix(call, "queue ") || strings.HasPrefix(call, "resume") {
+			order = append(order, call)
+		}
+	}
+	return order
+}
+
+func TestWakeResumesBeforeAcknowledgingSoAFailedAckKeepsTheWake(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	address := notLoadedTarget(t, d, native)
+	fabric.ackErr = errors.New("fabric down")
+	fabric.claims[address] = []fabricclient.Claim{claimFor(address, "d1", "wake_then_deliver")}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := wakeCalls(native); !slices.Equal(got, []string{"queue thread-1 crew-delivery:d1", "resume thread-1"}) {
+		t.Fatalf("native calls = %v", got)
+	}
+	if native.threads["thread-1"].Status != "idle" {
+		t.Fatalf("thread not loaded after a failed acknowledgement")
+	}
+}
+
+func TestFailedResumeIsRetriedFromTheNativeQueueWithoutQueueingAgain(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	address := notLoadedTarget(t, d, native)
+	native.resumeErr = errors.New("resume failed")
+	fabric.claims[address] = []fabricclient.Claim{claimFor(address, "d1", "wake_then_deliver")}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(fabric.acked, []string{"d1"}) {
+		t.Fatalf("a queued item was not acknowledged: %v", fabric.acked)
+	}
+	native.resumeErr = nil
+	for i := 0; i < notLoadedEvery; i++ {
+		if err := d.Pump(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := wakeCalls(native); !slices.Equal(got, []string{"queue thread-1 crew-delivery:d1", "resume thread-1", "resume thread-1"}) {
+		t.Fatalf("native calls = %v", got)
+	}
+	if native.threads["thread-1"].Status != "idle" {
+		t.Fatalf("the owed wake was not retried")
+	}
+}
+
+func TestRestartWithADispatchingWakeResumesAndSettles(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	address := notLoadedTarget(t, d, native)
+	// A crash after thread/queue/add, before resume and acknowledgement.
+	native.queued["thread-1"] = []QueuedSubmission{{ID: "q1", ClientUserMessageID: ClientMessageID("d0")}}
+	fabric.claims[address] = []fabricclient.Claim{{Reason: "head_dispatching", Head: &fabricclient.Delivery{DeliveryID: "d0", State: "dispatching", NativeAttemptRef: "codex:d0", ClaimOwnerAdapterID: "crew-codex", DispatchAction: "wake_then_deliver"}}}
+	again, err := NewDriver(fabric, time.Now, d.cfg, d.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := again.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	again.restoreKnown(context.Background())
+	again.Attach(native)
+	if err := again.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := wakeCalls(native); !slices.Equal(got, []string{"resume thread-1"}) {
+		t.Fatalf("native calls = %v", got)
+	}
+	if !slices.Equal(fabric.acked, []string{"d0"}) {
+		t.Fatalf("acked %v", fabric.acked)
+	}
+}
+
+func TestRestartAfterAckResumesAQueuedItemWithNoNewMessage(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	notLoadedTarget(t, d, native)
+	// Delivered and acknowledged, then a crash before resume: the fabric has
+	// no work, only the native queue remembers the wake.
+	native.queued["thread-1"] = []QueuedSubmission{{ID: "q1", ClientUserMessageID: ClientMessageID("d0")}, {ID: "q2", ClientUserMessageID: "user-typed"}}
+	again, err := NewDriver(fabric, time.Now, d.cfg, d.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := again.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	again.restoreKnown(context.Background())
+	again.Attach(native)
+	if err := again.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := wakeCalls(native); !slices.Equal(got, []string{"resume thread-1"}) {
+		t.Fatalf("native calls = %v", got)
+	}
+}
+
+func TestNotLoadedThreadWithOnlyItsOwnQueueIsNotWoken(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	notLoadedTarget(t, d, native)
+	native.queued["thread-1"] = []QueuedSubmission{{ID: "q2", ClientUserMessageID: "user-typed"}}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := wakeCalls(native); len(got) != 0 {
+		t.Fatalf("woke a thread with no crew delivery queued: %v", got)
 	}
 }

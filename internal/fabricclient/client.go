@@ -211,6 +211,13 @@ func (c *Client) Unknown(ctx context.Context, deliveryID string, request Reconci
 	return delivery, err
 }
 
+// Fail records that a dispatch definitely did not insert the message.
+func (c *Client) Fail(ctx context.Context, deliveryID string, request ReconcileRequest) (Delivery, error) {
+	var delivery Delivery
+	err := c.call(ctx, http.MethodPost, "/v1/deliveries/"+url.PathEscape(deliveryID)+"/fail", request, &delivery)
+	return delivery, err
+}
+
 func (c *Client) call(ctx context.Context, method, path string, body any, target any) error {
 	var reader io.Reader
 	if body != nil {
