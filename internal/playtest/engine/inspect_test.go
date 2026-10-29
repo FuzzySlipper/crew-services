@@ -100,7 +100,7 @@ func TestViewCapturesThePlayerAndTheViewAtOneHeldStep(t *testing.T) {
 	if headers["X-Rusty-Frame-View"] == "" || headers["X-Rusty-Frame-Overlays"] != `{"inspect.targets":3}` {
 		t.Fatalf("view headers: %v", headers)
 	}
-	if facts := view["frame"].(map[string]any); facts["view"].(map[string]any)["id"] != "side" || facts["held"] != true {
+	if facts := view["frame"].(map[string]any); facts["view"].(map[string]any)["view"].(map[string]any)["id"] != "side" || facts["held"] != true {
 		t.Fatalf("view frame facts: %v", facts)
 	}
 	if _, ok := player["headers"].(map[string]string)["X-Rusty-Frame-View"]; ok {

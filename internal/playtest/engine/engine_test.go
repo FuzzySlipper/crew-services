@@ -179,7 +179,7 @@ func (f *fakeHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("X-Rusty-Frame-Cameras", `[{"position":[0,1,0]}]`)
 		if view != "" {
-			w.Header().Set("X-Rusty-Frame-View", `{"id":"`+view+`","presentationSeconds":0.5}`)
+			w.Header().Set("X-Rusty-Frame-View", `{"presentationSeconds":0.5,"view":{"id":"`+view+`"}}`)
 		}
 		if r.URL.Query().Get("overlays") == "1" {
 			w.Header().Set("X-Rusty-Frame-Overlays", `{"inspect.targets":3}`)

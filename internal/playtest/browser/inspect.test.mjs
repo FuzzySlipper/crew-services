@@ -59,7 +59,7 @@ function fakeHost() {
       captures.push(search.slice(1))
       const view = searchParams.get('view')
       const headers = { 'X-Rusty-Frame-Cameras': '[{"position":[0,1,0]}]' }
-      if (view) headers['X-Rusty-Frame-View'] = JSON.stringify({ id: view, presentationSeconds: 0.5 })
+      if (view) headers['X-Rusty-Frame-View'] = JSON.stringify({ presentationSeconds: 0.5, view: { id: view } })
       if (searchParams.get('overlays') === '1') headers['X-Rusty-Frame-Overlays'] = '{"inspect.targets":3}'
       return new Response(frameBytes(captures.length, 6), { headers })
     }
@@ -81,7 +81,7 @@ test('a side view of the held assembly is captured with the player view at one h
   assert.match(basename(result.view.path), /^view-side-step-6-/)
   assert.match(basename(result.player.path), /^player-step-6-/)
   assert.equal(result.view.headers['X-Rusty-Frame-Overlays'], '{"inspect.targets":3}')
-  assert.equal(result.view.frame.view.id, 'side')
+  assert.equal(result.view.frame.view.view.id, 'side')
   assert.equal(result.player.headers['X-Rusty-Frame-View'], undefined)
   assert.match(await readFile(result.view.metadataPath, 'utf8'), /X-Rusty-Frame-View/)
   assert.deepEqual([...await readFile(result.view.path)], [7, 8, 9])
