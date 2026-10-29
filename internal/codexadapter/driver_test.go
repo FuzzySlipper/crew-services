@@ -569,3 +569,31 @@ func TestSendGoesOutFromTheThreadsOwnAddressAndWhoListsIt(t *testing.T) {
 		t.Fatal("empty body accepted")
 	}
 }
+
+func TestThreadTheDaemonKeepsRefusingIsForgotten(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	if _, err := d.RegisterThread(context.Background(), "thread-gone"); err != nil {
+		t.Fatal(err)
+	}
+	// Not loaded and unreadable: the daemon refuses every read. Not-loaded
+	// threads are read once every notLoadedEvery passes.
+	pump := func(n int) {
+		for i := 0; i < n; i++ {
+			if err := d.Pump(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	pump(notLoadedEvery * (goneAfter - 1))
+	if len(d.Sessions()) != 1 {
+		t.Fatalf("forgot the thread after fewer than %d refused reads", goneAfter)
+	}
+	pump(1)
+	if len(d.Sessions()) != 0 {
+		t.Fatalf("thread still listed after %d refused reads: %v", goneAfter, d.Sessions())
+	}
+	if _, ok := d.Address("thread-gone"); ok {
+		t.Fatal("forgotten thread still has an address")
+	}
+}

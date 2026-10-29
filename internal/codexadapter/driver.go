@@ -90,6 +90,7 @@ type Driver struct {
 	skipped map[string]struct{}     // threads that cannot take input
 	started []string                // threads announced by thread/started
 	read    map[string]NativeThread // latest read of each thread, for who
+	refused map[string]int          // consecutive passes the daemon refused to read a thread
 	passes  int
 	pumpMu  sync.Mutex
 	wake    chan struct{}
@@ -104,8 +105,14 @@ const notLoadedEvery = 15
 // thread is loaded again.
 const forgetAfter = 14 * 24 * time.Hour
 
+// goneAfter is how many reads in a row the daemon may refuse before the driver
+// forgets a thread: one with no rollout, such as a session that was opened and
+// closed without a turn, can never be read or resumed again. Its mail still
+// waits in the fabric, and the thread is registered again if it reappears.
+const goneAfter = 3
+
 func NewDriver(fabric Fabric, now func() time.Time, cfg Config, log *slog.Logger) (*Driver, error) {
-	d := &Driver{fabric: fabric, now: now, cfg: cfg, log: log, known: map[string]*knownThread{}, read: map[string]NativeThread{}, targets: map[string]*target{}, skipped: map[string]struct{}{}, wake: make(chan struct{}, 1)}
+	d := &Driver{fabric: fabric, now: now, cfg: cfg, log: log, known: map[string]*knownThread{}, read: map[string]NativeThread{}, refused: map[string]int{}, targets: map[string]*target{}, skipped: map[string]struct{}{}, wake: make(chan struct{}, 1)}
 	if err := d.load(); err != nil {
 		return nil, err
 	}
@@ -470,14 +477,19 @@ func (d *Driver) Pump(ctx context.Context) error {
 				if !IsRejection(err) {
 					return fmt.Errorf("read thread %s: %w", t.ThreadID, err)
 				}
-				d.log.Warn("read thread failed", "thread", t.ThreadID, "address", t.Address, "error", err)
 				statuses[t.ThreadID] = ""
+				if d.refuse(t) {
+					d.log.Info("thread gone; forgetting it", "thread", t.ThreadID, "address", t.Address, "error", err)
+				} else {
+					d.log.Warn("read thread failed", "thread", t.ThreadID, "address", t.Address, "error", err)
+				}
 				continue
 			}
 			status = thread.Status
 			statuses[t.ThreadID] = status
 			d.mu.Lock()
 			d.read[t.ThreadID] = thread
+			delete(d.refused, t.ThreadID)
 			d.mu.Unlock()
 		}
 		availability := availabilityOf(status)
@@ -503,6 +515,26 @@ func (d *Driver) Pump(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// refuse counts a refused read of t and forgets the thread once the daemon
+// has refused it goneAfter times in a row. A pinned address is configured, so
+// it is never forgotten. It reports whether t was forgotten.
+func (d *Driver) refuse(t target) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.refused[t.ThreadID]++
+	if t.Pinned || d.refused[t.ThreadID] < goneAfter {
+		return false
+	}
+	delete(d.refused, t.ThreadID)
+	delete(d.read, t.ThreadID)
+	delete(d.targets, t.Address)
+	delete(d.known, t.ThreadID)
+	if err := d.saveLocked(); err != nil {
+		d.log.Warn("save driver state failed", "error", err)
+	}
+	return true
 }
 
 func availabilityOf(status string) string {
