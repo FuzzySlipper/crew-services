@@ -42,69 +42,28 @@ curl --fail http://127.0.0.1:8787/readyz
 
 The SQLite file is the durable state. Keep its directory private to the user running the process, stop the service before making a filesystem-level backup, and use a normal replacement start against the same file to recover after a process crash. A pre-dispatch `claimed` delivery may return to `queued` when reaped; a `dispatching` delivery is reconciled only by the owning adapter and otherwise becomes `outcome_unknown`, never silently resent.
 
-## Optional Codex session projection
+## Codex driver
 
-`crew-codex` is a second local process which uses the same fabric endpoint. It
-does not replace the native Codex App Server: the adapter owns the managed stdio
-connection and canonical-reads each explicit existing native thread with
-`thread/read { includeTurns: true }`. It does not require a configured thread
-to happen to be on the first page of `thread/list`.
+`crew-codex` connects to the shared Codex daemon the TUI uses and delivers
+fabric messages into its threads; see the README's Codex driver section for
+the delivery rules. It never starts, stops or restarts Codex. Build and
+install the binary and `~/.config/systemd/user/crew-codex.service` with:
 
 ```sh
 cd /home/dev/crew-services
-go build -o "$HOME/.local/bin/crew-codex" ./cmd/crew-codex
-exec "$HOME/.local/bin/crew-codex" \
-  -fabric-url http://127.0.0.1:8787 \
-  -state "$HOME/.local/state/crew-messaging/crew-codex.json" \
-  -address crew/scout=YOUR_CODEX_THREAD_ID
+scripts/install-crew-codex.sh --service-only
 ```
 
-For the persistent DSH web setup, save the equivalent user unit as
-`~/.config/systemd/user/crew-codex.service`. Keep the instance ID stable and
-replace the example mapping with each Codex task that should be projected.
+The unit runs:
 
 ```ini
-[Unit]
-Description=Codex adapter for the local crew messaging fabric
-Wants=crew-messaging.service
-After=crew-messaging.service
-
-[Service]
-Environment=PATH=%h/.npm-global/bin:%h/.local/bin:/usr/local/bin:/usr/bin
-ExecStart=%h/.local/bin/crew-codex -fabric-url http://127.0.0.1:8787 -state %h/.local/state/crew-messaging/crew-codex.json -address crew/scout=YOUR_CODEX_THREAD_ID
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target
+ExecStart=%h/.local/bin/crew-codex -fabric-url http://127.0.0.1:8787 -control-listen 127.0.0.1:8788 -state %h/.local/state/crew-codex/threads.json -address crew/scout=YOUR_CODEX_THREAD_ID
 ```
 
-Then run `systemctl --user daemon-reload` and
-`systemctl --user enable --now crew-codex.service`. The unit owns its stdio
-App Server child; an independently running socket App Server is not reused or
-replaced.
-
-Repeat `-address` for each selected thread. The command refuses to map the
-same thread twice and will not take over an address bound by another adapter.
-It exposes a fabric-owned public session ID and public binding target; the
-native thread ID remains only in the adapter-private adoption key. If the
-Codex child exits or an RPC fails, the adapter waits for its normal poll delay,
-restarts the child, and canonical-rereads history. That replay is safe because
-each projected completed message has a stable adapter operation ID.
-
-The optional `-state` file records only successful UI-created threads and their
-public mappings, so the same create operation can be replayed and those threads
-resume projection after process restart. Keep it in the same user-private state
-directory as the SQLite database. Pending approvals and user-input callbacks
-remain process-lifetime App Server requests and disappear if its child restarts.
-
-The adapter does not call `thread/resume`, `turn/steer`, or approval APIs. A
-newly created control thread that Codex has not materialized yet uses one
-receipt-gated `turn/start` for its first DSH workbench prompt. Once canonical
-history is available, ordinary prompts use `thread/queue/add`, which persists
-input and lets Codex automatically start it in FIFO order after the thread
-becomes idle. Native tool activity, partial messages, reasoning, and approvals
-remain outside the projected event surface.
+`-address` pins are optional and repeatable; every loaded thread gets an
+`s/...` session address anyway. `-state` remembers which threads have session
+addresses. `scripts/install-crew-codex.sh --hooks-only` adds the SessionStart
+hook that tells a new thread its address.
 
 ## Crew review service backends
 
@@ -250,14 +209,6 @@ atomic replacement path. The old round must belong to this task and have no
 review findings, finalization, or verdict; Den records the correction reason
 in the replacement request and closes the earlier round. The local runner
 continues to rely on Den's current round before job admission and finalization.
-
-With an ordinary logged-in local Codex CLI, an opt-in scratch-DB smoke reads one
-existing native thread and projects it without mutating Codex:
-
-```sh
-cd /home/dev/crew-services
-CREW_CODEX_LIVE=1 go test ./internal/codexadapter -run TestLiveCurrentCodexAppServerReadProjection -count=1
-```
 
 Run the proportional local checks from the two sibling repositories:
 

@@ -218,64 +218,66 @@ description and bounded task messages included in the reviewer context. Both
 paths recheck that the task is still in `review`, and POST retries converge
 through `Idempotency-Key`.
 
-## Project selected Codex threads
+## Codex driver
 
-`crew-codex` is a separate runtime adapter command. It supervises the ordinary
-local `codex app-server --stdio` child, reads explicitly selected existing
-threads, projects their canonical history into the session/event surface, and
-accepts ordinary fabric deliveries through Codex's native FIFO queue. It does
-not steer, interrupt, resume, or alter native approval and tool handling.
+`crew-codex` delivers fabric messages into threads of the shared Codex
+app-server daemon, the one the TUI attaches to
+(`~/.codex/app-server-control/app-server-control.sock`). It connects to that
+socket (WebSocket, one JSON-RPC message per frame, which is what
+`codex app-server proxy` forwards) and never starts, stops or restarts the
+daemon or a thread. If the daemon is down it retries every poll interval.
 
-Start the fabric first, then run one explicit address-to-thread mapping for
-each Codex thread that should appear in the directory:
+Every thread the daemon has loaded gets a session address (`s/...`) through
+`/v1/session-addresses`. The driver finds threads through `thread/loaded/list`
+on each pass and the `thread/started` notification. It skips ephemeral threads
+and threads that refuse direct input (subagents). It remembers the threads in
+`-state` so mail can still wake a thread after the daemon unloads it, and
+forgets threads not loaded for 14 days. Their mail waits in the fabric until
+the thread is loaded again. Repeated `-address NAME=THREAD_ID` flags pin
+named addresses as well. A named address already bound to `crew-codex` keeps
+its target and generation, so queued work survives the switch.
 
-```sh
-go run ./cmd/crew-codex \
-  -fabric-url http://127.0.0.1:8787 \
-  -address crew/scout=YOUR_CODEX_THREAD_ID
+Each binding advertises `deliver_next_step`, `deliver_when_idle`,
+`durable_next_turn` and `wake_inactive`. Busy and idle come from the thread's
+status (`active`, `idle`, `notLoaded`; `systemError` holds the work):
+
+| Fabric action | Codex call |
+| --- | --- |
+| `deliver_next_step` (a `next_step` or `no_wake` message, thread active) | `turn/steer` with the active turn id. Codex records it as a user message at once; the model reads it before its next request. A steer Codex refuses because the turn ended falls back to `thread/queue/add`. |
+| `deliver_at_idle`, `register_next_turn` | `thread/queue/add`. Codex starts queued items FIFO once the thread is idle. |
+| `wake_then_deliver` (thread not loaded) | `thread/queue/add`, then `thread/resume` so the daemon loads it and starts the item. |
+
+The `clientUserMessageId` is `crew-delivery:<delivery id>`. Codex keeps it on
+the user message (and on the queued item), so when a native response is lost
+the driver looks for it in `thread/queue/list` and the last turns
+(`thread/turns/list`) and acknowledges or records `outcome_unknown`. It never
+sends the message twice. A dispatch left in flight by a crash is settled the
+same way on the next pass. Messages arrive as user messages that start with
+`Crew message from <sender>`.
+
+Install, or update the binary and unit (pins of an existing unit are kept):
+
+```bash
+scripts/install-crew-codex.sh --service-only   # binary and crew-codex.service
+scripts/install-crew-codex.sh --hooks-only     # SessionStart hook in ~/.codex/hooks.json
 ```
 
-Mappings are repeatable. A native thread may occur only once, and an occupied
-address owned by another adapter is rejected rather than rebound. The native
-thread ID is held in the adapter-private session key; the public binding points
-to the fabric-owned `session_id` instead. A session's current label, working
-directory, and runtime status are CAS-updated from `thread/read`; changing the
-display name never changes its identity.
+The SessionStart hook (`crew-codex hook session-start`) registers the thread
+through the driver's loopback API (`-control-listen`, default
+`127.0.0.1:8788`) and tells the agent its crew address as additional context.
+Codex asks to trust new hooks before it runs them. `--fill-notify` also adds a
+PreToolUse hook that fills `notify_address` on `submit_task_for_review`; Codex
+0.163 applies `updatedInput` (with `permissionDecision: allow`) to MCP tool
+calls. Enable it only once Den accepts that field.
 
-The default `-instance-id crew-codex-local` is intentionally stable so a normal
-process restart renews the same adapter lease. Choose a distinct stable value
-only when running a second independent adapter instance against the same
-fabric.
-
-The adapter rereads canonical `thread/read { includeTurns: true }` history on
-each polling pass and after an App Server restart. It projects completed
-user/agent message entries with stable native entry/turn IDs and stable fabric
-operation IDs, so a full replay is idempotent. It intentionally leaves native
-notifications, partial agent messages, reasoning, tool activity, files, and
-approval requests out of this first durable event projection. Those are later
-adapter/UI slices, not an implied generic transcript format.
-
-`crew-codex -state PATH` stores a small adapter-owned JSON receipt after a
-successful browser-created native thread: the create operation ID, native
-thread mapping, and fabric public session ID. Reusing that path lets a normal
-adapter restart replay a successful create and rejoin projection of the thread.
-It does not persist pending App Server callbacks; approvals and input requests
-vanish if the native child exits and must be reissued by Codex.
-
-Threads created through the crew-codex control API start with `crew_directory`
-and `crew_message` dynamic tools. Existing explicit `-address` mappings remain
-projection-only because Codex cannot retrofit dynamic tools onto a resumed
-thread. The catalog may still be visible after an address is unbound, but each
-call re-resolves the current fabric binding and fails closed; no native thread,
-lease token, or fabric target reference is returned to Codex.
-
-For a session advertising `queued-prompt-delivery`, the DSH workbench may send
-an ordinary fabric message to its mapped address. `crew-codex` claims the exact
-binding generation and begins one fabric dispatch. A newly created, still
-unmaterialized control thread uses `turn/start` once with a delivery-derived
-`clientUserMessageId`; a materialized thread uses `thread/queue/add` and Codex
-owns the later FIFO start once it is idle. An active turn is never steered or
-interrupted. If the adapter loses either native response, it rereads canonical
-thread history (and, for queue admission, the native queue) for that client ID
-before it acknowledges or records `outcome_unknown`; it never sends the prompt
-again.
+Known limits:
+- The queue API is experimental. It holds at most 100 items per thread and
+  lives on disk in `~/.codex/queue_1.sqlite`. Queued items have not been seen
+  surviving a daemon restart yet.
+- A thread `crew-codex` resumes has `crew-codex` as its only subscriber until
+  a client attaches. An approval request in that turn waits unanswered until
+  someone opens the thread.
+- A steer never cuts short a running tool call. Checked with a `sleep 20`
+  shell command: the steered note was recorded at once, the command ran its
+  full 20 seconds, and the model's next request (and its reply) took the note
+  into account.

@@ -124,15 +124,17 @@ import a driver.
 - *Loss window:* the session's queue is in memory, so a message accepted just before the process exits can be lost. `delivered` means the socket accepted it, not that it was read.
 - The `asyncRewake` fallback was not needed.
 
-**Codex (`crew-codex`, reworked).**
-- *Registration:* through a SessionStart hook (thread id), or by watching the daemon's `thread/started`.
-- *Busy or idle:* `thread/status/changed` (`notLoaded`, `idle`, `active`, `systemError`).
+**Codex (`crew-codex`, reworked in #10453).**
+- *Connection:* the daemon's control socket speaks WebSocket (one JSON-RPC message per text frame; `codex app-server proxy` only forwards bytes), so the driver dials it directly. It never starts, stops or restarts the daemon or a thread, and never uses the `/daemon/shutdown` path.
+- *Registration:* every loaded thread gets an `s/...` session address, found through `thread/loaded/list` each pass and the `thread/started` notification, which reaches every connection. Ephemeral threads and threads with `canAcceptDirectInput: false` are skipped. A SessionStart hook (`crew-codex hook session-start`) registers the thread too and returns its address as additional context. Named `-address` pins stay; one already bound to `crew-codex` keeps its target and generation.
+- *Busy or idle:* `thread/read` status each pass (`active`, `idle`, `notLoaded`; `systemError` holds the work). `thread/status/changed` also reaches unsubscribed connections and triggers a pass.
 - *Delivery:*
-  - `next_step` while busy: `turn/steer` with the current turn id. If the turn ended in the meantime, it falls back to `thread/queue/add`.
-  - `next_turn`: `thread/queue/add`, which starts by itself once the thread is idle.
-  - Either policy on a `notLoaded` thread: queue, then `thread/resume`.
-- *Reconcile:* `clientUserMessageId` is the delivery id, so a lost response is reconciled through `thread/queue/list` or the thread's turns.
-- *API notes:* the queue API is experimental. `thread/read includeTurns` is deprecated in favor of `thread/turns/list`.
+  - `deliver_next_step`: `turn/steer` with the active turn id from `thread/turns/list`. Codex refuses a steer with no active turn (`-32600 no active turn to steer`); that falls back to `thread/queue/add`. An ambiguous steer never falls back.
+  - `deliver_at_idle` and `register_next_turn`: `thread/queue/add`; the item leaves the queue and starts as soon as the thread is idle.
+  - `wake_then_deliver` (`notLoaded`): queue, then `thread/resume`.
+- *Reconcile:* `clientUserMessageId` is `crew-delivery:<delivery id>`. Codex keeps it as the user message's `clientId` for both steered and queued input, so a lost response is reconciled through `thread/queue/list` and the last turns. A dispatch left in flight by a crash shows up as the claim's `head_dispatching` head and is settled the same way.
+- *Removed:* the private `codex app-server --stdio` child, the session projection writes, `thread/read includeTurns`, the control API (create thread, approvals and input requests, interrupt) and the `crew_directory`/`crew_message` dynamic tools. Those depended on owning the connection that started a thread; a TUI thread's approvals belong to the TUI. crew-review's ephemeral reviewer workers still use their own stdio app-server.
+- *Findings (codex-cli 0.163.0):* a steer during a `sleep 20` shell command was recorded at once and did not cut the command short; the model's next request took it into account. Queued items are stored on disk (`~/.codex/queue_1.sqlite`), but surviving a daemon restart was not tested, since restarting the shared daemon would disturb the owner's sessions. A Codex PreToolUse hook can rewrite MCP tool input (`updatedInput` with `permissionDecision: allow`), so `notify_address` can be filled the same way as in Claude Code.
 
 **DSH (`crew-dsh`, new; needs the DSH upgrade first).**
 - *Connection:* to the web host with its launch token (`GET /connect`, then the cookie).
@@ -199,10 +201,8 @@ Crew-review and the fabric must both be restartable at any point in between.
   everything default to `next_step`?
 - Is it acceptable to store the Claude messaging token in the fabric database
   (0600, loopback-only box)?
-- Can a Codex PreToolUse hook rewrite tool input to fill in `notify_address`,
-  as Claude Code's can? Otherwise the agent passes it from context.
-- Do Codex queued submissions survive a daemon restart? Does a steered message
-  wait for a long-running shell command to finish?
+- Do Codex queued submissions survive a daemon restart? They are on disk,
+  but this is untested.
 - Once this is agreed: revise `AGENTS.md` (the "must not steer" rule and the
   wake-intent wording) and the spec's activation-policy and projection
   sections.
