@@ -448,7 +448,7 @@ func TestRuntimeRestartRequeuesInFlightJob(t *testing.T) {
 	}
 }
 
-func TestRuntimeWithoutCompletionFailsAndErrorAfterCompletionReconciles(t *testing.T) {
+func TestRuntimeWithoutCompletionRequeuesAndErrorAfterCompletionReconciles(t *testing.T) {
 	svc, store, den, runtime, a := fixture(t, 1)
 	defer store.Close()
 	runtime.skipCompletion = true
@@ -456,12 +456,15 @@ func TestRuntimeWithoutCompletionFailsAndErrorAfterCompletionReconciles(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = svc.RunOne(context.Background()); err != nil {
-		t.Fatal(err)
+	if _, err = svc.RunOne(context.Background()); !errors.Is(err, ErrNoCompletion) {
+		t.Fatalf("missing completion error = %v, want ErrNoCompletion", err)
 	}
 	got, err := svc.Get(context.Background(), j.ID)
-	if err != nil || got.State != Failed || got.Failure != "runtime completed without a structured completion" {
-		t.Fatalf("missing completion job=%+v err=%v", got, err)
+	if err != nil || got.State != Queued {
+		t.Fatalf("missing completion job=%+v err=%v, want queued for a retry", got, err)
+	}
+	if _, err = svc.Cancel(context.Background(), j.ID); err != nil {
+		t.Fatal(err)
 	}
 	runtime.skipCompletion = false
 	runtime.runErr = errors.New("turn stream ended after tool result")
@@ -1362,7 +1365,7 @@ func TestResubmissionDoesNotRerunReviewFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	service, err := New(store, den, &fakeRuntime{skipCompletion: true}, "review profile")
+	service, err := New(store, den, &fakeRuntime{skipCompletion: true, runErr: errors.New("noninteractive review cannot satisfy Codex interaction")}, "review profile")
 	if err != nil {
 		t.Fatal(err)
 	}

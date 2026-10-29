@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,9 @@ type Runtime struct {
 	// a restart takes it exclusively and only with TryLock, so it is deferred,
 	// never waited for, while any thread start or turn is in progress.
 	serverMu sync.RWMutex
+	// interruptGrace is how long a turn interrupted at its review deadline
+	// may take to end before the run gives up on it.
+	interruptGrace time.Duration
 }
 type worker struct {
 	id, threadID   string
@@ -163,7 +167,7 @@ func newWithServer(ctx context.Context, server codexadapter.EphemeralServer, cap
 	if e != nil {
 		return nil, fmt.Errorf("read reviewer profile: %w", e)
 	}
-	r := &Runtime{server: server, capacity: capacity, profile: string(profile) + "\n\nManaged review runtime: use only the controller-bound complete_review tool for a normal review verdict. Do not call Den directly. The controller owns project, task, round, correlation, and reviewer identity. New findings may use only these categories: blocking_bug, acceptance_gap, test_weakness, or follow_up_candidate. A looks_good verdict must not include new_findings; put non-blocking observations in notes. A changes_requested verdict requires at least one valid new finding for this current review round; a prior-finding resolution with status not_fixed alone is insufficient. Prior-finding resolutions must use one of these terminal statuses: verified_fixed, not_fixed, superseded, or split_to_follow_up.\n", model: model, effort: effort, workers: map[string]*worker{}}
+	r := &Runtime{server: server, capacity: capacity, profile: string(profile) + "\n\nManaged review runtime: use only the controller-bound complete_review tool for a normal review verdict. Do not call Den directly. The controller owns project, task, round, correlation, and reviewer identity. New findings may use only these categories: blocking_bug, acceptance_gap, test_weakness, or follow_up_candidate. A looks_good verdict must not include new_findings; put non-blocking observations in notes. A changes_requested verdict requires at least one valid new finding for this current review round; a prior-finding resolution with status not_fixed alone is insufficient. Prior-finding resolutions must use one of these terminal statuses: verified_fixed, not_fixed, superseded, or split_to_follow_up.\n", model: model, effort: effort, workers: map[string]*worker{}, interruptGrace: defaultInterruptGrace}
 	server.SetDynamicToolHandler(r.dynamicTool)
 	if e = server.Initialize(ctx); e != nil {
 		return nil, e
@@ -300,6 +304,9 @@ func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, com
 		if ctx.Err() == nil && !codexadapter.IsRPCError(e) {
 			return r.infrastructure(fmt.Errorf("start Codex turn: %w", e))
 		}
+		if ctx.Err() == nil && overloaded(e.Error()) {
+			return review.MarkRetryable(fmt.Errorf("start Codex turn: %w", e), review.ErrRuntimeOverloaded)
+		}
 		return e
 	}
 	r.mu.Lock()
@@ -309,7 +316,9 @@ func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, com
 	}
 	w.turnID = turn.ID
 	r.mu.Unlock()
-	waitCtx, cancel := context.WithCancel(ctx)
+	// The wait outlives ctx so a turn cut off at its review deadline can be
+	// interrupted and seen to end; every other exit cancels it.
+	waitCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 	wait := make(chan error, 1)
 	var done codexadapter.TurnCompletion
@@ -340,6 +349,9 @@ func (r *Runtime) Run(ctx context.Context, raw review.Worker, prompt string, com
 				}
 			}
 		case <-ctx.Done():
+			if errors.Is(context.Cause(ctx), review.ErrReviewDeadline) {
+				return r.interruptAtDeadline(ctx, server, w.threadID, turn.ID, wait, cancel)
+			}
 			cancel()
 			<-wait
 			return ctx.Err()
@@ -357,12 +369,62 @@ completed:
 			return fmt.Errorf("%s; Codex tool runtime failed: %s: %w", missingCompletion(done), done.ToolRuntimeError, review.ErrRuntimeInfrastructure)
 		}
 		if w.rejectedReason != "" {
-			return fmt.Errorf("Codex turn completed without complete_review: %s", w.rejectedReason)
+			return review.MarkRetryable(fmt.Errorf("Codex turn completed without complete_review: %s", w.rejectedReason), review.ErrNoCompletion)
 		}
-		return errors.New(missingCompletion(done))
+		if overloaded(done.Error) {
+			return review.MarkRetryable(errors.New(missingCompletion(done)), review.ErrRuntimeOverloaded)
+		}
+		return review.MarkRetryable(errors.New(missingCompletion(done)), review.ErrNoCompletion)
 	}
 	return nil
 }
+
+const (
+	defaultInterruptGrace = 30 * time.Second
+	interruptTimeout      = 10 * time.Second
+)
+
+// interruptAtDeadline interrupts a turn whose review deadline passed and
+// waits up to interruptGrace for it to end. The caller still holds serverMu
+// shared, so no restart replaces the server meanwhile. A turn that does not
+// end marks the server for a restart once no other turn is running; nothing
+// owns that turn any more.
+func (r *Runtime) interruptAtDeadline(ctx context.Context, server codexadapter.EphemeralServer, threadID, turnID string, wait <-chan error, cancel context.CancelFunc) error {
+	interruptCtx, stop := context.WithTimeout(context.Background(), interruptTimeout)
+	interruptErr := server.Interrupt(interruptCtx, threadID, turnID)
+	stop()
+	timer := time.NewTimer(r.interruptGrace)
+	defer timer.Stop()
+	ended := false
+	select {
+	case <-wait:
+		ended = true
+	case <-timer.C:
+	}
+	cancel()
+	if !ended {
+		<-wait
+		r.mu.Lock()
+		r.broken = true
+		r.mu.Unlock()
+	}
+	text := "interrupted the Codex turn at the review deadline"
+	if interruptErr != nil {
+		text += fmt.Sprintf(" (interrupt: %v)", interruptErr)
+	}
+	if !ended {
+		text += fmt.Sprintf("; it did not end within %s", r.interruptGrace)
+	}
+	return review.MarkRetryable(errors.New(text), context.Cause(ctx))
+}
+
+// overloadPattern matches text Codex reports when the model provider refused
+// a turn for load (HTTP 429, a rate limit, a model at capacity) rather than
+// for anything about the review. Only Codex's own turn or RPC error is
+// matched, never the reviewer's message.
+var overloadPattern = regexp.MustCompile(`(?i)\b429\b|too many requests|rate[ _-]?limit|at capacity`)
+
+func overloaded(message string) bool { return overloadPattern.MatchString(message) }
 
 // missingCompletion explains a turn that ended without complete_review using
 // what Codex reported: its turn status and error, and the reviewer's last

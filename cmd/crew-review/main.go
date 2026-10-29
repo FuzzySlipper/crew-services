@@ -53,6 +53,9 @@ type commandConfig struct {
 	// after Den records a looks_good review of one of its managed submissions.
 	looksGoodHooks map[string]string
 	hookTimeout    time.Duration
+	// reviewDeadline bounds one reviewer run; on expiry the turn is
+	// interrupted and the job requeued once before it fails.
+	reviewDeadline time.Duration
 	// fabricURL is the crew-messaging fabric that receives submission notices
 	// such as a failed check gate; empty disables delivery (notices are still
 	// recorded and wait).
@@ -102,7 +105,8 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	options := []review.Option{review.WithBackend(cfg.backend), review.WithSourceChecker(&reviewden.GitSourceChecker{}, cfg.sourceGrace)}
+	logger := log.New(os.Stderr, "crew-review: ", log.LstdFlags)
+	options := []review.Option{review.WithBackend(cfg.backend), review.WithSourceChecker(&reviewden.GitSourceChecker{}, cfg.sourceGrace), review.WithReviewDeadline(cfg.reviewDeadline), review.WithLogger(logger.Printf)}
 	if cfg.backend == "codex" {
 		options = append(options, review.WithRuntimeChecker(reviewcodex.SandboxCheck{Command: cfg.codexCommand}))
 	}
@@ -144,13 +148,12 @@ func run(args []string) error {
 		return err
 	}
 
-	logger := log.New(os.Stderr, "crew-review: ", log.LstdFlags)
 	loopDone := startRunLoops(ctx, cfg.runInterval, cfg.capacity, svc.RunOne, func(err error) {
 		if ctx.Err() == nil {
 			logger.Printf("review job loop: %v", err)
 		}
 	})
-	submissionsDone := startRunLoop(ctx, cfg.submissionInterval, svc.AdvanceSubmissions, func(err error) {
+	submissionsDone := startRunLoop(ctx, cfg.submissionInterval, timedPass(logger, "review submission loop pass", svc.AdvanceSubmissions), func(err error) {
 		if ctx.Err() == nil {
 			logger.Printf("review submission loop: %v", err)
 		}
@@ -210,6 +213,7 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 		sourceGrace:        15 * time.Minute,
 		gateTimeout:        reviewden.DefaultGateTimeout,
 		hookTimeout:        45 * time.Minute,
+		reviewDeadline:     review.DefaultReviewDeadline,
 		fabricURL:          envOr(getenv, "CREW_REVIEW_FABRIC_URL", "http://127.0.0.1:8787"),
 		fabricInstance:     envOr(getenv, "CREW_REVIEW_FABRIC_INSTANCE", "crew-review-local"),
 	}
@@ -228,6 +232,7 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 		{"CREW_REVIEW_SOURCE_GRACE", &cfg.sourceGrace},
 		{"CREW_REVIEW_GATE_TIMEOUT", &cfg.gateTimeout},
 		{"CREW_REVIEW_HOOK_TIMEOUT", &cfg.hookTimeout},
+		{"CREW_REVIEW_DEADLINE", &cfg.reviewDeadline},
 	} {
 		if raw := strings.TrimSpace(getenv(setting.name)); raw != "" {
 			value, err := time.ParseDuration(raw)
@@ -267,6 +272,7 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	flags.DurationVar(&cfg.gateTimeout, "gate-timeout", cfg.gateTimeout, "GitHub check gate timeout requested from Den (at most 12h)")
 	flags.Var(&looksGoodHooks, "looks-good-hook", "owner/name=/absolute/executable run after a looks_good review of that repository; repeatable; overrides CREW_REVIEW_LOOKS_GOOD_HOOKS")
 	flags.DurationVar(&cfg.hookTimeout, "hook-timeout", cfg.hookTimeout, "time limit for one looks_good hook run")
+	flags.DurationVar(&cfg.reviewDeadline, "review-deadline", cfg.reviewDeadline, "time limit for one reviewer run; the turn is then interrupted and the job requeued once")
 	flags.StringVar(&cfg.fabricURL, "fabric-url", cfg.fabricURL, "crew-messaging URL for submission notices; \"off\" disables delivery")
 	flags.StringVar(&cfg.fabricInstance, "fabric-instance", cfg.fabricInstance, "stable crew-messaging instance ID")
 	if err := flags.Parse(args); err != nil {
@@ -336,6 +342,9 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	}
 	if cfg.hookTimeout <= 0 {
 		return commandConfig{}, errors.New("hook timeout must be positive")
+	}
+	if cfg.reviewDeadline <= 0 {
+		return commandConfig{}, errors.New("review deadline must be positive")
 	}
 	return cfg, nil
 }
@@ -422,6 +431,17 @@ func startRunLoops(ctx context.Context, interval time.Duration, lanes int, run f
 		close(done)
 	}()
 	return done
+}
+
+// timedPass logs one line per pass of run with its duration, so a stalled
+// loop shows in the journal as missing or slow passes.
+func timedPass(logger *log.Logger, name string, run func(context.Context) (bool, error)) func(context.Context) (bool, error) {
+	return func(ctx context.Context) (bool, error) {
+		started := time.Now()
+		advanced, err := run(ctx)
+		logger.Printf("%s took %s (advanced=%v)", name, time.Since(started).Round(time.Millisecond), advanced)
+		return advanced, err
+	}
 }
 
 // startRunLoop is retained as a small one-lane helper for callers/tests that

@@ -242,3 +242,26 @@ func TestLooksGoodHooksConfig(t *testing.T) {
 		t.Fatal("parseConfig accepted duplicate hooks")
 	}
 }
+
+func TestReviewDeadlineConfig(t *testing.T) {
+	cfg, err := parseConfig(nil, func(string) string { return "" })
+	if err != nil || cfg.reviewDeadline != 40*time.Minute {
+		t.Fatalf("default deadline = %s err = %v", cfg.reviewDeadline, err)
+	}
+	cfg, err = parseConfig(nil, func(name string) string {
+		if name == "CREW_REVIEW_DEADLINE" {
+			return "25m"
+		}
+		return ""
+	})
+	if err != nil || cfg.reviewDeadline != 25*time.Minute {
+		t.Fatalf("env deadline = %s err = %v", cfg.reviewDeadline, err)
+	}
+	cfg, err = parseConfig([]string{"-review-deadline", "1h"}, func(string) string { return "" })
+	if err != nil || cfg.reviewDeadline != time.Hour {
+		t.Fatalf("flag deadline = %s err = %v", cfg.reviewDeadline, err)
+	}
+	if _, err := parseConfig([]string{"-review-deadline", "0s"}, func(string) string { return "" }); err == nil {
+		t.Fatal("zero deadline accepted")
+	}
+}

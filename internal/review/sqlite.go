@@ -63,7 +63,9 @@ func OpenSQLite(ctx context.Context, path string, clock Clock, capacity int) (*S
 	}
 	// Transient finalization retries back off durably, so a restart neither
 	// resets the delay nor hammers Den with a request it keeps refusing.
-	for _, column := range []string{"finalize_attempts", "finalize_after"} {
+	// run_after holds a requeued job from claims while a transient reviewer
+	// failure backs off.
+	for _, column := range []string{"finalize_attempts", "finalize_after", "run_after"} {
 		if err = db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('crew_review_jobs') WHERE name=?`, column).Scan(&columns); err != nil {
 			db.Close()
 			return nil, err
@@ -311,7 +313,7 @@ func (s *SQLiteStore) Claim(ctx context.Context) (Job, bool, error) {
 	if !errors.Is(e, sql.ErrNoRows) {
 		return Job{}, false, e
 	}
-	row := tx.QueryRowContext(ctx, `SELECT j.id FROM crew_review_jobs j WHERE j.state=? AND NOT EXISTS (SELECT 1 FROM crew_review_jobs x WHERE x.state IN (?,?) AND json_extract(x.admission_json,'$.key.project_id')=json_extract(j.admission_json,'$.key.project_id') AND json_extract(x.admission_json,'$.key.task_id')=json_extract(j.admission_json,'$.key.task_id')) ORDER BY j.created_at LIMIT 1`, Queued, Running, Finalizing)
+	row := tx.QueryRowContext(ctx, `SELECT j.id FROM crew_review_jobs j WHERE j.state=? AND j.run_after<=? AND NOT EXISTS (SELECT 1 FROM crew_review_jobs x WHERE x.state IN (?,?) AND json_extract(x.admission_json,'$.key.project_id')=json_extract(j.admission_json,'$.key.project_id') AND json_extract(x.admission_json,'$.key.task_id')=json_extract(j.admission_json,'$.key.task_id')) ORDER BY j.created_at LIMIT 1`, Queued, s.clock.Now().UnixNano(), Running, Finalizing)
 	var id string
 	if e = row.Scan(&id); errors.Is(e, sql.ErrNoRows) {
 		return Job{}, false, nil
@@ -364,7 +366,7 @@ func (s *SQLiteStore) ClaimPreferred(ctx context.Context, task TaskKey) (Job, bo
 	if !errors.Is(e, sql.ErrNoRows) {
 		return Job{}, false, e
 	}
-	row := tx.QueryRowContext(ctx, `SELECT j.id FROM crew_review_jobs j WHERE j.state=? AND json_extract(j.admission_json,'$.key.project_id')=? AND json_extract(j.admission_json,'$.key.task_id')=? AND NOT EXISTS (SELECT 1 FROM crew_review_jobs x WHERE x.state IN (?,?) AND json_extract(x.admission_json,'$.key.project_id')=json_extract(j.admission_json,'$.key.project_id') AND json_extract(x.admission_json,'$.key.task_id')=json_extract(j.admission_json,'$.key.task_id')) ORDER BY j.created_at LIMIT 1`, Queued, task.ProjectID, task.TaskID, Running, Finalizing)
+	row := tx.QueryRowContext(ctx, `SELECT j.id FROM crew_review_jobs j WHERE j.state=? AND j.run_after<=? AND json_extract(j.admission_json,'$.key.project_id')=? AND json_extract(j.admission_json,'$.key.task_id')=? AND NOT EXISTS (SELECT 1 FROM crew_review_jobs x WHERE x.state IN (?,?) AND json_extract(x.admission_json,'$.key.project_id')=json_extract(j.admission_json,'$.key.project_id') AND json_extract(x.admission_json,'$.key.task_id')=json_extract(j.admission_json,'$.key.task_id')) ORDER BY j.created_at LIMIT 1`, Queued, s.clock.Now().UnixNano(), task.ProjectID, task.TaskID, Running, Finalizing)
 	var id string
 	if e = row.Scan(&id); errors.Is(e, sql.ErrNoRows) {
 		return Job{}, false, nil
@@ -464,7 +466,7 @@ func (s *SQLiteStore) RetryFailed(ctx context.Context, id string) (Job, error) {
 	// a new admission. Clear every attempt-specific terminal value together so
 	// a runner can only observe either the intact failed attempt or a clean
 	// queued attempt.
-	result, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,finalizing_claim=0,failure='',finalization_json=NULL,receipt_json=NULL,finalize_attempts=0,finalize_after=0,updated_at=? WHERE id=? AND state=?`, Queued, stamp(s.clock.Now()), id, Failed)
+	result, e := s.db.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,finalizing_claim=0,failure='',finalization_json=NULL,receipt_json=NULL,finalize_attempts=0,finalize_after=0,run_after=0,updated_at=? WHERE id=? AND state=?`, Queued, stamp(s.clock.Now()), id, Failed)
 	if e != nil {
 		return Job{}, e
 	}

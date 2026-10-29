@@ -36,9 +36,9 @@ type Service struct {
 	// most representative place to run that probe.
 	lastWorkspace string
 
-	// infraAttempts counts, per job, attempts that ended in a runtime
-	// infrastructure failure during this process. A restart starts the count
-	// again, which is itself a fresh runtime.
+	// infraAttempts counts, per job and retryable failure class (retryKey),
+	// attempts that ended in a retryable runtime failure during this process.
+	// A restart starts the count again, which is itself a fresh runtime.
 	infraAttempts map[string]int
 
 	// advanceTimeout bounds one submission's advance in a background pass;
@@ -46,6 +46,11 @@ type Service struct {
 	// pass heartbeat, guarded by mu.
 	advanceTimeout time.Duration
 	submissionLoop SubmissionLoopHeartbeat
+
+	// deadline bounds one reviewer run (WithReviewDeadline).
+	deadline time.Duration
+	// logf, when set, reports job claims, finishes, requeues and failures.
+	logf func(format string, args ...any)
 }
 
 // maxInfraAttempts bounds how many attempts of one job may end in a runtime
@@ -168,7 +173,7 @@ func New(store Store, den DenReviewClient, runtime ReviewerRuntime, profile stri
 	}
 	s := &Service{
 		store: store, den: den, runtime: runtime, profile: profile, clock: SystemClock{}, affinities: map[TaskKey]*affinity{},
-		sourceGrace: defaultSourceGrace,
+		sourceGrace: defaultSourceGrace, deadline: DefaultReviewDeadline,
 	}
 	for _, option := range options {
 		option(s)
@@ -253,10 +258,37 @@ func (s *Service) RunOne(ctx context.Context) (bool, error) {
 	if e != nil || !ok {
 		return ok, e
 	}
+	claimed := s.clock.Now()
+	s.log("review job %s claimed (%s) for %s/%d round %d, %s after admission", j.ID, j.State, j.Admission.Key.ProjectID, j.Admission.Key.TaskID, j.Admission.Key.ReviewRoundID, claimed.Sub(j.CreatedAt).Round(time.Second))
 	if j.State == Finalizing {
-		return true, s.reconcile(ctx, j)
+		e = s.reconcile(ctx, j)
+	} else {
+		e = s.execute(ctx, j)
 	}
-	return true, s.execute(ctx, j)
+	s.logFinished(j.ID, claimed, e)
+	return true, e
+}
+
+// logFinished reports where a claimed job ended up and how long it held its
+// lane.
+func (s *Service) logFinished(id string, claimed time.Time, runErr error) {
+	if s.logf == nil {
+		return
+	}
+	took := s.clock.Now().Sub(claimed).Round(time.Second)
+	current, err := s.store.Get(context.Background(), id)
+	switch {
+	case err != nil:
+		s.log("review job %s finished in %s; read its state: %v", id, took, err)
+	case current.State == Failed:
+		s.log("review job %s failed after %s: %s", id, took, current.Failure)
+	case current.State == Queued:
+		s.log("review job %s requeued after %s: %v", id, took, runErr)
+	case runErr != nil:
+		s.log("review job %s finished %s after %s: %v", id, current.State, took, runErr)
+	default:
+		s.log("review job %s finished %s after %s", id, current.State, took)
+	}
 }
 func (s *Service) execute(ctx context.Context, j Job) error {
 	c, e := s.den.GetReviewContext(ctx, j.Admission.Key)
@@ -296,7 +328,11 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 	}()
 	completionStored := false
 	prompt := reviewerPrompt(j.Admission.Key, c.Material, j.Admission.ReviewPreamble, j.Admission.Source)
-	runErr := s.runtime.Run(ctx, w, prompt, func(candidate Completion) error {
+	// The deadline bounds only the reviewer run; storing a completion and
+	// the recovery below keep the job's own context.
+	runCtx, cancelRun := context.WithTimeoutCause(ctx, s.deadline, ErrReviewDeadline)
+	defer cancelRun()
+	runErr := s.runtime.Run(runCtx, w, prompt, func(candidate Completion) error {
 		if !candidate.valid() {
 			return errors.New("runtime returned invalid review verdict")
 		}
@@ -312,9 +348,21 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 		}
 		return e
 	})
-	if !errors.Is(runErr, ErrRuntimeInfrastructure) {
+	if ctx.Err() == nil && errors.Is(context.Cause(runCtx), ErrReviewDeadline) {
+		// Whatever the runtime reported while being cut off, the attempt
+		// ran out of time.
+		if runErr == nil {
+			runErr = errors.New("reviewer run ended at its deadline")
+		}
+		runErr = MarkRetryable(fmt.Errorf("review exceeded its %s deadline: %w", s.deadline, runErr), ErrReviewDeadline)
+	}
+	if runErr == nil && !completionStored {
+		runErr = MarkRetryable(errors.New("runtime completed without a structured completion"), ErrNoCompletion)
+	}
+	policy, retryable := retryPolicyFor(runErr)
+	if !retryable || completionStored || ctx.Err() != nil {
 		s.mu.Lock()
-		delete(s.infraAttempts, j.ID)
+		s.clearRetriesLocked(j.ID)
 		s.mu.Unlock()
 	}
 	current, getErr := s.store.Get(ctx, j.ID)
@@ -327,10 +375,16 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 		return getErr
 	}
 	if current.State == Cancelled {
+		s.mu.Lock()
+		s.clearRetriesLocked(j.ID)
+		s.mu.Unlock()
 		return nil
 	}
 	if current.State != Finalizing {
 		if runErr != nil {
+			if retryable && ctx.Err() == nil {
+				return s.retryOrFail(ctx, j, policy, runErr)
+			}
 			if ctx.Err() != nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runErr, ErrRuntimeUnavailable) {
 				_, requeueErr := s.store.Requeue(context.Background(), j.ID)
 				if requeueErr != nil {
@@ -338,13 +392,7 @@ func (s *Service) execute(ctx context.Context, j Job) error {
 				}
 				return runErr
 			}
-			if errors.Is(runErr, ErrRuntimeInfrastructure) {
-				return s.infrastructureFailure(ctx, j, runErr)
-			}
 			return s.terminal(ctx, j, Failed, runErr.Error())
-		}
-		if !completionStored {
-			return s.terminal(ctx, j, Failed, "runtime completed without a structured completion")
 		}
 		return s.terminal(ctx, j, Failed, "runtime left job without finalization")
 	}
@@ -454,28 +502,10 @@ func finalizeRetryDelay(attempts int) time.Duration {
 	return min(delay, finalizeRetryMax)
 }
 
-// infrastructureFailure requeues a job whose attempt the runtime itself broke,
-// until maxInfraAttempts such attempts have failed.
-func (s *Service) infrastructureFailure(ctx context.Context, j Job, runErr error) error {
-	s.mu.Lock()
-	if s.infraAttempts == nil {
-		s.infraAttempts = map[string]int{}
-	}
-	s.infraAttempts[j.ID]++
-	attempts := s.infraAttempts[j.ID]
-	if attempts >= maxInfraAttempts {
-		delete(s.infraAttempts, j.ID)
-	}
-	s.mu.Unlock()
-	if attempts < maxInfraAttempts {
-		if _, err := s.store.Requeue(context.Background(), j.ID); err != nil {
-			return err
-		}
-		return runErr
-	}
-	return s.terminal(ctx, j, Failed, fmt.Sprintf("%s%d attempts failed; last: %v", infraFailurePrefix, attempts, runErr))
-}
 func (s *Service) terminal(ctx context.Context, j Job, state State, why string) error {
+	if state == Failed {
+		return s.fail(ctx, j, why)
+	}
 	_, e := s.store.Fail(ctx, j.ID, state, why)
 	return e
 }

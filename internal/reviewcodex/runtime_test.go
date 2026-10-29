@@ -32,6 +32,8 @@ type fakeServer struct {
 	turnStartHook func(thread, turn string)
 	turnOptions   []codexadapter.EphemeralTurnOptions
 	waitErr       error
+	// interruptEnds makes an interrupt end its turn, as Codex does.
+	interruptEnds bool
 }
 
 func (f *fakeServer) Initialize(context.Context) error { return nil }
@@ -110,6 +112,12 @@ func (f *fakeServer) Interrupt(_ context.Context, thread, turn string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.interrupts = append(f.interrupts, thread+"/"+turn)
+	if ch := f.waits[thread+"/"+turn]; f.interruptEnds && ch != nil {
+		select {
+		case ch <- codexadapter.TurnCompletion{ThreadID: thread, TurnID: turn, Status: "interrupted"}:
+		default:
+		}
+	}
 	return nil
 }
 func (f *fakeServer) Close() error {
@@ -747,8 +755,8 @@ func TestMissingCompletionWithoutToolFailureStaysReviewFailure(t *testing.T) {
 	go func() { done <- r.Run(context.Background(), w, "", func(review.Completion) error { return nil }) }()
 	thread, turn, _ := strings.Cut(<-old.starts, "/")
 	old.finish(thread, turn)
-	if e := <-done; e == nil || errors.Is(e, review.ErrRuntimeInfrastructure) || errors.Is(e, review.ErrRuntimeUnavailable) {
-		t.Fatalf("Run = %v, want an ordinary review failure", e)
+	if e := <-done; !errors.Is(e, review.ErrNoCompletion) || errors.Is(e, review.ErrRuntimeOverloaded) || errors.Is(e, review.ErrRuntimeInfrastructure) || errors.Is(e, review.ErrRuntimeUnavailable) {
+		t.Fatalf("Run = %v, want a retryable missing completion only", e)
 	}
 	_ = r.Release(context.Background(), w)
 	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); e != nil || len(*servers) != 1 {
@@ -908,5 +916,98 @@ func TestLostServerDuringAnotherTurnDefersRestart(t *testing.T) {
 	}
 	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); e != nil || len(*servers) != 2 {
 		t.Fatalf("Acquire once idle err=%v servers=%d, want the deferred restart", e, len(*servers))
+	}
+}
+
+func TestReviewDeadlineInterruptsTurn(t *testing.T) {
+	for _, ends := range []bool{true, false} {
+		r, s := runtimeFixture(t)
+		r.interruptGrace = 50 * time.Millisecond
+		s.interruptEnds = ends
+		s.starts = make(chan string, 1)
+		w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+		if e != nil {
+			t.Fatal(e)
+		}
+		ctx, cancel := context.WithTimeoutCause(context.Background(), 30*time.Millisecond, review.ErrReviewDeadline)
+		e = r.Run(ctx, w, "review", func(review.Completion) error { return nil })
+		cancel()
+		turn := <-s.starts
+		if !errors.Is(e, review.ErrReviewDeadline) {
+			t.Fatalf("ends=%v: Run = %v, want ErrReviewDeadline", ends, e)
+		}
+		if len(s.interrupts) != 1 || s.interrupts[0] != turn {
+			t.Fatalf("ends=%v: interrupts = %q, want %q", ends, s.interrupts, turn)
+		}
+		r.mu.Lock()
+		broken, busy := r.broken, w.(*worker).busy
+		r.mu.Unlock()
+		if broken == ends || busy {
+			t.Fatalf("ends=%v: broken=%v busy=%v; only a turn that ignores the interrupt marks the server for restart", ends, broken, busy)
+		}
+		if !ends && !strings.Contains(e.Error(), "did not end") {
+			t.Fatalf("Run = %v, want it to say the turn did not end", e)
+		}
+		if e := r.Release(context.Background(), w); e != nil {
+			t.Fatal(e)
+		}
+	}
+}
+
+func TestReviewDeadlineHoldsRestartFenceUntilTurnEnds(t *testing.T) {
+	r, old, servers, version := restartableFixture(t)
+	r.interruptGrace = time.Hour
+	old.starts = make(chan string, 1)
+	w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	ctx, cancel := context.WithTimeoutCause(context.Background(), 20*time.Millisecond, review.ErrReviewDeadline)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx, w, "", func(review.Completion) error { return nil }) }()
+	thread, turn, _ := strings.Cut(<-old.starts, "/")
+	for {
+		old.mu.Lock()
+		n := len(old.interrupts)
+		old.mu.Unlock()
+		if n == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// The interrupted turn has not ended yet: a restart must wait for it.
+	*version = "codex-cli 0.164.0"
+	if _, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 2}, "", ""); !errors.Is(e, review.ErrRuntimeUnavailable) || len(*servers) != 1 {
+		t.Fatalf("Acquire during interrupt err=%v servers=%d, want the restart deferred", e, len(*servers))
+	}
+	old.finish(thread, turn)
+	if e := <-done; !errors.Is(e, review.ErrReviewDeadline) {
+		t.Fatalf("Run = %v", e)
+	}
+}
+
+func TestOverloadedTurnIsRetryableOverload(t *testing.T) {
+	for _, message := range []string{"exceeded retry limit, last status: 429 Too Many Requests", "Selected model is at capacity. Please try a different model.", "rate limit reached for requests"} {
+		r, s := runtimeFixture(t)
+		s.starts = make(chan string, 1)
+		w, e := r.Acquire(context.Background(), review.TaskKey{ProjectID: "dsh", TaskID: 1}, "", "")
+		if e != nil {
+			t.Fatal(e)
+		}
+		done := make(chan error, 1)
+		go func() { done <- r.Run(context.Background(), w, "", func(review.Completion) error { return nil }) }()
+		thread, turn, _ := strings.Cut(<-s.starts, "/")
+		s.mu.Lock()
+		ch := s.waits[thread+"/"+turn]
+		s.mu.Unlock()
+		ch <- codexadapter.TurnCompletion{ThreadID: thread, TurnID: turn, Status: "failed", Error: message}
+		e = <-done
+		if !errors.Is(e, review.ErrRuntimeOverloaded) || errors.Is(e, review.ErrNoCompletion) || !strings.Contains(e.Error(), message) {
+			t.Fatalf("Run = %v, want ErrRuntimeOverloaded naming %q", e, message)
+		}
+	}
+	if overloaded("usage limit reached") || overloaded("exit status 4290") {
+		t.Fatal("usage limits and other numbers are not load")
 	}
 }

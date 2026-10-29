@@ -200,6 +200,21 @@ process. A job that still fails records a `runtime_infrastructure:` failure,
 and a plain resubmit of the same submission re-runs it; any other failure
 still needs `supersedes_round` or an explicit retry.
 
+Each reviewer run has a deadline, 40 minutes by default
+(`CREW_REVIEW_DEADLINE` or `-review-deadline`). When it passes, the Codex
+backend sends `turn/interrupt`, waits up to 30 s for the turn to end (still
+holding the restart fence), and the job is requeued once and then fails. If the
+interrupted turn does not end, the app-server is marked for a restart once no
+other turn is running. Rate limits (429) and "model at capacity" are requeued
+with backoff (1, 2, 4 min; four attempts), and a turn that ended without
+`complete_review` and with no tool-runtime marker is requeued after 30 s and
+60 s (three attempts). These final failures also carry the
+`runtime_infrastructure:` prefix, so a plain resubmit re-runs them. Every job
+that ends Failed records a `review_failed` notice for the submission's
+`notify_address` and posts a status message on the Den task thread. The journal
+logs each job claim, finish, requeue and failure with durations, and each
+submission-loop pass with its duration.
+
 When Den MCP runs on a separate service box, keep `crew-review` loopback-only
 and carry its backend connection over SSH. On the agent box, a persistent
 reverse tunnel such as the following makes the agent-box listener available as
