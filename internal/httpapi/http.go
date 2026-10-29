@@ -23,6 +23,7 @@ func NewHandler(svc *service.Service) http.Handler {
 	mux.HandleFunc("DELETE /v1/addresses/{address}/binding", unbind(svc))
 	mux.HandleFunc("GET /v1/addresses/{address}", resolve(svc))
 	mux.HandleFunc("GET /v1/addresses", list(svc))
+	mux.HandleFunc("POST /v1/session-addresses", registerSessionAddress(svc))
 	mux.HandleFunc("POST /v1/sessions/adopt", adoptSession(svc))
 	mux.HandleFunc("GET /v1/sessions", listSessions(svc))
 	mux.HandleFunc("GET /v1/sessions/{sessionID}", getSession(svc))
@@ -88,6 +89,13 @@ type bindingRequest struct {
 	TargetRef        string   `json:"target_ref"`
 	Capabilities     []string `json:"capabilities"`
 	ExpectedRevision *int64   `json:"expected_revision,omitempty"`
+}
+
+type sessionAddressRequest struct {
+	AdapterID    string   `json:"adapter_id"`
+	LeaseToken   string   `json:"lease_token"`
+	NativeKey    string   `json:"native_key"`
+	Capabilities []string `json:"capabilities"`
 }
 
 type unbindRequest struct {
@@ -167,6 +175,21 @@ func putBinding(svc *service.Service) http.HandlerFunc {
 			status = http.StatusCreated
 		}
 		writeJSON(w, status, binding)
+	}
+}
+
+func registerSessionAddress(svc *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body sessionAddressRequest
+		if !decodeJSON(w, r, &body) {
+			return
+		}
+		binding, err := svc.RegisterSessionAddress(r.Context(), service.RegisterSessionAddressRequest{AdapterID: body.AdapterID, LeaseToken: body.LeaseToken, NativeKey: body.NativeKey, Capabilities: body.Capabilities})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, binding)
 	}
 }
 
