@@ -422,3 +422,26 @@ func TestAssistAnswersAreCompactUnlessFullDetailIsAsked(t *testing.T) {
 		t.Fatalf("string or detail note: %v", compact)
 	}
 }
+
+func TestAssistViewCaptureReturnsTheViewAndThePlayerInline(t *testing.T) {
+	directory := t.TempDir()
+	png, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLqGQAAAABJRU5ErkJggg==")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, player := directory+"/view-side-step-6.png", directory+"/player-step-6.png"
+	for _, path := range []string{view, player} {
+		if err := os.WriteFile(path, png, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result := toolResult("assist", json.RawMessage(`{"sameStep":true,"view":{"path":`+quote(view)+`},"player":{"path":`+quote(player)+`}}`))
+	if content := result["content"].([]any); len(content) != 3 || content[1].(map[string]string)["type"] != "image" || content[2].(map[string]string)["type"] != "image" {
+		t.Fatalf("content = %#v", content)
+	}
+	// A view answer that is not a capture adds nothing.
+	listed := toolResult("assist", json.RawMessage(`{"views":[],"view":"side"}`))
+	if got := len(listed["content"].([]any)); got != 1 {
+		t.Fatalf("view list added %d content blocks", got)
+	}
+}

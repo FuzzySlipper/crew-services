@@ -337,13 +337,21 @@ func toolResult(name string, result json.RawMessage) map[string]any {
 		}
 		imageLabel = "observe image unavailable: "
 	case "assist":
-		var ok bool
-		// An act/jump with capture, or world-frame, returns its image with the facts.
-		path, ok = assistImagePath(result)
-		if !ok {
+		// An act/jump with capture, world-frame or a view capture returns its
+		// images with the facts: a view capture with player returns both.
+		paths := assistImagePaths(result)
+		if len(paths) == 0 {
 			return response
 		}
-		imageLabel = "assist image unavailable: "
+		for _, path := range paths {
+			image, err := readImage(path)
+			if err != nil {
+				response["content"] = append(response["content"].([]any), map[string]string{"type": "text", "text": "assist image unavailable: " + err.Error()})
+				continue
+			}
+			response["content"] = append(response["content"].([]any), image)
+		}
+		return response
 	case "script":
 		var ok bool
 		path, ok = checkpointImagePath(result)
@@ -385,23 +393,39 @@ func observePath(result json.RawMessage) (string, bool) {
 	return value.Path, true
 }
 
-func assistImagePath(result json.RawMessage) (string, bool) {
+func assistImagePaths(result json.RawMessage) []string {
 	var value struct {
-		Capture    string `json:"capture"`
-		Path       string `json:"path"`
-		WorldFrame struct {
-			Path string `json:"path"`
-		} `json:"worldFrame"`
+		Capture    string          `json:"capture"`
+		Path       string          `json:"path"`
+		WorldFrame json.RawMessage `json:"worldFrame"`
+		View       json.RawMessage `json:"view"`
+		Player     json.RawMessage `json:"player"`
 	}
 	if err := json.Unmarshal(result, &value); err != nil {
-		return "", false
+		return nil
 	}
-	for _, path := range []string{value.Capture, value.WorldFrame.Path, value.Path} {
+	nested := func(raw json.RawMessage) string {
+		var object struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(raw, &object) != nil {
+			return ""
+		}
+		return strings.TrimSpace(object.Path)
+	}
+	if view := nested(value.View); view != "" {
+		paths := []string{view}
+		if player := nested(value.Player); player != "" {
+			paths = append(paths, player)
+		}
+		return paths
+	}
+	for _, path := range []string{value.Capture, nested(value.WorldFrame), value.Path} {
 		if strings.TrimSpace(path) != "" {
-			return path, true
+			return []string{path}
 		}
 	}
-	return "", false
+	return nil
 }
 
 func checkpointImagePath(result json.RawMessage) (string, bool) {
@@ -595,7 +619,7 @@ func optionalInt(values map[string]json.RawMessage, name string) (int, bool, err
 
 func mcpTools() []map[string]any {
 	return []map[string]any{
-		tool("assist", "Engine playtesting: discover, observe, targets, route {id}, action {id} timing query, act {id,ms?,capture?,world?} (capture returns the resulting image inline, named by its runtime frame/step when known; world adds the runtime's own world frame without page UI), world-frame, time {mode?:realtime|manual|action-driven}, advance {ms}, look {yaw,pitch}, drawing {mode:continuous|on-demand}, camera {camera?}, frame, survey {count:4|8}, record {ms,fps?,id?,gif?}. Missing providers are unavailable. Actions use live product timing and ordinary keyboard or pointer-button controls; look never advances time. Select held time for surveys. Answers are compact (deep objects, long lists and strings summarized); every result is stored whole at its \"receipt\" path, and \"detail\":\"full\" in data returns it inline.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Operation object; defaults to discover.")}, "session_id")),
+		tool("assist", "Engine playtesting: discover, observe, targets, route {id}, action {id} timing query, act {id,ms?,capture?,world?} (capture returns the resulting image inline, named by its runtime frame/step when known; world adds the runtime's own world frame without page UI), world-frame, time {mode?:realtime|manual|action-driven}, advance {ms}, look {yaw,pitch}, drawing {mode:continuous|on-demand}, camera {camera?}, frame, survey {count:4|8}, record {ms,fps?,id?,gif?}; Engine inspection: view {mode:list|targets|create|close|select|camera|orbit|pan|zoom|frame|capture, id, anchor?, framing?, handle?|target?, yaw?, pitch?, x?, y?, factor?, camera?} (capture {id,player?,overlays?,width?,height?} returns the view image, and with player the player view too, each named by its step; hold time first so both show one step), overlay {mode:list|show|hide, kind?:sets|set|debug-layer|camera|motion|joints|bounds|ik|collision, name?, handle?, view?}, scene {mode:objects|object|composition|resources, handle?, depth?, layer?, page?}; Engine refusals pass through as worded. Missing providers are unavailable. Actions use live product timing and ordinary keyboard or pointer-button controls; look never advances time. Select held time for surveys. Answers are compact (deep objects, long lists and strings summarized); every result is stored whole at its \"receipt\" path, and \"detail\":\"full\" in data returns it inline.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Operation object; defaults to discover.")}, "session_id")),
 		tool("browser", "Browser-only operations: inspect {selector?}, click {selector} or {x,y}, fill {selector,value}, press {key}, near {x,y,max_distance}, select {token,action?:move|click}. data.op selects the operation. Unsupported on native game sessions; actions are never silently translated to synthetic page events.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Browser operation object, including op.")}, "session_id", "data")),
 		tool("capture", "Capture original image plus comparison metadata. Optional data: label, compare_to (prior capture_id), viewpoint (caller supplied), assistance (caller supplied string array), overlay_policy (preserve only), engine_presentation (boolean override of profile presentation_observations; records separate Engine submitted camera/viewport facts). Does not establish frame freshness or visual acceptance.", properties(map[string]any{"session_id": stringField("Session identifier."), "data": anyField("Optional capture metadata and comparison options.")}, "session_id")),
 		tool("games", "List games the local playtest service can start.", properties(map[string]any{})),

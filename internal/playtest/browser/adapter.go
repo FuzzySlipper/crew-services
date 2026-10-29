@@ -43,6 +43,7 @@ func capabilities() map[string]any {
 		"relative_mouse":        true,
 		"pointer_lock_readback": true,
 		"engine_queries":        false,
+		"inspection_views":      "assist view/overlay/scene: Engine inspection views, overlays and scene readouts on the page's product host; view captures named by step and view",
 	}
 }
 

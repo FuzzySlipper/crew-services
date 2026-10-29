@@ -66,8 +66,210 @@ export async function worldFrame(page, directory) {
   return { path, ...facts2, source: 'runtime frame stream; world only, no page UI' }
 }
 
+// Inspection views, overlays and scene readouts are the Engine's own
+// engine.inspect.* and engine.scene.* debug commands, which the page hook
+// does not carry: they run against the page's product host directly, as the
+// engine backend runs them. Each argument is checked to be one word; the
+// Engine decides what it means and its refusals pass through as worded.
+const VIEW_ID = /^[A-Za-z0-9_-]{1,64}$/
+const NAME = /^[A-Za-z0-9_.-]{1,64}$/
+const FRAMINGS = ['front', 'back', 'left', 'right', 'side', 'top', 'underside', 'close']
+const SCENE_LAYERS = ['scene', 'debug', 'ui', 'viewmodel', 'backdrop']
+const finite = (...values) => values.every(v => typeof v === 'number' && Number.isFinite(v))
+const handleWord = handle => {
+  if (!Number.isSafeInteger(handle) || handle < 0) throw new Error('handle must be a scene handle from scene objects')
+  return String(handle)
+}
+
+export function inspectCommand(request) {
+  const { op, mode = '', id } = request
+  if (id !== undefined && !VIEW_ID.test(id)) throw new Error('invalid target/action id')
+  if (op === 'view') {
+    const view = 'engine.inspect.view'
+    if (mode === '' || mode === 'list') return `${view} list`
+    if (mode === 'targets') return 'engine.inspect.target list'
+    if (!id) throw new Error(`view ${mode} requires id; example: {op:"view",mode:"create",id:"side"}`)
+    switch (mode) {
+      case 'create':
+        if (request.anchor === undefined) return `${view} create ${id}`
+        if (!NAME.test(request.anchor)) throw new Error('view anchor must be one word')
+        return `${view} create ${id} anchor ${request.anchor}`
+      case 'close': case 'select': return `${view} ${mode} ${id}`
+      case 'camera': {
+        const c = request.camera
+        if (!c || !Array.isArray(c.position) || c.position.length !== 3) throw new Error('view camera requires camera {position:[x,y,z],yawDegrees,pitchDegrees[,fovDegrees]}')
+        const values = [...c.position, c.yawDegrees, c.pitchDegrees, ...(c.fovDegrees === undefined ? [] : [c.fovDegrees])]
+        if (!finite(...values)) throw new Error('view camera must be finite')
+        return `${view} camera ${id} ${values.join(' ')}`
+      }
+      case 'orbit': {
+        const yaw = request.yaw ?? 0, pitch = request.pitch ?? 0
+        if (!finite(yaw, pitch)) throw new Error('view orbit yaw/pitch must be finite degrees')
+        return `${view} orbit ${id} ${yaw} ${pitch}`
+      }
+      case 'pan': {
+        const x = request.x ?? 0, y = request.y ?? 0
+        if (!finite(x, y)) throw new Error('view pan x/y must be finite')
+        return `${view} pan ${id} ${x} ${y}`
+      }
+      case 'zoom':
+        if (!finite(request.factor)) throw new Error('view zoom requires a finite factor')
+        return `${view} zoom ${id} ${request.factor}`
+      case 'frame': {
+        if (!FRAMINGS.includes(request.framing)) throw new Error('view frame requires framing front|back|left|right|side|top|underside|close')
+        if (request.handle !== undefined && request.target !== undefined) throw new Error('frame names a handle or a target, not both')
+        let subject = 'camera'
+        if (request.handle !== undefined) subject = handleWord(request.handle)
+        else if (request.target !== undefined) {
+          if (!NAME.test(request.target)) throw new Error('inspection target must be one word')
+          subject = `target ${request.target}`
+        }
+        return `${view} frame ${id} ${request.framing} ${subject}`
+      }
+    }
+    throw new Error(`unknown view mode "${mode}"; list|targets|create|close|select|camera|orbit|pan|zoom|frame|capture`)
+  }
+  if (op === 'overlay') {
+    const overlay = 'engine.inspect.overlay', kind = request.kind ?? ''
+    if (mode === '' || mode === 'list') {
+      if (kind) throw new Error('overlay list takes no kind')
+      return `${overlay} list`
+    }
+    if (mode !== 'show' && mode !== 'hide') throw new Error(`unknown overlay mode "${mode}"; list|show|hide`)
+    const base = `${overlay} ${mode}`
+    let within = ''
+    if (request.view !== undefined) {
+      if (kind !== 'sets' && kind !== 'set') throw new Error('overlay view applies to kind sets or set')
+      if (!VIEW_ID.test(request.view)) throw new Error('overlay view must be an inspection view id or player')
+      within = ` in ${request.view}`
+    }
+    switch (kind) {
+      case '': return base
+      case 'sets': return `${base} sets${within}`
+      case 'set':
+        if (!NAME.test(request.name ?? '')) throw new Error('overlay set requires name, one word')
+        return `${base} set ${request.name}${within}`
+      case 'debug-layer': case 'camera': case 'motion': return `${base} ${kind}`
+      case 'joints': case 'bounds': case 'ik':
+        if (request.handle === undefined) throw new Error(`overlay ${kind} requires handle from scene objects`)
+        return `${base} ${kind} ${handleWord(request.handle)}`
+      case 'collision': {
+        let command = `${base} collision`
+        if (request.x !== undefined || request.y !== undefined || request.z !== undefined) {
+          if (!finite(request.x, request.y, request.z)) throw new Error('overlay collision at needs finite x/y/z')
+          command += ` at ${request.x} ${request.y} ${request.z}`
+        }
+        if (request.distance !== undefined) {
+          if (!finite(request.distance)) throw new Error('overlay collision distance must be finite metres')
+          command += ` ${request.distance}`
+        }
+        return command
+      }
+    }
+    throw new Error(`unknown overlay kind "${kind}"; sets|set|debug-layer|camera|motion|joints|bounds|ik|collision`)
+  }
+  if (op === 'scene') {
+    switch (mode) {
+      case '': case 'objects': {
+        let command = 'engine.scene.objects'
+        if (request.handle !== undefined) command += ` ${handleWord(request.handle)}`
+        else if (request.depth !== undefined) command += ' *'
+        if (request.depth !== undefined) {
+          if (!Number.isInteger(request.depth) || request.depth < 0) throw new Error('scene depth must be 0 or more')
+          command += ` ${request.depth}`
+        }
+        if (request.layer !== undefined) {
+          if (!SCENE_LAYERS.includes(request.layer)) throw new Error('scene layer is scene|debug|ui|viewmodel|backdrop')
+          command += ` --layer ${request.layer}`
+        }
+        if (request.page !== undefined) {
+          if (!Number.isInteger(request.page) || request.page < 0) throw new Error('scene page must be 0 or more')
+          command += ` --page ${request.page}`
+        }
+        return command
+      }
+      case 'object':
+        if (request.handle === undefined) throw new Error('scene object requires handle; example: {op:"scene",mode:"object",handle:12}')
+        return `engine.scene.object ${handleWord(request.handle)}`
+      case 'composition': case 'resources': return `engine.scene.${mode}`
+    }
+    throw new Error(`unknown scene mode "${mode}"; objects|object|composition|resources`)
+  }
+  throw new Error(`unknown inspection operation "${op}"`)
+}
+
+const hostOrigin = page => new URL(page.url()).origin
+
+// One live-debug command on the page's product host. A 422 is a refusal by
+// usage or the product, worded by the Engine.
+export async function engineDebug(page, command) {
+  const response = await fetch(`${hostOrigin(page)}/__rusty/product/runtime/debug/execute`, { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: command, cache: 'no-store' })
+  const text = (await response.text()).trim()
+  if (response.status === 422) throw new Error(`${command} refused: ${text}`)
+  if (response.status === 503) throw new Error('product host has no serving runtime (503); re-read the binding after it returns')
+  if (!response.ok) throw new Error(`${command}: HTTP ${response.status}: ${text}`)
+  try { return JSON.parse(text) } catch { return { message: text } }
+}
+
+const parseHeader = value => { try { return JSON.parse(value) } catch { return value } }
+
+// One frames/capture of an inspection view, or with no view of the product's
+// composition, saved with a JSON sidecar holding its frame facts and the
+// view and overlay headers.
+export async function inspectionCapture(page, directory, view, request) {
+  const query = new URLSearchParams({ format: 'png' })
+  if (request.width > 0 && request.height > 0) { query.set('width', String(request.width)); query.set('height', String(request.height)) }
+  if (view) query.set('view', view)
+  if (request.overlays) query.set('overlays', '1')
+  const response = await fetch(`${hostOrigin(page)}/__rusty/product/runtime/frames/capture?${query}`, { cache: 'no-store' })
+  if (response.status === 503) throw new Error('product host has no serving runtime (503); re-read the binding after it returns')
+  if (!response.ok) throw new Error(`frame capture: HTTP ${response.status}: ${(await response.text()).trim()}`)
+  const frame = parseFrame(new Uint8Array(await response.arrayBuffer()))
+  const headers = {}
+  for (const name of ['X-Rusty-Frame-Cameras', 'X-Rusty-Frame-View', 'X-Rusty-Frame-Overlays']) {
+    const value = response.headers.get(name)
+    if (value) headers[name] = value
+  }
+  const stem = `${view ? `view-${view}` : 'player'}-step-${frame.step}-${randomUUID().slice(0, 8)}`
+  const path = join(directory, `${stem}.png`)
+  await writeFile(path, frame.payload)
+  const facts = { captureSequence: frame.sequence, step: frame.step, held: frame.held, video: frame.video }
+  if (headers['X-Rusty-Frame-Cameras']) facts.cameras = parseHeader(headers['X-Rusty-Frame-Cameras'])
+  if (headers['X-Rusty-Frame-View']) facts.view = parseHeader(headers['X-Rusty-Frame-View'])
+  if (headers['X-Rusty-Frame-Overlays']) facts.overlays = parseHeader(headers['X-Rusty-Frame-Overlays'])
+  const metadataPath = join(directory, `${stem}.json`)
+  const result = { path, width: frame.width, height: frame.height, step: frame.step, frame: facts, overlaysRequested: !!request.overlays,
+    frameCorrelation: 'capture-step', source: view ? `runtime frames/capture?view: inspection view ${view}; world only, no page UI` : "runtime frames/capture: the product's composition; world only, no page UI",
+    headers, ...(view ? { viewId: view } : {}), metadataPath }
+  await writeFile(metadataPath, JSON.stringify(result, null, 2))
+  return result
+}
+
+// A view capture with player also captures the product's composition, so
+// both name the step they were drawn at; hold time first to make it one step.
+async function view(page, directory, request) {
+  if (request.mode !== 'capture') return engineDebug(page, inspectCommand(request))
+  if (!request.id || !VIEW_ID.test(request.id)) throw new Error('view capture requires id; example: {op:"view",mode:"capture",id:"side",player:true,overlays:true}')
+  const shot = await inspectionCapture(page, directory, request.id, request)
+  if (!request.player) return shot
+  let player
+  try { player = await inspectionCapture(page, directory, '', request) } catch (error) { return { ...shot, playerError: String(error) } }
+  const sameStep = shot.step === player.step
+  return { view: shot, player, sameStep, ...(sameStep ? {} : { note: 'the view and the player view drew different steps; hold time (time mode manual) to capture both at one' }) }
+}
+
 export async function playtest(page, directory, request) {
   const { op = 'discover' } = request
+  if (op === 'view') return view(page, directory, request)
+  if (op === 'overlay' || op === 'scene') return engineDebug(page, inspectCommand(request))
+  if (op === 'discover') {
+    const answer = await engineCall(page, request)
+    const commands = answer?.commands ?? []
+    for (const [name, command] of [['view', 'engine.inspect.view'], ['overlay', 'engine.inspect.overlay'], ['scene', 'engine.scene.objects']]) {
+      if (commands.includes(command) && Array.isArray(answer.operations) && !answer.operations.includes(name)) answer.operations.push(name)
+    }
+    return answer
+  }
   if (op === 'act' || op === 'jump') {
     const result = op === 'jump' ? await jump(page, request) : await act(page, request)
     if (request.capture) {
