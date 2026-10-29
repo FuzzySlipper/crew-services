@@ -104,6 +104,24 @@ func OpenSQLite(ctx context.Context, path string, clock Clock, capacity int) (*S
 		db.Close()
 		return nil, fmt.Errorf("migrate crew review notice index: %w", err)
 	}
+	// next_attempt_at schedules each pending notice's next send, so a notice
+	// whose recipient is not registered backs off without delaying the rest.
+	// It is a fixed-width UTC stamp (noticeStamp) so SQL compares it in time
+	// order; an empty value from before the column existed is due at once.
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('crew_review_notices') WHERE name='next_attempt_at'`).Scan(&columns); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if columns == 0 {
+		if _, err = db.ExecContext(ctx, `ALTER TABLE crew_review_notices ADD COLUMN next_attempt_at TEXT NOT NULL DEFAULT ''`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate crew review notice schedule: %w", err)
+		}
+	}
+	if _, err = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS crew_review_notices_due ON crew_review_notices(state, next_attempt_at)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate crew review notice schedule index: %w", err)
+	}
 	if err = s.Recover(ctx); err != nil {
 		db.Close()
 		return nil, err

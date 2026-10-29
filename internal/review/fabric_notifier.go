@@ -105,9 +105,16 @@ func (n *FabricNotifier) Notify(ctx context.Context, notice Notice) (string, err
 		n.bound = false
 	case "invalid_request", "operation_conflict":
 		return "", fmt.Errorf("%w: %v", ErrNoticeRejected, err)
+	case "not_found", "not_bound":
+		// The recipient has no live binding. The session may register its
+		// address later, so the notice is retried with backoff until it
+		// expires after NoticeTTL, without holding back other notices.
+		// The origin binding is re-checked on the next call, so a lost
+		// origin shows up there as a fabric failure instead of being
+		// mistaken for a bad recipient on every notice.
+		n.bound = false
+		return "", fmt.Errorf("%w: %s: %v", ErrRecipientUnavailable, notice.Recipient, err)
 	}
-	// not_found / not_bound recipients are retried: the session may register
-	// its address later, and the notice expires after NoticeTTL.
 	return "", err
 }
 

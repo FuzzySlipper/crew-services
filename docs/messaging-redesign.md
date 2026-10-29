@@ -200,7 +200,11 @@ not to watch gates, which is right, but it leaves them blind.
    with the same arguments. It is sent with `next_step` and a 24h TTL.
    *As built:* the outbox is `crew_review_notices` in the crew-review
    database (`pending` → `sent`, or `abandoned` when the fabric refuses the
-   notice or has not accepted it within the 24h TTL). The gate handle is Den's
+   notice or has not accepted it within the 24h TTL). A notice whose recipient
+   the fabric does not know (`not_found`/`not_bound`) is rescheduled with its
+   own backoff (`next_attempt_at`, 30s doubling to 15m) and the pass moves on;
+   only a fabric-wide failure stops a pass, and the failed notice is requeued
+   behind the others that are due. The gate handle is Den's
    gate ID plus `.<attempt>` from the second attempt on, since Den reopens the
    same gate ID on re-registration. crew-review registers as producer
    `crew-review` and binds `system/crew-review` to itself, which is all the

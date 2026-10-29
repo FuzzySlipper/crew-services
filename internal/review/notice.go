@@ -35,6 +35,11 @@ const (
 	// step instead of waiting for its turn to end.
 	NoticeActivationPolicy = "next_step"
 	maxNotifyAddressBytes  = 256
+	// noticeRetryBase and noticeRetryMax bound the backoff of a notice whose
+	// recipient the fabric does not know: the first retry waits
+	// noticeRetryBase and each further one doubles, up to noticeRetryMax.
+	noticeRetryBase = 30 * time.Second
+	noticeRetryMax  = 15 * time.Minute
 )
 
 // Notice is one outbox row: a message to a submitter, fixed at the moment the
@@ -54,6 +59,8 @@ type Notice struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	SentAt       time.Time
+	// NextAttemptAt is when a pending notice is next due for a send.
+	NextAttemptAt time.Time
 }
 
 // NoticeStore is the outbox. Notices are inserted only through
@@ -61,19 +68,24 @@ type Notice struct {
 type NoticeStore interface {
 	ListPendingNotices(ctx context.Context, limit int) ([]Notice, error)
 	MarkNoticeSent(ctx context.Context, operationID, messageID string) error
-	MarkNoticeAttempt(ctx context.Context, operationID, failure string) error
+	MarkNoticeAttempt(ctx context.Context, operationID, failure string, nextAttemptAt time.Time) error
 	MarkNoticeAbandoned(ctx context.Context, operationID, reason string) error
 	ListSubmissionNotices(ctx context.Context, submissionID string) ([]Notice, error)
 }
 
 // Notifier hands a notice to the messaging fabric. It must be idempotent per
 // OperationID. An error wrapping ErrNoticeRejected means the fabric refused
-// the notice for good; any other error is retried on the next pass.
+// the notice for good. An error wrapping ErrRecipientUnavailable concerns
+// only this notice's recipient: it is retried with backoff while other
+// notices proceed. Any other error means the fabric itself is unavailable.
 type Notifier interface {
 	Notify(ctx context.Context, notice Notice) (messageID string, err error)
 }
 
-var ErrNoticeRejected = errors.New("notice rejected by the messaging fabric")
+var (
+	ErrNoticeRejected       = errors.New("notice rejected by the messaging fabric")
+	ErrRecipientUnavailable = errors.New("notice recipient is not registered with the messaging fabric")
+)
 
 // WithNotifier enables delivery of outbox notices. Without one, notices are
 // still recorded and wait until a notifier is configured.
@@ -83,10 +95,12 @@ func WithNotifier(notifier Notifier) Option {
 
 const noticeBatch = 50
 
-// SendNotices submits pending outbox notices to the fabric. It runs on its own
-// loop so a slow or absent fabric never delays review admission. It stops at
-// the first retryable failure: the fabric is most likely unavailable, and the
-// remaining notices wait for the next pass.
+// SendNotices submits due outbox notices to the fabric. It runs on its own
+// loop so a slow or absent fabric never delays review admission. A notice
+// whose recipient is not registered is rescheduled with backoff and the pass
+// continues, so one dead recipient never holds back other notices. A failure
+// of the fabric itself stops the pass: the remaining notices wait for the
+// next one, and the failed notice is requeued behind them.
 func (s *Service) SendNotices(ctx context.Context) (bool, error) {
 	if s.notifier == nil {
 		return false, nil
@@ -99,8 +113,10 @@ func (s *Service) SendNotices(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	var deferred []error
 	for _, notice := range notices {
-		if !s.clock.Now().Before(notice.CreatedAt.Add(NoticeTTL)) {
+		expiry := notice.CreatedAt.Add(NoticeTTL)
+		if !s.clock.Now().Before(expiry) {
 			if err := store.MarkNoticeAbandoned(ctx, notice.OperationID, "not accepted by the messaging fabric within "+NoticeTTL.String()); err != nil {
 				return true, err
 			}
@@ -122,12 +138,36 @@ func (s *Service) SendNotices(ctx context.Context) (bool, error) {
 			}
 			continue
 		}
-		if markErr := store.MarkNoticeAttempt(ctx, notice.OperationID, err.Error()); markErr != nil {
+		if errors.Is(err, ErrRecipientUnavailable) {
+			// Never schedule past the expiry, so the notice is still listed
+			// and abandoned on time.
+			retryAt := s.clock.Now().Add(noticeRetryDelay(notice.Attempts))
+			if retryAt.After(expiry) {
+				retryAt = expiry
+			}
+			if markErr := store.MarkNoticeAttempt(ctx, notice.OperationID, err.Error(), retryAt); markErr != nil {
+				return true, markErr
+			}
+			deferred = append(deferred, fmt.Errorf("defer notice %s until %s: %w", notice.OperationID, retryAt.UTC().Format(time.RFC3339), err))
+			continue
+		}
+		if markErr := store.MarkNoticeAttempt(ctx, notice.OperationID, err.Error(), s.clock.Now()); markErr != nil {
 			return true, markErr
 		}
 		return true, fmt.Errorf("send notice %s: %w", notice.OperationID, err)
 	}
-	return len(notices) > 0, nil
+	// Deferred notices are reported for the log; they did not stop the pass.
+	return len(notices) > 0, errors.Join(deferred...)
+}
+
+// noticeRetryDelay is the backoff after the given number of earlier failed
+// attempts to reach an unregistered recipient.
+func noticeRetryDelay(attempts int) time.Duration {
+	delay := noticeRetryBase
+	for i := 0; i < attempts && delay < noticeRetryMax; i++ {
+		delay *= 2
+	}
+	return min(delay, noticeRetryMax)
 }
 
 // gateFailedNotice returns the outbox notice for a failed gate, or nil when

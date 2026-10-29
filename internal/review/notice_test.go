@@ -471,3 +471,128 @@ func TestUndeliverableNoticeIsAbandonedAfterItsTTL(t *testing.T) {
 		t.Fatalf("fabric accepted %v", accepted)
 	}
 }
+
+// submitFailedGate records a failed-gate notice for a distinct submission to
+// the given recipient and returns its operation ID.
+func (f *noticeFixture) submitFailedGate(handle, recipient string, checks ...string) string {
+	f.t.Helper()
+	f.den.mu.Lock()
+	f.den.watchGate = failedGate(handle, 1)
+	f.den.mu.Unlock()
+	request := notifyingRequest()
+	request.NotifyAddress = recipient
+	if len(checks) > 0 {
+		request.RequiredChecks = checks
+	}
+	receipt, _, err := f.service.SubmitTaskForReview(context.Background(), request)
+	if err != nil || receipt.Phase != SubmissionGateFailed {
+		f.t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	notices := f.notices(receipt.SubmissionID)
+	if len(notices) != 1 {
+		f.t.Fatalf("outbox=%+v", notices)
+	}
+	return notices[0].OperationID
+}
+
+func (f *noticeFixture) notice(operationID string) Notice {
+	f.t.Helper()
+	var submissionID string
+	if err := f.store.db.QueryRow(`SELECT submission_id FROM crew_review_notices WHERE operation_id=?`, operationID).Scan(&submissionID); err != nil {
+		f.t.Fatal(err)
+	}
+	for _, notice := range f.notices(submissionID) {
+		if notice.OperationID == operationID {
+			return notice
+		}
+	}
+	f.t.Fatalf("notice %s not found", operationID)
+	return Notice{}
+}
+
+func TestUnknownRecipientDoesNotBlockLaterNotices(t *testing.T) {
+	f := newNoticeFixture(t, titledDen(&submissionDen{}))
+	f.fabric.recipients = map[string]bool{"claude/session-1": true}
+	a := f.submitFailedGate("42", "claude/unknown")
+	f.clock.Advance(time.Second)
+	b := f.submitFailedGate("43", "claude/session-1", "build")
+
+	// One pass: A's recipient is unknown, B still goes out.
+	err := f.send()
+	if err == nil || !errors.Is(err, ErrRecipientUnavailable) {
+		t.Fatalf("pass error=%v, want a deferred unknown-recipient report", err)
+	}
+	if accepted := f.fabric.acceptedOperations(); strings.Join(accepted, ",") != b {
+		t.Fatalf("fabric accepted %v, want only %s", accepted, b)
+	}
+	if notice := f.notice(b); notice.State != NoticeSent || notice.Attempts != 1 {
+		t.Fatalf("notice B=%+v", notice)
+	}
+	notice := f.notice(a)
+	if notice.State != NoticePending || notice.Attempts != 1 || !strings.Contains(notice.LastError, "not_found") || !notice.NextAttemptAt.Equal(f.clock.Now().Add(noticeRetryBase)) {
+		t.Fatalf("notice A=%+v", notice)
+	}
+
+	// A is not due yet: the next pass does not touch the fabric.
+	submits := f.fabric.submits
+	if err := f.send(); err != nil {
+		t.Fatal(err)
+	}
+	if f.fabric.submits != submits {
+		t.Fatalf("backed-off notice was resent: submits %d -> %d", submits, f.fabric.submits)
+	}
+	// Once due, A is retried and backs off further.
+	f.clock.Advance(noticeRetryBase)
+	if err := f.send(); !errors.Is(err, ErrRecipientUnavailable) {
+		t.Fatalf("retry error=%v", err)
+	}
+	if notice := f.notice(a); notice.State != NoticePending || notice.Attempts != 2 || !notice.NextAttemptAt.Equal(f.clock.Now().Add(2*noticeRetryBase)) {
+		t.Fatalf("notice A after retry=%+v", notice)
+	}
+
+	// A is still abandoned at its expiry, and B was accepted exactly once.
+	f.clock.Advance(NoticeTTL)
+	if err := f.send(); err != nil {
+		t.Fatal(err)
+	}
+	if notice := f.notice(a); notice.State != NoticeAbandoned {
+		t.Fatalf("notice A after TTL=%+v", notice)
+	}
+	if accepted := f.fabric.acceptedOperations(); strings.Join(accepted, ",") != b {
+		t.Fatalf("fabric accepted %v, want %s exactly once", accepted, b)
+	}
+}
+
+func TestFabricOutageStopsThePassAndRequeuesFairly(t *testing.T) {
+	f := newNoticeFixture(t, titledDen(&submissionDen{}))
+	a := f.submitFailedGate("42", "claude/session-1")
+	f.clock.Advance(time.Second)
+	b := f.submitFailedGate("43", "claude/session-2", "build")
+	f.clock.Advance(time.Second)
+	f.fabric.setDown(true)
+
+	// The outage stops the pass at the first notice.
+	if err := f.send(); err == nil || errors.Is(err, ErrRecipientUnavailable) {
+		t.Fatalf("pass error=%v, want a fabric failure", err)
+	}
+	if na, nb := f.notice(a), f.notice(b); na.Attempts != 1 || nb.Attempts != 0 {
+		t.Fatalf("after one pass: A attempts=%d B attempts=%d", na.Attempts, nb.Attempts)
+	}
+	// The failed notice is requeued behind the other, so the next pass
+	// tries B first instead of A again.
+	f.clock.Advance(time.Second)
+	if err := f.send(); err == nil {
+		t.Fatal("send to an unavailable fabric reported success")
+	}
+	if na, nb := f.notice(a), f.notice(b); na.Attempts != 1 || nb.Attempts != 1 {
+		t.Fatalf("after two passes: A attempts=%d B attempts=%d", na.Attempts, nb.Attempts)
+	}
+
+	f.fabric.setDown(false)
+	if err := f.send(); err != nil {
+		t.Fatal(err)
+	}
+	if accepted := f.fabric.acceptedOperations(); len(accepted) != 2 {
+		t.Fatalf("fabric accepted %v after recovery", accepted)
+	}
+}

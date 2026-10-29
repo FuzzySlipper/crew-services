@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -259,8 +260,8 @@ func (s *SQLiteStore) TransitionSubmission(ctx context.Context, id string, expec
 		}
 		// A notice for the same operation (the same failed gate) is kept as
 		// it is: it may already be sent.
-		if _, err := tx.ExecContext(ctx, `INSERT INTO crew_review_notices(operation_id,submission_id,kind,recipient,body,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(operation_id) DO NOTHING`,
-			notice.OperationID, id, notice.Kind, notice.Recipient, notice.Body, NoticePending, now, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO crew_review_notices(operation_id,submission_id,kind,recipient,body,state,created_at,updated_at,next_attempt_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(operation_id) DO NOTHING`,
+			notice.OperationID, id, notice.Kind, notice.Recipient, notice.Body, NoticePending, now, now, noticeStamp(s.clock.Now())); err != nil {
 			return SubmissionRecord{}, fmt.Errorf("record review submission notice: %w", err)
 		}
 	}
@@ -301,14 +302,20 @@ func (s *SQLiteStore) SetSubmissionNotifyAddress(ctx context.Context, id, addres
 	return s.GetSubmission(ctx, id)
 }
 
-const noticeColumns = `operation_id,submission_id,kind,recipient,body,state,attempts,last_error,message_id,created_at,updated_at,sent_at`
+const noticeColumns = `operation_id,submission_id,kind,recipient,body,state,attempts,last_error,message_id,created_at,updated_at,sent_at,next_attempt_at`
 
-// ListPendingNotices returns pending notices, oldest first.
+// noticeStamp is a fixed-width UTC timestamp, so next_attempt_at compares in
+// time order as text. parse reads it like any RFC 3339 stamp.
+func noticeStamp(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000000000Z") }
+
+// ListPendingNotices returns pending notices that are due, earliest scheduled
+// attempt first. A notice that failed goes behind every notice already due,
+// so no single notice can hold the front of the queue.
 func (s *SQLiteStore) ListPendingNotices(ctx context.Context, limit int) ([]Notice, error) {
 	if limit < 1 {
 		limit = 1
 	}
-	return s.queryNotices(ctx, `SELECT `+noticeColumns+` FROM crew_review_notices WHERE state=? ORDER BY created_at, operation_id LIMIT ?`, NoticePending, limit)
+	return s.queryNotices(ctx, `SELECT `+noticeColumns+` FROM crew_review_notices WHERE state=? AND next_attempt_at<=? ORDER BY next_attempt_at, created_at, operation_id LIMIT ?`, NoticePending, noticeStamp(s.clock.Now()), limit)
 }
 
 func (s *SQLiteStore) ListSubmissionNotices(ctx context.Context, submissionID string) ([]Notice, error) {
@@ -324,14 +331,17 @@ func (s *SQLiteStore) queryNotices(ctx context.Context, query string, args ...an
 	notices := make([]Notice, 0)
 	for rows.Next() {
 		var notice Notice
-		var kind, state, createdAt, updatedAt, sentAt string
-		if err := rows.Scan(&notice.OperationID, &notice.SubmissionID, &kind, &notice.Recipient, &notice.Body, &state, &notice.Attempts, &notice.LastError, &notice.MessageID, &createdAt, &updatedAt, &sentAt); err != nil {
+		var kind, state, createdAt, updatedAt, sentAt, nextAttemptAt string
+		if err := rows.Scan(&notice.OperationID, &notice.SubmissionID, &kind, &notice.Recipient, &notice.Body, &state, &notice.Attempts, &notice.LastError, &notice.MessageID, &createdAt, &updatedAt, &sentAt, &nextAttemptAt); err != nil {
 			return nil, err
 		}
 		notice.Kind, notice.State = NoticeKind(kind), NoticeState(state)
 		notice.CreatedAt, notice.UpdatedAt = parse(createdAt), parse(updatedAt)
 		if sentAt != "" {
 			notice.SentAt = parse(sentAt)
+		}
+		if nextAttemptAt != "" {
+			notice.NextAttemptAt = parse(nextAttemptAt)
 		}
 		notices = append(notices, notice)
 	}
@@ -345,8 +355,9 @@ func (s *SQLiteStore) MarkNoticeSent(ctx context.Context, operationID, messageID
 	return err
 }
 
-func (s *SQLiteStore) MarkNoticeAttempt(ctx context.Context, operationID, failure string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE crew_review_notices SET attempts=attempts+1, last_error=?, updated_at=? WHERE operation_id=? AND state=?`, boundedNoticeError(failure), stamp(s.clock.Now()), operationID, NoticePending)
+// MarkNoticeAttempt records a failed send and when the notice is next due.
+func (s *SQLiteStore) MarkNoticeAttempt(ctx context.Context, operationID, failure string, nextAttemptAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE crew_review_notices SET attempts=attempts+1, last_error=?, next_attempt_at=?, updated_at=? WHERE operation_id=? AND state=?`, boundedNoticeError(failure), noticeStamp(nextAttemptAt), stamp(s.clock.Now()), operationID, NoticePending)
 	return err
 }
 
