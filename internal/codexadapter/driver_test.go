@@ -140,10 +140,12 @@ type fakeFabric struct {
 	claimReqs []fabricclient.ClaimRequest
 	binds     []fabricclient.BindRequest
 	begun     []string
+	beginOps  []string
 	acked     []string
 	unknown   []string
 	released  []string
 	failed    []string
+	requeued  []fabricclient.NotInsertedRequest
 	ackErr    error
 	submitted []fabricclient.MessageRequest
 }
@@ -203,6 +205,7 @@ func (f *fakeFabric) Begin(_ context.Context, id string, r fabricclient.Dispatch
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.begun = append(f.begun, id+" "+r.NativeAttemptRef)
+	f.beginOps = append(f.beginOps, r.OperationID)
 	return fabricclient.Delivery{DeliveryID: id, State: "dispatching"}, nil
 }
 func (f *fakeFabric) Release(_ context.Context, id string, _ fabricclient.ClaimTokenRequest) (fabricclient.Delivery, error) {
@@ -225,6 +228,12 @@ func (f *fakeFabric) Fail(_ context.Context, id string, _ fabricclient.Reconcile
 	defer f.mu.Unlock()
 	f.failed = append(f.failed, id)
 	return fabricclient.Delivery{DeliveryID: id, State: "failed"}, nil
+}
+func (f *fakeFabric) NotInserted(_ context.Context, id string, r fabricclient.NotInsertedRequest) (fabricclient.Delivery, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.requeued = append(f.requeued, r)
+	return fabricclient.Delivery{DeliveryID: id, State: "queued"}, nil
 }
 func (f *fakeFabric) Unknown(_ context.Context, id string, _ fabricclient.ReconcileRequest) (fabricclient.Delivery, error) {
 	f.mu.Lock()
@@ -643,26 +652,64 @@ func TestNoWakeStaysPendingWhenTheTurnEndedBeforeDispatch(t *testing.T) {
 	}
 }
 
-func TestNoWakeSteerRefusedAfterBeginFailsWithoutQueueing(t *testing.T) {
+func TestNoWakeSteerRefusedAfterBeginRequeuesForALaterActiveTurn(t *testing.T) {
 	fabric, native := newFakeFabric(), newFakeNative()
 	d := testDriver(t, fabric, native)
 	address := loadedThread(t, d, native, "thread-1", "active")
 	native.active["thread-1"] = "turn-7"
 	native.steerErr = &rpcError{Code: -32600, Message: "no active turn to steer"}
-	fabric.claims[address] = []fabricclient.Claim{noWakeClaim(address, "d1")}
+	first := noWakeClaim(address, "d1")
+	first.Delivery.AttemptCount = 1
+	fabric.claims[address] = []fabricclient.Claim{first}
 	if err := d.Pump(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(native.callsWith("queue ")) != 0 {
-		t.Fatalf("a refused no_wake steer fell back to the queue: %v", native.calls)
+	// A refused steer inserted nothing: the begun dispatch goes back to the
+	// fabric queue, not to a terminal state, an unknown outcome or Codex's
+	// own queue.
+	if len(fabric.requeued) != 1 || len(fabric.failed) != 0 || len(fabric.acked) != 0 || len(fabric.unknown) != 0 {
+		t.Fatalf("requeued %v failed %v acked %v unknown %v", fabric.requeued, fabric.failed, fabric.acked, fabric.unknown)
 	}
-	if len(native.callsWith("steer")) != 1 || !slices.Equal(fabric.begun, []string{"d1 codex:d1"}) {
-		t.Fatalf("steer %v begun %v", native.callsWith("steer"), fabric.begun)
+	if r := fabric.requeued[0]; r.ClaimToken != "token-d1" || r.NativeAttemptRef != "codex:d1" || r.Reason != "steer_rejected" || r.OperationID != "crew-codex/not-inserted/d1" {
+		t.Fatalf("not-inserted request = %+v", r)
 	}
-	// A refused steer inserted nothing: the begun dispatch is a definite
-	// failure, not an unknown outcome or a delivery.
-	if !slices.Equal(fabric.failed, []string{"d1"}) || len(fabric.acked) != 0 || len(fabric.unknown) != 0 {
-		t.Fatalf("failed %v acked %v unknown %v", fabric.failed, fabric.acked, fabric.unknown)
+	// The thread went idle: a no_wake head is not offered, and nothing wakes it.
+	native.threads["thread-1"] = NativeThread{ID: "thread-1", Status: "idle", AcceptsInput: true}
+	native.active["thread-1"] = ""
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// A later turn is active again; the fabric offers the requeued head on its
+	// second claim attempt and the driver steers it in.
+	native.threads["thread-1"] = NativeThread{ID: "thread-1", Status: "active", AcceptsInput: true}
+	native.active["thread-1"] = "turn-9"
+	native.steerErr = nil
+	second := noWakeClaim(address, "d1")
+	second.ClaimToken = "token-d1-2"
+	second.Delivery.AttemptCount = 2
+	fabric.claims[address] = []fabricclient.Claim{second}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := native.callsWith("steer"); !slices.Equal(got, []string{"steer thread-1 turn-7 crew-delivery:d1", "steer thread-1 turn-9 crew-delivery:d1"}) {
+		t.Fatalf("steers = %v", got)
+	}
+	if len(native.callsWith("queue ")) != 0 || len(native.callsWith("resume")) != 0 {
+		t.Fatalf("a no_wake message queued or woke the thread: %v", native.calls)
+	}
+	if !slices.Equal(fabric.begun, []string{"d1 codex:d1", "d1 codex:d1"}) || !slices.Equal(fabric.acked, []string{"d1"}) || len(fabric.failed) != 0 || len(fabric.unknown) != 0 || len(fabric.requeued) != 1 {
+		t.Fatalf("begun %v acked %v failed %v unknown %v requeued %d", fabric.begun, fabric.acked, fabric.failed, fabric.unknown, len(fabric.requeued))
+	}
+	if !slices.Equal(fabric.beginOps, []string{"crew-codex/begin/d1", "crew-codex/begin/d1/2"}) {
+		t.Fatalf("each attempt needs its own begin operation: %v", fabric.beginOps)
+	}
+	// Turn 9 holds the message exactly once.
+	inserted := 0
+	for _, turn := range native.turns["thread-1"] {
+		inserted += len(turn.ClientIDs)
+	}
+	if inserted != 1 {
+		t.Fatalf("message inserted %d times: %v", inserted, native.turns["thread-1"])
 	}
 }
 

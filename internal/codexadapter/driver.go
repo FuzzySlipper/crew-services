@@ -57,6 +57,7 @@ type Fabric interface {
 	Acknowledge(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
 	Unknown(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
 	Fail(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
+	NotInserted(ctx context.Context, deliveryID string, request fabricclient.NotInsertedRequest) (fabricclient.Delivery, error)
 	Submit(ctx context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error)
 }
 
@@ -584,6 +585,15 @@ func ClientMessageID(deliveryID string) string { return "crew-delivery:" + deliv
 
 func opID(kind, subject string) string { return "crew-codex/" + kind + "/" + subject }
 
+// attemptSubject names one claim attempt of a delivery. The first attempt is
+// the bare delivery ID, as before deliveries could be requeued.
+func attemptSubject(deliveryID string, attempt int) string {
+	if attempt <= 1 {
+		return deliveryID
+	}
+	return fmt.Sprintf("%s/%d", deliveryID, attempt)
+}
+
 // deliverOne claims and delivers at most one message for t. It reports
 // whether a message went out.
 func (d *Driver) deliverOne(ctx context.Context, native Native, t target, availability string) (bool, error) {
@@ -632,7 +642,10 @@ func (d *Driver) deliverOne(ctx context.Context, native Native, t target, availa
 		return false, nil
 	}
 	ref := nativeAttempt(delivery.DeliveryID)
-	if _, err := d.fabric.Begin(ctx, delivery.DeliveryID, fabricclient.DispatchRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("begin", delivery.DeliveryID), ClaimToken: claim.ClaimToken, NativeAttemptRef: ref}); err != nil {
+	// A delivery can be begun more than once when a definite rejection put it
+	// back in the queue, so each claim attempt has its own begin operation.
+	attempt := attemptSubject(delivery.DeliveryID, delivery.AttemptCount)
+	if _, err := d.fabric.Begin(ctx, delivery.DeliveryID, fabricclient.DispatchRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("begin", attempt), ClaimToken: claim.ClaimToken, NativeAttemptRef: ref}); err != nil {
 		return false, fmt.Errorf("begin dispatch: %w", err)
 	}
 	clientID := ClientMessageID(delivery.DeliveryID)
@@ -640,20 +653,23 @@ func (d *Driver) deliverOne(ctx context.Context, native Native, t target, availa
 	how, err := d.dispatch(ctx, native, t.ThreadID, action, activeTurn, text, clientID, noWake)
 	if errors.Is(err, errSteerRefused) {
 		// Codex refused the steer, so nothing went in, and a no_wake message
-		// must not be queued in its place. The dispatch has begun and cannot
-		// go back to the queue: record the definite non-insertion as failed,
-		// unless the message turns out to be in Codex after all.
+		// must not be queued in its place. Once Codex is confirmed not to hold
+		// it, the begun dispatch goes back to the fabric queue as the address
+		// head, for the next active turn; if that cannot be confirmed, the
+		// outcome is unknown.
 		accepted, checkErr := nativeHas(ctx, native, t.ThreadID, clientID)
-		if checkErr != nil || !accepted {
-			request := fabricclient.ReconcileRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("fail", delivery.DeliveryID), NativeAttemptRef: ref}
-			settle, settled := d.fabric.Fail, "failed"
-			if checkErr != nil {
-				settle, settled, request.OperationID = d.fabric.Unknown, "outcome unknown", opID("unknown", delivery.DeliveryID)
+		if checkErr != nil {
+			if _, settleErr := d.fabric.Unknown(ctx, delivery.DeliveryID, fabricclient.ReconcileRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("unknown", delivery.DeliveryID), NativeAttemptRef: ref}); settleErr != nil {
+				return false, fmt.Errorf("record outcome unknown after %v: %w", err, settleErr)
 			}
-			if _, settleErr := settle(ctx, delivery.DeliveryID, request); settleErr != nil {
-				return false, fmt.Errorf("record %s after %v: %w", settled, err, settleErr)
+			d.log.Warn("no_wake steer refused and Codex could not be checked; delivery outcome unknown", "thread", t.ThreadID, "address", t.Address, "delivery", delivery.DeliveryID, "error", err, "check", checkErr)
+			return false, nil
+		}
+		if !accepted {
+			if _, requeueErr := d.fabric.NotInserted(ctx, delivery.DeliveryID, fabricclient.NotInsertedRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("not-inserted", attempt), ClaimToken: claim.ClaimToken, NativeAttemptRef: ref, Reason: "steer_rejected"}); requeueErr != nil {
+				return false, fmt.Errorf("requeue after %v: %w", err, requeueErr)
 			}
-			d.log.Warn("no_wake steer refused; delivery "+settled, "thread", t.ThreadID, "address", t.Address, "delivery", delivery.DeliveryID, "error", err)
+			d.log.Info("no_wake steer refused; message left pending for the next active turn", "thread", t.ThreadID, "address", t.Address, "delivery", delivery.DeliveryID, "error", err)
 			return false, nil
 		}
 		how, err = "reconciled", nil
@@ -686,8 +702,8 @@ func (d *Driver) deliverOne(ctx context.Context, native Native, t target, availa
 	return true, nil
 }
 
-// errSteerRefused marks a steer Codex refused, for a message that may not
-// fall back to the queue.
+// errSteerRefused marks a steer Codex refused, for a no_wake message that may
+// not fall back to the native queue.
 var errSteerRefused = errors.New("steer refused")
 
 // dispatch makes the one native call for a claimed delivery and says how the
