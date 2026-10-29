@@ -147,6 +147,42 @@ Ephemeral Codex thread IDs are process-local and disappear on service restart;
 an in-flight job is requeued when the process context is cancelled so the next
 start can run it fresh.
 
+The reviewer's Codex app-server, and every test or build a reviewer runs, are
+children of this unit. One reviewer-run test suite once took 49.9 GB of RAM and
+78.8 GB of swap on den-agents, so the unit runs with the tracked drop-in
+[`scripts/systemd/crew-review.service.d/50-resources.conf`](../scripts/systemd/crew-review.service.d/50-resources.conf):
+`MemoryHigh=20G` (throttle and reclaim, above every normal peak),
+`MemoryMax=28G`, `MemorySwapMax=4G`, `OOMPolicy=continue` (an OOM-killed test
+does not stop the service) and `CPUWeight=50`. The file records the evidence
+behind those numbers. `scripts/deploy-crew-services.sh` installs it as
+`~/.config/systemd/user/crew-review.service.d/50-resources.conf`; systemd
+applies the limits to the running unit on `daemon-reload`. Check them with
+`systemctl --user show crew-review -p MemoryHigh -p MemoryMax -p MemorySwapMax
+-p OOMPolicy -p CPUWeight`. The reviewer profile (`reviewer.md`) also tells
+reviewers not to run full suites, since the required CI checks are the test
+gate.
+
+### Deploying crew-services
+
+Deploy the installed crew binaries with `scripts/deploy-crew-services.sh`
+from an up-to-date checkout (it does not pull). It builds `crew-messaging`,
+`crew-codex`, `crew-dsh` and `crew-review` (or only the commands named as
+arguments), keeps each old binary as `~/.local/bin/<name>.prev`, installs the
+crew-review drop-in, runs `daemon-reload` and restarts the enabled units in
+that order. crew-review is restarted only when its review pool is idle
+(queued, running and finalizing all 0); it waits up to `--wait=SECONDS`
+(default 600, `0` checks once), then leaves crew-review's old binary in place,
+reports it skipped and exits 3. `--force` restarts it regardless; in-flight
+jobs are requeued. `--dry-run` prints every change without building,
+installing or restarting. Roll back one service with
+`install -m 0755 ~/.local/bin/<name>.prev ~/.local/bin/<name>` and a restart.
+
+DeepSeek Harness updates no longer touch crew services: dsh-crew `update.sh`
+rebuilds the in-process `dsh-crew-inject` plugin and restarts `dsh-web.service`
+only, and `crew-dsh` reads the new launch token and reconnects by itself. The
+owner is moving DSH refreshes to a staged build/flip run from Hermes; whatever
+runs that refresh should keep the same split.
+
 Codex updates itself on disk under a running crew-review. Before each review
 the Codex backend compares the executable's resolved path, modification time,
 size and `--version` with the ones its app-server started from, and restarts

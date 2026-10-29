@@ -67,6 +67,26 @@ The project deliberately does not promise Rusty Crew compatibility, remote
 deployment, federation, authentication frameworks, or a UI. Those are not
 implementation omissions; they are outside the first slice.
 
+## Deploy on the agent box
+
+`scripts/deploy-crew-services.sh` is the deploy step for the installed
+services. From an up-to-date checkout it builds `crew-messaging`, `crew-codex`,
+`crew-dsh` and `crew-review` (or only the commands named as arguments), keeps
+each old binary as `~/.local/bin/<name>.prev`, installs the new ones, installs
+the crew-review resource drop-in, and restarts the enabled user units.
+crew-review is restarted only when `GET 127.0.0.1:8413/v1/review-pool` shows
+nothing queued, running or finalizing; the script waits up to `--wait=SECONDS`
+(default 600), then leaves crew-review's old binary in place, reports it
+skipped and exits 3. `--force` restarts it anyway (in-flight jobs are
+requeued). `--dry-run` prints the plan without building, installing or
+restarting anything.
+
+A DeepSeek Harness update (dsh-crew `update.sh`) no longer builds or restarts
+any crew service; it rebuilds the `dsh-crew-inject` plugin and restarts
+`dsh-web.service`, and `crew-dsh` reconnects by itself. The owner is moving
+DSH refreshes to a staged build/flip run from Hermes; that does not change
+this split.
+
 ## Claude Code driver
 
 `crew-claude` delivers fabric messages into Claude Code sessions through each
