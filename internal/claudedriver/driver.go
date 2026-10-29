@@ -185,12 +185,8 @@ func (d *Driver) RegisterSession(ctx context.Context, r Registration) (string, e
 	if err != nil {
 		return "", fmt.Errorf("register session address: %w", err)
 	}
-	transcript := r.Transcript
-	if transcript == "" {
-		transcript = defaultTranscript(d.cfg.ProjectsDir, r.Cwd, r.SessionID)
-	}
 	d.mu.Lock()
-	d.sessions[r.SessionID] = &Session{SessionID: r.SessionID, Socket: r.Socket, Token: r.Token, Cwd: r.Cwd, Transcript: transcript, Address: binding.Address, Generation: binding.Generation, SeenAt: d.now().UTC()}
+	d.sessions[r.SessionID] = &Session{SessionID: r.SessionID, Socket: r.Socket, Token: r.Token, Cwd: r.Cwd, Transcript: r.Transcript, Address: binding.Address, Generation: binding.Generation, SeenAt: d.now().UTC()}
 	err = d.saveLocked()
 	d.mu.Unlock()
 	d.Poke()
@@ -329,7 +325,9 @@ func (d *Driver) snapshot() []Session {
 	return out
 }
 
-// session returns the current record of one session.
+// session returns the current record of one session. A session that
+// registered without a transcript path (or before the driver kept one) gets
+// Claude Code's default location.
 func (d *Driver) session(sessionID string) (Session, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -337,7 +335,11 @@ func (d *Driver) session(sessionID string) (Session, bool) {
 	if !ok {
 		return Session{}, false
 	}
-	return *s, true
+	out := *s
+	if out.Transcript == "" {
+		out.Transcript = defaultTranscript(d.cfg.ProjectsDir, out.Cwd, out.SessionID)
+	}
+	return out, true
 }
 
 func (d *Driver) availability(s Session) string {

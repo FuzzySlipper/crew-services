@@ -68,6 +68,9 @@ if mode == "install":
     add("SessionStart", "session-start")
     add("UserPromptSubmit", "busy")
     add("Stop", "idle")
+    # A turn that ends on an API error (expired login, overload) fires
+    # StopFailure instead of Stop; without it the session would stay busy.
+    add("StopFailure", "idle")
     if fill:
         add("PreToolUse", "fill-notify", matcher="mcp__runner__submit_task_for_review")
     # Messages arrive from crew-claude, not from a child of the session, so the

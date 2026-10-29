@@ -526,6 +526,36 @@ func TestLateTranscriptEntryIsAcknowledgedAfterRestart(t *testing.T) {
 	}
 }
 
+// A session recorded without a transcript path (by an older build, or a hook
+// that did not pass one) is confirmed through Claude Code's default
+// transcript location.
+func TestSessionWithoutTranscriptPathUsesTheDefaultLocation(t *testing.T) {
+	h := newHarness(t)
+	sock := h.socket(t, "nine")
+	projects := filepath.Join(h.dir, "projects")
+	transcript := filepath.Join(projects, "-work-crew-services", "session-9.jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	h.inbox.transcripts[sock] = transcript
+	address, err := h.driver.RegisterSession(h.ctx, claudedriver.Registration{SessionID: "session-9", Socket: sock, Cwd: "/work/crew-services"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver, err := claudedriver.New(h.fabric, h.inbox, h.clock.Now, claudedriver.Config{AdapterID: "claude-code", InstanceID: "test", StatePath: filepath.Join(h.dir, "state.json"), LeaseDuration: time.Minute, ProjectsDir: projects}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.Start(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.send(t, "plain", address, "hello", "next_turn")
+	driver.Pump(h.ctx)
+	if got := h.states(t, address); len(got) != 1 || got[0] != "delivered" {
+		t.Fatalf("states=%v", got)
+	}
+}
+
 func TestFailedWriteIsNotRedelivered(t *testing.T) {
 	h := newHarness(t)
 	sock := h.socket(t, "three")
