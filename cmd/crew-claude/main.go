@@ -84,6 +84,9 @@ func serve(args []string) error {
 	adapterID := flags.String("adapter-id", "claude-code", "stable fabric adapter ID")
 	interval := flags.Duration("interval", 2*time.Second, "delivery pass interval")
 	leaseDuration := flags.Duration("lease-duration", 5*time.Minute, "fabric adapter lease duration")
+	// A stable instance ID lets a restarted driver take over its own lease
+	// instead of waiting for the previous process's lease to expire.
+	instanceID := flags.String("instance-id", "crew-claude-local", "stable fabric adapter instance ID")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -98,9 +101,8 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	hostname, _ := os.Hostname()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	driver, err := claudedriver.New(fabric, claudedriver.SocketInbox{}, time.Now, claudedriver.Config{AdapterID: *adapterID, InstanceID: fmt.Sprintf("%s-%d", hostname, os.Getpid()), StatePath: *statePath, LeaseDuration: *leaseDuration}, log)
+	driver, err := claudedriver.New(fabric, claudedriver.SocketInbox{}, time.Now, claudedriver.Config{AdapterID: *adapterID, InstanceID: *instanceID, StatePath: *statePath, LeaseDuration: *leaseDuration}, log)
 	if err != nil {
 		return err
 	}
