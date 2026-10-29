@@ -174,7 +174,7 @@ func putBinding(svc *service.Service) http.HandlerFunc {
 		if body.ExpectedRevision == nil {
 			status = http.StatusCreated
 		}
-		writeJSON(w, status, binding)
+		writeJSON(w, status, service.PublicBinding(binding))
 	}
 }
 
@@ -189,7 +189,7 @@ func registerSessionAddress(svc *service.Service) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, binding)
+		writeJSON(w, http.StatusOK, service.PublicBinding(binding))
 	}
 }
 
@@ -204,7 +204,7 @@ func unbind(svc *service.Service) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, binding)
+		writeJSON(w, http.StatusOK, service.PublicBinding(binding))
 	}
 }
 
@@ -215,7 +215,7 @@ func resolve(svc *service.Service) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, binding)
+		writeJSON(w, http.StatusOK, service.PublicBinding(binding))
 	}
 }
 
@@ -226,7 +226,7 @@ func list(svc *service.Service) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"addresses": bindings})
+		writeJSON(w, http.StatusOK, map[string]any{"addresses": service.PublicBindings(bindings)})
 	}
 }
 

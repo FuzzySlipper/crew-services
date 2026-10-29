@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
+	"strings"
 )
 
 // SessionAddressPrefix marks fabric-generated per-session addresses.
@@ -74,6 +75,27 @@ func (s *Service) RegisterSessionAddress(ctx context.Context, request RegisterSe
 		return binding, err
 	}
 	return Binding{}, &Error{Code: CodeConflict, Err: errors.New("session address registration kept racing")}
+}
+
+// PublicBinding is the client-visible view of a binding. A session address's
+// target_ref is the adapter's native session key; it stays adapter-private, so
+// it is dropped here. The owning adapter keeps its own native mapping and never
+// needs it back. A binding an adapter put with an explicit target_ref (a pinned
+// role address) keeps it: the adapter chose that value through the public API.
+func PublicBinding(binding Binding) Binding {
+	if strings.HasPrefix(binding.Address, SessionAddressPrefix) {
+		binding.TargetRef = ""
+	}
+	return binding
+}
+
+// PublicBindings applies PublicBinding to a directory listing.
+func PublicBindings(bindings []Binding) []Binding {
+	out := make([]Binding, len(bindings))
+	for i, binding := range bindings {
+		out[i] = PublicBinding(binding)
+	}
+	return out
 }
 
 func hasCode(err error, code ErrorCode) bool {

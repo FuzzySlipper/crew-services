@@ -33,6 +33,13 @@ Address
 
 The address is fabric-owned. `target_ref` is opaque to the fabric. A native
 session or thread is never an address and must not appear in core semantics.
+A per-session address (`s/<hash>`) is derived from the adapter id and its
+native session key; the fabric stores that key as the binding's `target_ref`
+but never returns it: registration, resolve and list responses omit
+`target_ref` for session addresses, and the owning adapter keeps its own
+native mapping. A binding an adapter puts with an explicit `target_ref` (for
+example a pinned role address) returns that value, since the adapter chose to
+publish it.
 The service never calls DSH, Rusty Crew, or Codex directly.
 
 ## Core records

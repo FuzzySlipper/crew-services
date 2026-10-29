@@ -310,6 +310,55 @@ func TestSessionEndpointsKeepOpaqueKeysPrivateAndReplaySSE(t *testing.T) {
 	}
 }
 
+func TestSessionAddressResponsesOmitNativeKey(t *testing.T) {
+	ctx := context.Background()
+	persistence, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "session-address-http.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer persistence.Close()
+	svc, err := service.New(persistence, fixedClock{now: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)}, service.WithTokenGenerator(func() (string, error) { return "http-token", nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(svc)
+	requestJSON(t, handler, http.MethodPost, "/v1/adapters/register", map[string]any{"adapter_id": "adapter.http", "instance_id": "http", "lease_duration": "1m"})
+	const nativeKey = "native-thread-0193f"
+	address := service.SessionAddress("adapter.http", nativeKey)
+	escaped := strings.ReplaceAll(address, "/", "%2F")
+
+	registered := requestJSON(t, handler, http.MethodPost, "/v1/session-addresses", map[string]any{"adapter_id": "adapter.http", "lease_token": "http-token", "native_key": nativeKey, "capabilities": []string{"deliver_next_step"}})
+	if registered.Code != http.StatusOK || !strings.Contains(registered.Body.String(), `"address":"`+address+`"`) || strings.Contains(registered.Body.String(), nativeKey) || strings.Contains(registered.Body.String(), "target_ref") {
+		t.Fatalf("register session address = %d %s", registered.Code, registered.Body.String())
+	}
+	again := requestJSON(t, handler, http.MethodPost, "/v1/session-addresses", map[string]any{"adapter_id": "adapter.http", "lease_token": "http-token", "native_key": nativeKey, "capabilities": []string{"deliver_next_step"}})
+	if again.Code != http.StatusOK || !strings.Contains(again.Body.String(), `"revision":1`) || strings.Contains(again.Body.String(), nativeKey) {
+		t.Fatalf("re-register session address = %d %s", again.Code, again.Body.String())
+	}
+	// The pinned role binding put with an explicit target_ref stays visible.
+	pinned := requestJSON(t, handler, http.MethodPut, "/v1/addresses/codex%2Freviewer/binding", map[string]any{"actor_adapter_id": "adapter.http", "lease_token": "http-token", "adapter_id": "adapter.http", "target_ref": "pinned-thread", "capabilities": []string{"deliver_next_step"}})
+	if pinned.Code != http.StatusCreated || !strings.Contains(pinned.Body.String(), `"target_ref":"pinned-thread"`) {
+		t.Fatalf("pinned bind = %d %s", pinned.Code, pinned.Body.String())
+	}
+	for _, path := range []string{"/v1/addresses/" + escaped, "/v1/addresses"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), address) || strings.Contains(recorder.Body.String(), nativeKey) {
+			t.Fatalf("GET %s = %d %s", path, recorder.Code, recorder.Body.String())
+		}
+	}
+	listed := httptest.NewRecorder()
+	handler.ServeHTTP(listed, httptest.NewRequest(http.MethodGet, "/v1/addresses", nil))
+	if !strings.Contains(listed.Body.String(), `"target_ref":"pinned-thread"`) {
+		t.Fatalf("list lost pinned target_ref: %s", listed.Body.String())
+	}
+	// The fabric still holds the native key for the adapter's own routing.
+	internal, err := svc.Resolve(ctx, address)
+	if err != nil || internal.TargetRef != nativeKey {
+		t.Fatalf("internal resolve = %+v, %v", internal, err)
+	}
+}
+
 func requestJSON(t *testing.T, handler http.Handler, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	encoded, err := json.Marshal(body)
