@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const submissionColumns = "id,idem_key,material_hash,request_json,phase,review_round_id,gate_json,job_id,failure,created_at,updated_at,notify_address"
+const submissionColumns = "id,idem_key,material_hash,request_json,phase,review_round_id,gate_json,job_id,failure,created_at,updated_at,notify_address,gate_auto_rechecks"
 
 // storedRequest is the request material kept in request_json. The notify
 // address lives in its own column because a resend may change it.
@@ -184,7 +184,7 @@ func scanSubmission(row scanner) (SubmissionRecord, error) {
 	var roundID sql.NullInt64
 	var phase string
 	var createdAt, updatedAt, notifyAddress string
-	if err := row.Scan(&record.ID, &record.IdempotencyKey, &record.MaterialHash, &requestJSON, &phase, &roundID, &gateJSON, &record.JobID, &record.Failure, &createdAt, &updatedAt, &notifyAddress); err != nil {
+	if err := row.Scan(&record.ID, &record.IdempotencyKey, &record.MaterialHash, &requestJSON, &phase, &roundID, &gateJSON, &record.JobID, &record.Failure, &createdAt, &updatedAt, &notifyAddress, &record.GateAutoRechecks); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SubmissionRecord{}, ErrNotFound
 		}
@@ -245,7 +245,7 @@ func (s *SQLiteStore) TransitionSubmission(ctx context.Context, id string, expec
 	}
 	defer tx.Rollback()
 	now := stamp(s.clock.Now())
-	result, err := tx.ExecContext(ctx, `UPDATE crew_review_submissions SET phase=?, review_round_id=CASE WHEN ?=1 THEN ? ELSE review_round_id END, gate_json=CASE WHEN ?=1 THEN ? ELSE gate_json END, job_id=CASE WHEN ?=1 THEN ? ELSE job_id END, failure=CASE WHEN ?=1 THEN ? ELSE failure END, updated_at=? WHERE id=? AND phase=?`, transition.Phase, roundSet, roundID, boolInt(gateSet), gateJSON, jobSet, jobID, failureSet, failure, now, id, expected)
+	result, err := tx.ExecContext(ctx, `UPDATE crew_review_submissions SET phase=?, review_round_id=CASE WHEN ?=1 THEN ? ELSE review_round_id END, gate_json=CASE WHEN ?=1 THEN ? ELSE gate_json END, job_id=CASE WHEN ?=1 THEN ? ELSE job_id END, failure=CASE WHEN ?=1 THEN ? ELSE failure END, gate_auto_rechecks=gate_auto_rechecks+?, updated_at=? WHERE id=? AND phase=?`, transition.Phase, roundSet, roundID, boolInt(gateSet), gateJSON, jobSet, jobID, failureSet, failure, boolInt(transition.GateAutoRecheck), now, id, expected)
 	if err != nil {
 		return SubmissionRecord{}, err
 	}
@@ -253,8 +253,10 @@ func (s *SQLiteStore) TransitionSubmission(ctx context.Context, id string, expec
 	if err != nil {
 		return SubmissionRecord{}, err
 	}
-	if rows == 1 && transition.Notice != nil {
-		notice := transition.Notice
+	for _, notice := range append([]*Notice{transition.Notice}, transition.Notices...) {
+		if rows != 1 || notice == nil {
+			continue
+		}
 		if notice.OperationID == "" || notice.SubmissionID != id || notice.Recipient == "" || notice.Body == "" {
 			return SubmissionRecord{}, errors.New("invalid review submission notice")
 		}

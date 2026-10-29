@@ -28,6 +28,11 @@ const (
 	DefaultMCPURL               = "http://192.168.1.5:5199/mcp"
 	maxResponseBytes            = 1 << 20
 	maxFinalizationRequestBytes = 16 * 1024
+	// DefaultGateTimeout is the GitHub check gate timeout crew-review asks
+	// Den for. Den's own default (2 h) is shorter than real CI runs that
+	// queue behind other work; Den allows up to MaxGateTimeout.
+	DefaultGateTimeout = 6 * time.Hour
+	MaxGateTimeout     = 12 * time.Hour
 )
 
 // Client is a deliberately small stateless caller for the Den MCP endpoint.
@@ -40,6 +45,7 @@ type Client struct {
 	http           *http.Client
 	request        atomic.Uint64
 	workspaceRoots []string
+	gateTimeout    time.Duration
 }
 
 var (
@@ -59,13 +65,26 @@ func New(endpoint, token string, httpClient *http.Client, options ...func(*Clien
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 65 * time.Second}
 	}
-	client := &Client{endpoint: parsed.String(), token: strings.TrimSpace(token), http: httpClient}
+	client := &Client{endpoint: parsed.String(), token: strings.TrimSpace(token), http: httpClient, gateTimeout: DefaultGateTimeout}
 	for _, option := range options {
 		if err := option(client); err != nil {
 			return nil, err
 		}
 	}
 	return client, nil
+}
+
+// WithGateTimeout sets the timeout requested for each GitHub check gate
+// registration. It must be a positive whole number of seconds no longer than
+// MaxGateTimeout.
+func WithGateTimeout(timeout time.Duration) func(*Client) error {
+	return func(c *Client) error {
+		if timeout <= 0 || timeout > MaxGateTimeout || timeout%time.Second != 0 {
+			return fmt.Errorf("gate timeout must be whole seconds between 1s and %s: %s", MaxGateTimeout, timeout)
+		}
+		c.gateTimeout = timeout
+		return nil
+	}
 }
 
 // FromEnv uses the same names as the existing Den tooling. An unset URL uses
@@ -645,6 +664,7 @@ func (c *Client) WatchGitHubChecks(ctx context.Context, request review.GateReque
 		"ref":             request.Ref,
 		"required_checks": request.RequiredChecks,
 		"requested_by":    request.RequestedBy,
+		"timeout_seconds": int64(c.gateTimeout / time.Second),
 	})
 	if err != nil {
 		return review.GateEvidence{}, err

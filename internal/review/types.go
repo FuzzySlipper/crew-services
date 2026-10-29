@@ -304,6 +304,9 @@ type SubmissionRecord struct {
 	Failure        string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	// GateAutoRechecks counts timed-out gates crew-review re-registered on
+	// its own; it does so at most once per submission.
+	GateAutoRechecks int
 }
 
 // SubmissionRevision replaces a not-yet-admitted submission's request
@@ -327,6 +330,12 @@ type SubmissionTransition struct {
 	// transaction as the transition. A notice whose operation ID already
 	// exists is kept as it is.
 	Notice *Notice
+	// Notices are further outbox notices recorded the same way, for an
+	// outcome reported to more than one recipient.
+	Notices []*Notice
+	// GateAutoRecheck records that this transition re-registered a
+	// timed-out gate on crew-review's own initiative.
+	GateAutoRecheck bool
 }
 
 // SubmissionReceipt is intentionally provider-neutral. It reports Den

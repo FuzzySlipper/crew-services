@@ -47,6 +47,8 @@ type commandConfig struct {
 	// sourceGrace bounds how long a submission waits for the review checkout
 	// to contain its commit before reporting source_missing.
 	sourceGrace time.Duration
+	// gateTimeout is the GitHub check gate timeout requested from Den.
+	gateTimeout time.Duration
 	// looksGoodHooks maps a repository ("owner/name") to an executable run
 	// after Den records a looks_good review of one of its managed submissions.
 	looksGoodHooks map[string]string
@@ -92,7 +94,7 @@ func run(args []string) error {
 	}
 	defer store.Close()
 
-	den, err := reviewden.New(cfg.denURL, cfg.denToken, nil, reviewden.WithWorkspaceRoots(cfg.workspaceRoots))
+	den, err := reviewden.New(cfg.denURL, cfg.denToken, nil, reviewden.WithWorkspaceRoots(cfg.workspaceRoots), reviewden.WithGateTimeout(cfg.gateTimeout))
 	if err != nil {
 		return err
 	}
@@ -206,6 +208,7 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 
 		submissionInterval: 30 * time.Second,
 		sourceGrace:        15 * time.Minute,
+		gateTimeout:        reviewden.DefaultGateTimeout,
 		hookTimeout:        45 * time.Minute,
 		fabricURL:          envOr(getenv, "CREW_REVIEW_FABRIC_URL", "http://127.0.0.1:8787"),
 		fabricInstance:     envOr(getenv, "CREW_REVIEW_FABRIC_INSTANCE", "crew-review-local"),
@@ -223,6 +226,7 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	}{
 		{"CREW_REVIEW_SUBMISSION_INTERVAL", &cfg.submissionInterval},
 		{"CREW_REVIEW_SOURCE_GRACE", &cfg.sourceGrace},
+		{"CREW_REVIEW_GATE_TIMEOUT", &cfg.gateTimeout},
 		{"CREW_REVIEW_HOOK_TIMEOUT", &cfg.hookTimeout},
 	} {
 		if raw := strings.TrimSpace(getenv(setting.name)); raw != "" {
@@ -260,6 +264,7 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	flags.DurationVar(&cfg.runInterval, "run-interval", cfg.runInterval, "delay between bounded single-job runner passes")
 	flags.DurationVar(&cfg.submissionInterval, "submission-interval", cfg.submissionInterval, "delay between background passes over unfinished review submissions")
 	flags.DurationVar(&cfg.sourceGrace, "source-grace", cfg.sourceGrace, "how long a submission waits for the review checkout to contain its commit")
+	flags.DurationVar(&cfg.gateTimeout, "gate-timeout", cfg.gateTimeout, "GitHub check gate timeout requested from Den (at most 12h)")
 	flags.Var(&looksGoodHooks, "looks-good-hook", "owner/name=/absolute/executable run after a looks_good review of that repository; repeatable; overrides CREW_REVIEW_LOOKS_GOOD_HOOKS")
 	flags.DurationVar(&cfg.hookTimeout, "hook-timeout", cfg.hookTimeout, "time limit for one looks_good hook run")
 	flags.StringVar(&cfg.fabricURL, "fabric-url", cfg.fabricURL, "crew-messaging URL for submission notices; \"off\" disables delivery")
@@ -325,6 +330,9 @@ func parseConfig(args []string, getenv func(string) string) (commandConfig, erro
 	}
 	if cfg.sourceGrace <= 0 {
 		return commandConfig{}, errors.New("source grace must be positive")
+	}
+	if cfg.gateTimeout <= 0 || cfg.gateTimeout > reviewden.MaxGateTimeout || cfg.gateTimeout%time.Second != 0 {
+		return commandConfig{}, fmt.Errorf("gate timeout must be whole seconds between 1s and %s", reviewden.MaxGateTimeout)
 	}
 	if cfg.hookTimeout <= 0 {
 		return commandConfig{}, errors.New("hook timeout must be positive")

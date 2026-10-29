@@ -66,6 +66,27 @@ func TestFabricConfig(t *testing.T) {
 	}
 }
 
+func TestGateTimeoutConfig(t *testing.T) {
+	cfg, err := parseConfig(nil, func(string) string { return "" })
+	if err != nil || cfg.gateTimeout != 6*time.Hour {
+		t.Fatalf("default gate timeout=%s err=%v", cfg.gateTimeout, err)
+	}
+	env := map[string]string{"CREW_REVIEW_GATE_TIMEOUT": "8h"}
+	cfg, err = parseConfig(nil, func(name string) string { return env[name] })
+	if err != nil || cfg.gateTimeout != 8*time.Hour {
+		t.Fatalf("env gate timeout=%s err=%v", cfg.gateTimeout, err)
+	}
+	cfg, err = parseConfig([]string{"-gate-timeout", "12h"}, func(name string) string { return env[name] })
+	if err != nil || cfg.gateTimeout != 12*time.Hour {
+		t.Fatalf("flag gate timeout=%s err=%v", cfg.gateTimeout, err)
+	}
+	for _, invalid := range []string{"0s", "13h", "1500ms"} {
+		if _, err := parseConfig([]string{"-gate-timeout", invalid}, func(string) string { return "" }); err == nil {
+			t.Fatalf("gate timeout %s accepted", invalid)
+		}
+	}
+}
+
 func TestParseConfigSelectsDSHBackend(t *testing.T) {
 	env := map[string]string{
 		"CREW_REVIEW_BACKEND": "dsh",

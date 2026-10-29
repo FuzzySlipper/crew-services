@@ -385,7 +385,7 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 			Phase:   gatePhase(gate.Status),
 			Gate:    &gate,
 			Failure: emptyStringPtr(),
-			Notice:  gatePhaseNotice(record, gate, task.Title),
+			Notices: gatePhaseNotices(record, gate, task.Title),
 		})
 		if err != nil {
 			return SubmissionReceipt{}, err
@@ -398,12 +398,33 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 		if gate.Status == "" {
 			return s.submissionUnavailable(ctx, store, record, "den_get_github_check_gate_invalid", "Den get_github_check_gate returned no gate status", false)
 		}
-		if gate.Status != record.Gate.Status || record.Phase == SubmissionUnavailable {
+		// CI that outlasts one gate timeout gets one more: the first timeout
+		// re-registers the gate, which Den reopens as a new attempt with a
+		// fresh deadline, instead of failing the submission. Only a second
+		// timeout is reported. A failed re-registration leaves the submission
+		// unavailable, so the next pass reads the timed-out gate again and
+		// retries it.
+		autoRecheck := gate.Status == "timed_out" && record.GateAutoRechecks == 0
+		if autoRecheck {
+			gate, err = den.WatchGitHubChecks(ctx, submissionGateRequest(record.Request))
+			if err != nil {
+				return s.submissionUnavailable(ctx, store, record, "den_watch_github_checks_unavailable", err.Error(), true)
+			}
+			if gate.Status == "" {
+				return s.submissionUnavailable(ctx, store, record, "den_watch_github_checks_invalid", "Den watch_github_checks returned no gate status", false)
+			}
+		}
+		if autoRecheck || gate.Status != record.Gate.Status || record.Phase == SubmissionUnavailable {
+			noticeRecord := record
+			if autoRecheck {
+				noticeRecord.GateAutoRechecks++
+			}
 			record, err = s.transitionSubmission(ctx, store, record, SubmissionTransition{
-				Phase:   gatePhase(gate.Status),
-				Gate:    &gate,
-				Failure: emptyStringPtr(),
-				Notice:  gatePhaseNotice(record, gate, task.Title),
+				Phase:           gatePhase(gate.Status),
+				Gate:            &gate,
+				Failure:         emptyStringPtr(),
+				Notices:         gatePhaseNotices(noticeRecord, gate, task.Title),
+				GateAutoRecheck: autoRecheck,
 			})
 			if err != nil {
 				return SubmissionReceipt{}, err
@@ -531,13 +552,20 @@ func noRequiredChecksGate(request SubmissionRequest) GateEvidence {
 	}
 }
 
-// gatePhaseNotice attaches the gate-failure notice to whichever transition
-// first records a failed gate, so the notice is written atomically with it.
-func gatePhaseNotice(record SubmissionRecord, gate GateEvidence, taskTitle string) *Notice {
+// gatePhaseNotices attaches the gate-failure notices to whichever transition
+// first records a failed gate, so they are written atomically with it.
+func gatePhaseNotices(record SubmissionRecord, gate GateEvidence, taskTitle string) []*Notice {
 	if gatePhase(gate.Status) != SubmissionGateFailed {
 		return nil
 	}
-	return gateFailedNotice(record, gate, taskTitle)
+	return gateFailedNotices(record, gate, taskTitle)
+}
+
+// gateFailedNotices are the outbox notices for one failed gate evaluation:
+// the submitter's notice, and for a final timeout a Den task-thread note.
+// Each has a stable operation ID, so recording them again is a no-op.
+func gateFailedNotices(record SubmissionRecord, gate GateEvidence, taskTitle string) []*Notice {
+	return []*Notice{gateFailedNotice(record, gate, taskTitle), gateTimedOutTaskNote(record, gate, taskTitle)}
 }
 
 func gatePhase(status string) SubmissionPhase {
@@ -588,7 +616,7 @@ func (s *Service) submissionStale(ctx context.Context, store SubmissionStore, re
 }
 
 func (s *Service) submissionGateFailed(ctx context.Context, store SubmissionStore, record SubmissionRecord, gate GateEvidence, taskTitle, message string) (SubmissionReceipt, error) {
-	updated, err := s.transitionSubmission(ctx, store, record, SubmissionTransition{Phase: SubmissionGateFailed, Gate: &gate, Failure: &message, Notice: gateFailedNotice(record, gate, taskTitle)})
+	updated, err := s.transitionSubmission(ctx, store, record, SubmissionTransition{Phase: SubmissionGateFailed, Gate: &gate, Failure: &message, Notices: gateFailedNotices(record, gate, taskTitle)})
 	if err != nil {
 		return SubmissionReceipt{}, err
 	}

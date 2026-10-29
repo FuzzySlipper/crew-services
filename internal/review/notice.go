@@ -10,11 +10,28 @@ import (
 )
 
 // NoticeKind names the submission outcome a notice reports. Only gate
-// failures are produced today; source_missing, stale and changes_requested
-// are expected to reuse the same outbox.
+// failures and final gate timeouts are produced today; source_missing, stale
+// and changes_requested are expected to reuse the same outbox.
 type NoticeKind string
 
-const NoticeGateFailed NoticeKind = "gate_failed"
+const (
+	NoticeGateFailed NoticeKind = "gate_failed"
+	// NoticeGateTimedOut reports a gate that timed out again after
+	// crew-review re-registered it once on its own. A first timeout is
+	// re-registered instead of reported.
+	NoticeGateTimedOut NoticeKind = "gate_timed_out"
+)
+
+// denTaskRecipientPrefix marks an outbox notice that is posted on the Den
+// task thread instead of sent through the messaging fabric. The rest of the
+// recipient is "<project_id>/<task_id>".
+const denTaskRecipientPrefix = "den-task:"
+
+// TaskNotePoster posts a short crew-review status note on a Den task
+// thread. A Den adapter that implements it receives den-task notices.
+type TaskNotePoster interface {
+	PostTaskNote(ctx context.Context, key TaskKey, content string) error
+}
 
 // NoticeState is an outbox row's delivery state. pending rows are retried by
 // the notice loop until the fabric accepts them (sent) or they can no longer
@@ -102,7 +119,8 @@ const noticeBatch = 50
 // of the fabric itself stops the pass: the remaining notices wait for the
 // next one, and the failed notice is requeued behind them.
 func (s *Service) SendNotices(ctx context.Context) (bool, error) {
-	if s.notifier == nil {
+	poster, _ := s.den.(TaskNotePoster)
+	if s.notifier == nil && poster == nil {
 		return false, nil
 	}
 	store, ok := s.store.(NoticeStore)
@@ -120,6 +138,38 @@ func (s *Service) SendNotices(ctx context.Context) (bool, error) {
 			if err := store.MarkNoticeAbandoned(ctx, notice.OperationID, "not accepted by the messaging fabric within "+NoticeTTL.String()); err != nil {
 				return true, err
 			}
+			continue
+		}
+		if key, isTaskNote := denTaskNoteKey(notice.Recipient); isTaskNote {
+			if poster == nil || key.TaskID <= 0 {
+				if err := store.MarkNoticeAbandoned(ctx, notice.OperationID, "the Den adapter cannot post this task note"); err != nil {
+					return true, err
+				}
+				continue
+			}
+			// A Den failure concerns only task notes: they back off like an
+			// unregistered recipient while fabric notices proceed.
+			if err := poster.PostTaskNote(ctx, key, notice.Body); err != nil {
+				if ctx.Err() != nil {
+					return true, ctx.Err()
+				}
+				retryAt := s.clock.Now().Add(noticeRetryDelay(notice.Attempts))
+				if retryAt.After(expiry) {
+					retryAt = expiry
+				}
+				if markErr := store.MarkNoticeAttempt(ctx, notice.OperationID, err.Error(), retryAt); markErr != nil {
+					return true, markErr
+				}
+				deferred = append(deferred, fmt.Errorf("defer Den task note %s until %s: %w", notice.OperationID, retryAt.UTC().Format(time.RFC3339), err))
+				continue
+			}
+			if err := store.MarkNoticeSent(ctx, notice.OperationID, ""); err != nil {
+				return true, err
+			}
+			continue
+		}
+		if s.notifier == nil {
+			// Fabric delivery is not configured; the notice waits for it.
 			continue
 		}
 		messageID, err := s.notifier.Notify(ctx, notice)
@@ -171,23 +221,66 @@ func noticeRetryDelay(attempts int) time.Duration {
 }
 
 // gateFailedNotice returns the outbox notice for a failed gate, or nil when
-// the submission has no notify address or the gate has no Den handle.
+// the submission has no notify address or the gate has no Den handle. A
+// timed-out gate is reported as gate_timed_out.
 func gateFailedNotice(record SubmissionRecord, gate GateEvidence, taskTitle string) *Notice {
 	address := strings.TrimSpace(record.Request.NotifyAddress)
 	if address == "" || gate.Handle == "" {
 		return nil
 	}
+	kind := NoticeGateFailed
+	if gate.Status == "timed_out" {
+		kind = NoticeGateTimedOut
+	}
 	return &Notice{
-		OperationID:  "submission/" + record.ID + "/" + string(NoticeGateFailed) + "/" + gate.failureHandle(),
+		OperationID:  "submission/" + record.ID + "/" + string(kind) + "/" + gate.failureHandle(),
 		SubmissionID: record.ID,
-		Kind:         NoticeGateFailed,
+		Kind:         kind,
 		Recipient:    address,
-		Body:         gateFailedBody(record.Request, gate, taskTitle),
+		Body:         gateFailedBody(record, gate, taskTitle),
 		State:        NoticePending,
 	}
 }
 
-func gateFailedBody(request SubmissionRequest, gate GateEvidence, taskTitle string) string {
+// gateTimedOutTaskNote returns the Den task-thread note for a final gate
+// timeout, so the task owner learns why no reviewer started even when the
+// submitter left no notify address. Other gate failures get none: Den's own
+// gate evidence on the thread already names the failed checks, and only a
+// timeout leaves the submission waiting on nobody.
+func gateTimedOutTaskNote(record SubmissionRecord, gate GateEvidence, taskTitle string) *Notice {
+	if gate.Status != "timed_out" || gate.Handle == "" {
+		return nil
+	}
+	return &Notice{
+		OperationID:  "submission/" + record.ID + "/" + string(NoticeGateTimedOut) + "/" + gate.failureHandle() + "/den-task",
+		SubmissionID: record.ID,
+		Kind:         NoticeGateTimedOut,
+		Recipient:    denTaskRecipientPrefix + record.Request.ProjectID + "/" + strconv.FormatInt(record.Request.TaskID, 10),
+		Body:         gateFailedBody(record, gate, taskTitle),
+		State:        NoticePending,
+	}
+}
+
+// denTaskNoteKey parses a den-task notice recipient. ok reports the prefix;
+// a malformed remainder returns a zero key.
+func denTaskNoteKey(recipient string) (key TaskKey, ok bool) {
+	rest, ok := strings.CutPrefix(recipient, denTaskRecipientPrefix)
+	if !ok {
+		return TaskKey{}, false
+	}
+	slash := strings.LastIndex(rest, "/")
+	if slash <= 0 {
+		return TaskKey{}, true
+	}
+	taskID, err := strconv.ParseInt(rest[slash+1:], 10, 64)
+	if err != nil || taskID <= 0 {
+		return TaskKey{}, true
+	}
+	return TaskKey{ProjectID: rest[:slash], TaskID: taskID}, true
+}
+
+func gateFailedBody(record SubmissionRecord, gate GateEvidence, taskTitle string) string {
+	request := record.Request
 	var b strings.Builder
 	task := "#" + strconv.FormatInt(request.TaskID, 10)
 	if title := strings.TrimSpace(taskTitle); title != "" {
@@ -214,6 +307,9 @@ func gateFailedBody(request SubmissionRequest, gate GateEvidence, taskTitle stri
 	} else if summary := firstNonEmpty(gate.FailureSummary, gate.TerminalReason); summary != "" {
 		b.WriteString(summary + "\n")
 	}
+	if status == "timed_out" && record.GateAutoRechecks > 0 {
+		b.WriteString("crew-review already re-registered this gate once after its first timeout, and it timed out again.\n")
+	}
 	b.WriteString("Next: fix the cause, or re-run the failed check if it was flaky. Then call submit_task_for_review again with the same arguments (with the new commit_sha if you pushed a fix).")
 	return b.String()
 }
@@ -236,6 +332,9 @@ func normalizeNotifyAddress(address string) (string, error) {
 	}
 	if strings.ContainsAny(address, " \t\r\n") {
 		return "", &SubmissionError{Code: "invalid_notify_address", Message: "notify_address must not contain whitespace"}
+	}
+	if strings.HasPrefix(address, denTaskRecipientPrefix) {
+		return "", &SubmissionError{Code: "invalid_notify_address", Message: "notify_address must be a messaging fabric address"}
 	}
 	return address, nil
 }

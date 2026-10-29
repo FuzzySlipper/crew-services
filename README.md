@@ -142,7 +142,7 @@ instructions beside it in `reviewer.md`. `CREW_REVIEW_LISTEN`,
 `CREW_REVIEW_DB`, `CREW_REVIEW_MODEL`, `CREW_REVIEW_REASONING_EFFORT`,
 `DEN_MCP_TOKEN`, `CREW_REVIEW_PROFILE`, `CREW_REVIEW_CAPACITY`,
 `CREW_REVIEW_RUN_INTERVAL`, `CREW_REVIEW_SUBMISSION_INTERVAL`,
-`CREW_REVIEW_SOURCE_GRACE`, `CREW_REVIEW_FABRIC_URL`,
+`CREW_REVIEW_SOURCE_GRACE`, `CREW_REVIEW_GATE_TIMEOUT`, `CREW_REVIEW_FABRIC_URL`,
 `CREW_REVIEW_FABRIC_INSTANCE`, and `CODEX_COMMAND` may be supplied through the
 environment; all have corresponding flags where they affect the process.
 The command starts a fixed number of bounded runner lanes (one durable job per
@@ -218,7 +218,15 @@ submission (and records a new Den round for the new summary) instead of
 conflicting. A repeat of a `gate_failed` submission asks Den to re-evaluate the
 gate, for example after a GitHub re-run; a repeat of `source_missing` re-checks
 the checkout. The background pass never re-checks those terminal outcomes on
-its own. Once a submission's reviewer has returned `changes_requested`,
+its own.
+
+crew-review registers each GitHub check gate with `timeout_seconds` from
+`-gate-timeout` (`CREW_REVIEW_GATE_TIMEOUT`, default 6h; Den allows at most
+12h). When the background pass first sees a submission's gate `timed_out`, it
+re-registers the gate instead of failing the submission; Den reopens it as a
+new attempt with a fresh deadline, so CI that outlasts one timeout still
+reaches a reviewer without a resubmit. This happens once per submission
+(`gate_auto_rechecks`). A second timeout records `gate_failed`. Once a submission's reviewer has returned `changes_requested`,
 submitting the same target again (or using the manual action) starts a fresh
 submission and Den round, so a finding answered without a new commit can still
 be re-reviewed; after `looks_good` a repeat only replays. Submission state and
@@ -251,6 +259,15 @@ fabric refuses it outright or has not accepted it within 24 hours (for example
 an address that was never registered). An unavailable fabric only delays
 notices; it never blocks or delays review admission. Without a
 `notify_address` no notice is written.
+
+A final gate timeout (the one after the automatic re-registration) is reported
+as kind `gate_timed_out` instead (`operation_id =
+submission/<id>/gate_timed_out/<gate handle>`), naming the checks that had not
+finished. It also writes a second outbox row, delivered not to the fabric but
+as a crew-review status message on the Den task thread, so the task owner
+learns why no reviewer started even without a `notify_address`. A Den failure
+backs that row off like an unregistered recipient. The Den post itself is not
+idempotent, so a crash between the post and marking it sent can repeat it.
 
 Den Web's contextual manual action uses
 `GET /v1/projects/{project_id}/tasks/{task_id}/manual-review` to read a

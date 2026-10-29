@@ -93,6 +93,18 @@ func OpenSQLite(ctx context.Context, path string, clock Clock, capacity int) (*S
 			return nil, fmt.Errorf("migrate crew review submission notify address: %w", err)
 		}
 	}
+	// gate_auto_rechecks counts the timed-out gates the background advance
+	// re-registered on its own, so it does that at most once per submission.
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('crew_review_submissions') WHERE name='gate_auto_rechecks'`).Scan(&columns); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if columns == 0 {
+		if _, err = db.ExecContext(ctx, `ALTER TABLE crew_review_submissions ADD COLUMN gate_auto_rechecks INTEGER NOT NULL DEFAULT 0`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate crew review submission gate auto rechecks: %w", err)
+		}
+	}
 	// The notice outbox. A row is written in the transaction that records the
 	// submission outcome it reports, and its operation_id is the fabric
 	// idempotency key, so retries after a crash cannot send it twice.

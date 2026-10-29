@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"crew-services/internal/review"
 )
@@ -244,6 +245,44 @@ func TestRequestReviewAndGitHubGateMethodsMapDenAuthority(t *testing.T) {
 	}
 	if _, present := requestArgs["project_id"]; present {
 		t.Fatal("task-scoped request_review must not send project_id")
+	}
+	if watchArgs := calls[1]["arguments"].(map[string]any); watchArgs["timeout_seconds"] != float64(6*60*60) {
+		t.Fatalf("gate registration must request the 6h default timeout: %#v", watchArgs)
+	}
+	if readArgs := calls[2]["arguments"].(map[string]any); readArgs["timeout_seconds"] != nil {
+		t.Fatalf("reading a gate must not send a timeout: %#v", readArgs)
+	}
+}
+
+func TestGateTimeoutIsConfigurableWithinDenLimit(t *testing.T) {
+	var timeouts []any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params struct {
+				Arguments map[string]any `json:"arguments"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		timeouts = append(timeouts, request.Params.Arguments["timeout_seconds"])
+		writeToolResult(w, map[string]any{"id": 44, "task_id": 7416, "repository": "owner/repo", "commit_sha": reviewDenTestSHA, "status": "pending"})
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "", server.Client(), WithGateTimeout(9*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.WatchGitHubChecks(context.Background(), review.GateRequest{ProjectID: "dsh-crew", TaskID: 7416, Repository: "owner/repo", CommitSHA: reviewDenTestSHA, Ref: "main", RequiredChecks: []string{"verify"}, RequestedBy: "@reviewer"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(timeouts) != 1 || timeouts[0] != float64(9*60*60) {
+		t.Fatalf("timeout_seconds sent = %v", timeouts)
+	}
+	for _, invalid := range []time.Duration{0, -time.Minute, 12*time.Hour + time.Second, 90 * time.Millisecond} {
+		if _, err := New(server.URL, "", nil, WithGateTimeout(invalid)); err == nil {
+			t.Fatalf("gate timeout %s was accepted", invalid)
+		}
 	}
 }
 
