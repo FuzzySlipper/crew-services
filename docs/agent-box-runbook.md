@@ -185,8 +185,7 @@ installing or restarting. Roll back one service with
 
 DeepSeek Harness updates no longer touch crew services: dsh-crew `update.sh`
 rebuilds the in-process `dsh-crew-inject` plugin and restarts `dsh-web.service`
-only, and `crew-dsh` reads the new launch token and reconnects by itself. The
-owner is moving DSH refreshes to a staged build/flip run from Hermes; whatever
+only, and `crew-dsh` reads the new launch token and reconnects by itself. Patch is moving DSH refreshes to a staged build/flip run from Hermes; whatever
 runs that refresh should keep the same split.
 
 Codex updates itself on disk under a running crew-review. Before each review

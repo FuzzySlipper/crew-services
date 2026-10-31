@@ -83,7 +83,7 @@ restarting anything.
 
 A DeepSeek Harness update (dsh-crew `update.sh`) no longer builds or restarts
 any crew service; it rebuilds the `dsh-crew-inject` plugin and restarts
-`dsh-web.service`, and `crew-dsh` reconnects by itself. The owner is moving
+`dsh-web.service`, and `crew-dsh` reconnects by itself. Patch is moving
 DSH refreshes to a staged build/flip run from Hermes; that does not change
 this split.
 

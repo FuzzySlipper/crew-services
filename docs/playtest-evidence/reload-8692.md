@@ -46,7 +46,7 @@ session snapshots and pool ownership; no donor product schema was imported.
 
 ## Deployment
 
-Deployed on 2026-09-27 at 11:11 UTC after the user explicitly authorized ending
+Deployed on 2026-09-27 at 11:11 UTC after Patch explicitly authorized ending
 Daggerfall session `a5a86e2a-300b-44a0-973b-a4c30540f265`. Its stop receipt
 confirmed release. No other session was active when the old service was stopped.
 The staged CLI and service were installed; previous binaries are retained under

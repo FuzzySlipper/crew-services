@@ -12,7 +12,7 @@ real keyboard and mouse input.
 | Name | `den-win11`, Windows 11 Pro (build 26300) |
 | Address | `192.168.1.12`. LAN DNS answers every `*.dragonden.stream` name with `192.168.1.6`, so use the address or the SSH alias below. |
 | Hardware | Ryzen 7 3700X, 32 GB, RTX 3080 (10 GB) |
-| Display | One HDMI output through the user's KVM (EDID name `Ingnok`), 1920x1080@60 |
+| Display | One HDMI output through Patch's KVM (EDID name `Ingnok`), 1920x1080@60 |
 | Account | Local `agent`, an administrator, no password |
 
 From den-agents:
@@ -116,7 +116,7 @@ starting at logon inside the console session.
 
 ## The shared checkout (P:)
 
-As on the owner's Windows desktop, `P:` maps den-agents' Samba share
+As on Patch's Windows desktop, `P:` maps den-agents' Samba share
 `\\192.168.1.10\agent` (den-agents' `/home/agent`, so repositories are under
 `P:\dev`). Use it for work that must run from the Linux checkout itself, such
 as the shared-checkout dev loop; playtest sessions use the box's own clones
