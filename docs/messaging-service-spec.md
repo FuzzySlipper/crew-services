@@ -40,6 +40,8 @@ but never returns it: registration, resolve and list responses omit
 native mapping. A binding an adapter puts with an explicit `target_ref` (for
 example a pinned role address) returns that value, since the adapter chose to
 publish it.
+Seat addresses (`name@scope`), which a session holds and hands over, are
+proposed in [Seats](seats.md) and are not part of this contract yet.
 The service never calls DSH, Rusty Crew, or Codex directly.
 
 ## Core records
