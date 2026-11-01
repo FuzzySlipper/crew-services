@@ -110,22 +110,15 @@ func TestPolicyMigrationKeepsLegacyOperationsIdempotent(t *testing.T) {
 	accepted := map[string]string{}
 	for _, op := range ops {
 		body := "body " + op.operation
-		submit := store.SubmitMessageRequest{ProducerID: alpha.AdapterID, LeaseToken: alpha.LeaseToken, OperationID: op.operation, MessageID: "m-" + op.operation, DeliveryID: "d-" + op.operation, SenderAddress: "agent/alice", RecipientAddress: "agent/bob", Body: body, ActivationPolicy: op.stored, ExpiresAt: clock.now.Add(ttl)}
+		seed := legacyMessage{producer: alpha.AdapterID, operation: op.operation, messageID: "m-" + op.operation, deliveryID: "d-" + op.operation, sender: "agent/alice", recipient: "agent/bob", body: body, policy: op.stored, created: clock.now, expires: clock.now.Add(ttl)}
 		if op.round {
-			submit.Fingerprint = v7RoundFingerprint(t, "agent/alice", "agent/bob", body, op.stored, ttl, roundTTL)
-			result, err := v7.BeginRound(ctx, clock.now, store.BeginRoundRequest{SubmitMessageRequest: submit, RoundID: "r-" + op.operation, RoundExpiresAt: clock.now.Add(roundTTL)})
-			if err != nil {
-				t.Fatalf("v7 begin round %s: %v", op.operation, err)
-			}
-			accepted[op.operation] = result.Message.MessageID
+			seed.fingerprint = v7RoundFingerprint(t, "agent/alice", "agent/bob", body, op.stored, ttl, roundTTL)
+			insertLegacyRound(t, db, seed, "r-"+op.operation, clock.now.Add(roundTTL))
 		} else {
-			submit.Fingerprint = v7MessageFingerprint(t, "agent/alice", "agent/bob", body, op.stored, ttl)
-			result, err := v7.SubmitMessage(ctx, clock.now, submit)
-			if err != nil {
-				t.Fatalf("v7 submit %s: %v", op.operation, err)
-			}
-			accepted[op.operation] = result.Message.MessageID
+			seed.fingerprint = v7MessageFingerprint(t, "agent/alice", "agent/bob", body, op.stored, ttl)
+			insertLegacyMessage(t, db, seed)
 		}
+		accepted[op.operation] = seed.messageID
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)

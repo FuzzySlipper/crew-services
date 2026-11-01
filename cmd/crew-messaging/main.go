@@ -35,7 +35,7 @@ func run(args []string) error {
 		return err
 	}
 	defer persistence.Close()
-	svc, err := service.New(persistence, service.SystemClock{}, service.WithMaxLeaseDuration(cfg.LeaseDuration), service.WithMaxTTLDuration(cfg.TTLDuration), service.WithRetention(cfg.Retention))
+	svc, err := service.New(persistence, service.SystemClock{}, service.WithMaxLeaseDuration(cfg.LeaseDuration), service.WithMaxTTLDuration(cfg.TTLDuration), service.WithRetention(cfg.Retention), service.WithSeatTextVersions(cfg.SeatTextVersions))
 	if err != nil {
 		return err
 	}
@@ -59,6 +59,11 @@ func retain(ctx context.Context, svc *service.Service, interval time.Duration) {
 	defer ticker.Stop()
 	for {
 		removed, err := svc.PruneDeliveryOperations(ctx)
+		if err == nil {
+			var seats int64
+			seats, err = svc.PruneSeatOperations(ctx)
+			removed += seats
+		}
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintln(os.Stderr, "crew-messaging: prune operation receipts:", err)
 		} else if removed > 0 {

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"crew-services/internal/service"
-	"crew-services/internal/store"
 )
 
 // TestDropProjectionMigrationKeepsMessagesDeliveriesAndBindings upgrades a v8
@@ -53,10 +52,7 @@ func TestDropProjectionMigrationKeepsMessagesDeliveriesAndBindings(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	submitted, err := v8.SubmitMessage(ctx, clock.now, store.SubmitMessageRequest{ProducerID: alpha.AdapterID, LeaseToken: alpha.LeaseToken, OperationID: "op", Fingerprint: "f", MessageID: "m", DeliveryID: "d", SenderAddress: "agent/alice", RecipientAddress: "agent/bob", Body: "kept", ActivationPolicy: "next_turn", ExpiresAt: clock.now.Add(time.Hour)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	insertLegacyMessage(t, db, legacyMessage{producer: alpha.AdapterID, operation: "op", fingerprint: "f", messageID: "m", deliveryID: "d", sender: "agent/alice", recipient: "agent/bob", body: "kept", policy: "next_turn", created: clock.now, expires: clock.now.Add(time.Hour)})
 	for _, statement := range []string{
 		`INSERT INTO sessions(session_id,adapter_id,adapter_key,label,location,status,capabilities_json,revision,created_at,updated_at) VALUES ('s1','adapter.alpha','key','Work','local','idle','[]',1,'2026-09-04T00:00:00Z','2026-09-04T00:00:00Z')`,
 		`INSERT INTO session_events(event_id,session_id,sequence,event_type,payload_json,occurred_at,recorded_at) VALUES ('e1','s1',1,'state','{}','2026-09-04T00:00:00Z','2026-09-04T00:00:00Z')`,
@@ -92,11 +88,11 @@ func TestDropProjectionMigrationKeepsMessagesDeliveriesAndBindings(t *testing.T)
 			t.Fatalf("binding %s = %#v %v", address, binding, err)
 		}
 	}
-	message, err := upgraded.GetMessage(ctx, submitted.Message.MessageID)
+	message, err := upgraded.GetMessage(ctx, "m")
 	if err != nil || message.Body != "kept" {
 		t.Fatalf("message = %#v %v", message, err)
 	}
-	delivery, err := upgraded.GetDelivery(ctx, submitted.Delivery.DeliveryID)
+	delivery, err := upgraded.GetDelivery(ctx, "d")
 	if err != nil || delivery.State != "queued" || delivery.MessageID != "m" {
 		t.Fatalf("delivery = %#v %v", delivery, err)
 	}

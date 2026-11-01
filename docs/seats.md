@@ -1,9 +1,12 @@
 # Seats
 
-Status: proposed design, 2026-10-31, under Den task #10519. Nothing here is
-built yet. Once it is, the lasting contract rules move into the
-[messaging service specification](messaging-service-spec.md), and this note
-records the decisions and the reasons behind them.
+Status: the fabric core is built (2026-10-31, Den task #10519): schema
+migration 10, the store and service operations, the HTTP routes under
+`/v1/seats`, and the proving-slice tests in `internal/sqlite/seat_test.go`.
+The `seat` CLI subcommands, driver support for claiming seat mail, and the
+cross-harness demo are not built yet. Once they are, the lasting contract rules
+move into the [messaging service specification](messaging-service-spec.md),
+and this note keeps the decisions and the reasons behind them.
 
 ## Why
 
@@ -173,18 +176,22 @@ next, so seat mail follows its own rules:
 - **Queue on the seat.** The delivery's recipient is the seat address, and the
   submission records the seat's `generation`. FIFO is per seat address and seat
   generation, with the same head-of-line rule as any other address.
-- **Resolve the holder at claim time, not at submission.** A seat-addressed
-  delivery is claimable only by the adapter that owns the current holder's
-  session binding, and only while the holding's `holder_generation` still
-  matches that binding. The claim records the `holding_id`. The adapter
-  delivers into the holder's session exactly as it would deliver mail
-  addressed to that session, under the message's activation policy.
+- **Resolve the holder at claim time, not at submission.** An adapter claims
+  seat mail with the seat address and the seat generation. The claim succeeds
+  only for the adapter that owns the current holder's session binding, and only
+  while that binding's generation still matches the holding; otherwise the claim
+  reports `seat_vacant` or `holding_stale` and claims nothing. The claim result
+  carries `holder_address`, the session to deliver into, and the delivery
+  records `claim_holding_id`. The adapter delivers into the holder's session
+  exactly as it would deliver mail addressed to that session, under the
+  message's activation policy, using the holder binding's capabilities.
 - **A change of holder carries mail over.** Taking, leaving or relieving never
   advances the seat generation, so queued seat mail waits through the change
-  and goes to the next holder. A claim made under a holding that has since
-  ended is released back to the queue if dispatch has not begun (begin dispatch
-  is refused with `holding_ended`). A delivery already dispatching under the old
-  holding is reconciled normally and stays delivered to the session that got it.
+  and goes to the next holder. The same transaction that changes the holder
+  returns any pre-dispatch claim on the seat's mail to the queue, so the old
+  claim token is fenced (`claim_fenced`) and the next holder claims the message
+  first. A delivery already dispatching under the old holding is reconciled
+  normally and stays delivered to the session that got it.
 - **Vacant seats queue.** While a seat is vacant its mail stays queued. The
   sender's TTL still applies, and mail that expires while the seat is vacant
   expires as usual. A sender that wants mail to wait out a long vacancy sets a
@@ -200,17 +207,19 @@ deliver mail. As everywhere in the fabric, only adapter claiming moves work.
 
 ## Sending as a seat
 
-A submission may say it is sent as a seat. It still names the real sending
-session, and it is accepted only if that session currently holds the seat;
-otherwise it is refused with `not_holder`. That check, against the current
-`holding_id`, is how the fabric enforces single holding: a relieved session
-cannot keep speaking for the seat, whatever it believes.
+A submission sends as a seat by naming its own session as `sender_address`
+and the seat as `as_seat`. It is accepted only if that session (at its current
+binding generation and adapter) holds the seat; otherwise it is refused with
+`not_holder`. That check is how the fabric enforces single holding: a relieved
+session cannot keep speaking for the seat, whatever it believes.
 
-The immutable envelope gains three fields for such a message: `sender_seat`,
-`sender_holding_id`, and `sender_charter_version` (the charter version current
-when the message was sent, so a recipient reading the charter later can see
-whether it has changed). The sender address stays the real session address, so
-provenance never loses who actually wrote the message.
+The accepted envelope's `sender_address` is the seat and its
+`sender_generation` is the seat generation, so replies and rounds match the
+seat with the existing exact-address rules. Three more fields keep the real
+sender: `sender_session` (the session that wrote it), `sender_holding_id`, and
+`sender_charter_version` (the charter version current when it was sent, so a
+recipient reading the charter later can see whether it has changed).
+Provenance never loses who actually wrote the message.
 
 A reply to a message sent as a seat goes to the seat, not to the session that
 sent it, so a thread keeps going across handoffs. Rounds match a reply that
@@ -225,10 +234,13 @@ Drivers render seat provenance in the delivered text, for example
 A holding has no lease of its own, because the seat outlives the session's
 attention: agents work turn by turn, cannot send heartbeats, and an idle
 session is not a dead one. A holding is **stale** when its holder's session
-binding is gone or rebound to another native session (generation advanced), or
-when the adapter that owns that binding has no live lease.
+binding is gone (`holder_unbound`), rebound to another native session or
+adapter (`holder_rebound`), or owned by an adapter with no live lease
+(`adapter_lease_expired`).
 
-A stale holding is shown as stale in listings, with the time it became stale.
+A stale holding is shown as stale in listings with its `stale_reason`. For an
+expired adapter lease, `stale_since` is the lease's expiry; the fabric does not
+know when a binding went away, so the other reasons carry no time.
 It is never vacated automatically, its seat mail stays queued, and `take` is
 still refused. Any session may relieve a stale holder the usual way. When the
 holder's driver comes back and the binding still matches, the holding is no
@@ -252,21 +264,49 @@ longer holds the seat and that sending as it will be refused.
 | `not_holder` | leave, or sending as a seat, by a session that does not hold it |
 | `seat_not_found` | sending to, or reading, a seat that was never created |
 | `seat_retired` | queued seat mail failed by retirement |
-| `holding_ended` | begin dispatch for seat mail claimed under an ended holding |
 | `invalid_seat_address` | malformed `name@scope` |
+| `invalid_request` | a binding write to a `name@scope` address, or an adapter ID starting with `fabric/` (reserved for service notices) |
 | `version_conflict` | set with a stale `expected_version`; includes the current version |
 | `version_pruned` | read of a version removed by retention |
 | `version_not_found` | read of a version number that was never issued |
 
-`left_without_handoff` is a holding `end_reason`, not an error.
+`left_without_handoff` is a holding `end_reason`, not an error. `seat_vacant`
+and `holding_stale` are also claim reasons (nothing claimed), alongside the
+existing `no_work` and `head_*` reasons.
 
 ## Retention
 
-Seat records are kept until retired and pruned. Text versions keep the newest
-`seat_text_versions` per seat and kind. Ended holdings and retired seats follow
-the fabric's bounded terminal-record retention.
+Text versions keep the newest `-seat-text-versions` per seat and kind
+(default 50), pruned in the transaction that writes the next one. Seat
+operation receipts are pruned with the same retention window as delivery
+operation receipts. Seats, retired seats and ended holdings are small and are
+kept for now; they get a retention bound if they ever need one.
 
-## Driver and CLI surface
+## HTTP API
+
+Writes take `adapter_id`, `lease_token`, `operation_id` and `session_address`
+(plus an optional `note`) and return the seat, the resulting holding, the
+previous or ended holding, and any notice message ID; `201` when new, `200` on an
+exact replay.
+
+| Route | Operation |
+| --- | --- |
+| `POST /v1/seats/{seat}/take` | take |
+| `POST /v1/seats/{seat}/leave` | leave |
+| `POST /v1/seats/{seat}/relieve` | relieve |
+| `POST /v1/seats/{seat}/retire` | retire |
+| `PUT /v1/seats/{seat}/charter`, `PUT /v1/seats/{seat}/handoff` | set text: `body`, optional `expected_version` |
+| `GET /v1/seats?scope=&holder=&state=` | list seats |
+| `GET /v1/seats/{seat}` | get seat, with full charter and handoff |
+| `GET /v1/seats/{seat}/charter[?version=N]`, `.../handoff` | one text version (current by default) |
+| `GET /v1/seats/{seat}/charter/versions`, `.../handoff/versions` | version metadata, newest first |
+| `GET /v1/seats/{seat}/holdings` | holdings, newest first |
+| `POST /v1/messages` with `as_seat` | send as a seat |
+
+Errors return `{"code": …}` and, for `seat_held` and `version_conflict`, a
+`detail` with the holding in the way or the current version.
+
+## Driver and CLI surface (not built yet)
 
 Each driver (crew-claude, crew-codex, crew-dsh) gets the same subcommands
 through the shared `crewcli` package, next to `send` and `who`, and Hermes calls
@@ -327,19 +367,23 @@ Agreed with Patch on 2026-10-31.
 
 Service tests prove:
 
+These are built (`internal/sqlite/seat_test.go`, `internal/httpapi/seat_test.go`):
+
 1. A second take of a held seat is refused with `seat_held` naming the holder.
 2. Relieve ends the old holding, starts the new one atomically, and sends the
    old holder a relief notice.
 3. A relieved session sending as the seat is refused with `not_holder`.
 4. Mail sent to a vacant seat is delivered to the next holder in FIFO order,
    and a change of holder does not fail queued seat mail.
-5. A claim made under an ended holding cannot begin dispatch.
+5. A claim made before a change of holder returns to the queue and its token
+   can no longer begin dispatch.
 6. Retiring a seat fails its queued mail with `seat_retired`.
 7. A stale holding stays held, keeps its mail queued, and is relieved normally.
 8. Setting a text creates a version with provenance; the oldest version past
    the bound returns `version_pruned`; a stale `expected_version` is refused.
 9. A reply to a message sent as a seat is addressed to the seat.
 10. Listing, show, version and holding reads never claim, wake or deliver.
+11. Seats survive a fabric restart.
 
 The end-to-end demo spans two harnesses (for example Claude Code and Codex):
 one session takes `lead@<scope>`, the other is refused, the second relieves the

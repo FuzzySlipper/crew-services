@@ -26,11 +26,12 @@ func TestStartServesHealthAndShutsDown(t *testing.T) {
 		t.Fatalf("New service error = %v", err)
 	}
 	application, err := New(config.Config{
-		ListenAddress: testListenAddress(t),
-		SQLitePath:    "state.db",
-		LeaseDuration: time.Minute,
-		TTLDuration:   time.Hour,
-		Retention:     time.Hour,
+		ListenAddress:    testListenAddress(t),
+		SQLitePath:       "state.db",
+		LeaseDuration:    time.Minute,
+		TTLDuration:      time.Hour,
+		Retention:        time.Hour,
+		SeatTextVersions: 50,
 	}, svc)
 	if err != nil {
 		t.Fatalf("New app error = %v", err)
@@ -71,11 +72,12 @@ func TestConcurrentShutdownAndRunObserveOneTerminalResult(t *testing.T) {
 		t.Fatalf("New service error = %v", err)
 	}
 	application, err := New(config.Config{
-		ListenAddress: testListenAddress(t),
-		SQLitePath:    "state.db",
-		LeaseDuration: time.Minute,
-		TTLDuration:   time.Hour,
-		Retention:     time.Hour,
+		ListenAddress:    testListenAddress(t),
+		SQLitePath:       "state.db",
+		LeaseDuration:    time.Minute,
+		TTLDuration:      time.Hour,
+		Retention:        time.Hour,
+		SeatTextVersions: 50,
 	}, svc)
 	if err != nil {
 		t.Fatalf("New app error = %v", err)

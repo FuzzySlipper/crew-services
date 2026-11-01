@@ -43,6 +43,9 @@ var migration008 string
 //go:embed migrations/009_drop_session_projection.sql
 var migration009 string
 
+//go:embed migrations/010_seats.sql
+var migration010 string
+
 var migrations = []migration{
 	{
 		version: 1,
@@ -59,6 +62,7 @@ var migrations = []migration{
 	{version: 7, sql: migration007},
 	{version: 8, sql: migration008, rebuildsTables: true},
 	{version: 9, sql: migration009},
+	{version: 10, sql: migration010},
 }
 
 func (s *Store) initialize(ctx context.Context) error {

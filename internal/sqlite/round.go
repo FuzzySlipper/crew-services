@@ -272,7 +272,7 @@ func readRoundByRoot(ctx context.Context, q queryer, rootID string) (store.Round
 	return v, err == nil, err
 }
 func listMessagesQuery(ctx context.Context, q queryer) ([]store.Message, error) {
-	rows, err := q.QueryContext(ctx, `SELECT message_id, producer_id, operation_id, sender_address, recipient_address, body, correlation_id, reply_to_message_id, activation_policy, created_at, expires_at, sender_generation, recipient_generation FROM messages ORDER BY created_at, message_id`)
+	rows, err := q.QueryContext(ctx, `SELECT `+messageColumns+` FROM messages ORDER BY created_at, message_id`)
 	if err != nil {
 		return nil, err
 	}

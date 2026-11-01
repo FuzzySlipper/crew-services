@@ -53,7 +53,9 @@ type ClaimResult struct {
 	Head           *Delivery `json:"head,omitempty"`
 	ClaimToken     string    `json:"claim_token,omitempty"`
 	DispatchAction string    `json:"dispatch_action,omitempty"`
-	Replayed       bool      `json:"replayed"`
+	// HolderAddress is the session to deliver into for a seat-mail claim.
+	HolderAddress string `json:"holder_address,omitempty"`
+	Replayed      bool   `json:"replayed"`
 }
 
 type DeliveryOperationRequest struct {

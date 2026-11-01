@@ -37,6 +37,9 @@ const (
 type Error struct {
 	Code ErrorCode
 	Err  error
+	// Detail is optional structured context a transport may return with the
+	// code, such as the holding that made a take fail.
+	Detail any
 }
 
 func (e *Error) Error() string { return string(e.Code) + ": " + e.Err.Error() }
@@ -98,6 +101,8 @@ type SubmitMessageRequest struct {
 	TTL                         time.Duration
 	ExpectedSenderGeneration    *int64
 	ExpectedRecipientGeneration *int64
+	// AsSeat sends the message as a seat that SenderAddress currently holds.
+	AsSeat string
 }
 
 type SubmitMessageResult = store.SubmitMessageResult
@@ -128,6 +133,7 @@ type Service struct {
 	retention        time.Duration
 	tokens           TokenGenerator
 	ids              IDGenerator
+	seatTextVersions int
 }
 
 // TokenGenerator creates opaque coordination tokens. It is injectable for
@@ -198,7 +204,7 @@ func New(persistence store.Store, clock Clock, options ...Option) (*Service, err
 	if clock == nil {
 		return nil, errors.New("clock is required")
 	}
-	svc := &Service{store: persistence, clock: clock, maxLeaseDuration: 5 * time.Minute, maxTTLDuration: 24 * time.Hour, retention: 7 * 24 * time.Hour, tokens: randomToken, ids: randomToken}
+	svc := &Service{store: persistence, clock: clock, maxLeaseDuration: 5 * time.Minute, maxTTLDuration: 24 * time.Hour, retention: 7 * 24 * time.Hour, tokens: randomToken, ids: randomToken, seatTextVersions: 50}
 	for _, option := range options {
 		if err := option(svc); err != nil {
 			return nil, err
@@ -225,6 +231,11 @@ func (s *Service) SubmitMessage(ctx context.Context, request SubmitMessageReques
 	request.RecipientAddress = strings.TrimSpace(request.RecipientAddress)
 	request.CorrelationID = strings.TrimSpace(request.CorrelationID)
 	request.ReplyToMessageID = strings.TrimSpace(request.ReplyToMessageID)
+	if request.AsSeat = strings.TrimSpace(request.AsSeat); request.AsSeat != "" {
+		if _, err := seatAddress(request.AsSeat); err != nil {
+			return SubmitMessageResult{}, err
+		}
+	}
 	policy, ok := store.NormalizePolicy(request.ActivationPolicy)
 	if !ok {
 		return SubmitMessageResult{}, &Error{Code: CodeInvalid, Err: errors.New("activation_policy must be next_turn, next_step or no_wake")}
@@ -256,7 +267,7 @@ func (s *Service) SubmitMessage(ctx context.Context, request SubmitMessageReques
 		return SubmitMessageResult{}, fmt.Errorf("generate delivery ID: %w", err)
 	}
 	now := s.clock.Now().UTC()
-	result, err := s.store.SubmitMessage(ctx, now, store.SubmitMessageRequest{ProducerID: request.ProducerID, LeaseToken: request.LeaseToken, OperationID: request.OperationID, Fingerprint: fingerprint, MessageID: messageID, DeliveryID: deliveryID, SenderAddress: request.SenderAddress, RecipientAddress: request.RecipientAddress, Body: request.Body, CorrelationID: request.CorrelationID, ReplyToMessageID: request.ReplyToMessageID, ActivationPolicy: request.ActivationPolicy, ExpiresAt: now.Add(request.TTL), ExpectedSenderGeneration: request.ExpectedSenderGeneration, ExpectedRecipientGeneration: request.ExpectedRecipientGeneration})
+	result, err := s.store.SubmitMessage(ctx, now, store.SubmitMessageRequest{ProducerID: request.ProducerID, LeaseToken: request.LeaseToken, OperationID: request.OperationID, Fingerprint: fingerprint, MessageID: messageID, DeliveryID: deliveryID, SenderAddress: request.SenderAddress, RecipientAddress: request.RecipientAddress, Body: request.Body, CorrelationID: request.CorrelationID, ReplyToMessageID: request.ReplyToMessageID, ActivationPolicy: request.ActivationPolicy, ExpiresAt: now.Add(request.TTL), ExpectedSenderGeneration: request.ExpectedSenderGeneration, ExpectedRecipientGeneration: request.ExpectedRecipientGeneration, AsSeat: request.AsSeat})
 	return result, mapReplyError(err)
 }
 
@@ -280,10 +291,13 @@ func matchesLegacyFingerprint(stored string, request SubmitMessageRequest, finge
 }
 
 func messageFingerprint(request SubmitMessageRequest) (string, error) {
+	// AsSeat is omitted when empty so fingerprints stored before seats existed
+	// still match exact retries.
 	canonical := struct {
 		SenderAddress, RecipientAddress, Body, CorrelationID, ReplyToMessageID, ActivationPolicy string
 		TTLNanoseconds                                                                           int64
-	}{request.SenderAddress, request.RecipientAddress, request.Body, request.CorrelationID, request.ReplyToMessageID, request.ActivationPolicy, request.TTL.Nanoseconds()}
+		AsSeat                                                                                   string `json:",omitempty"`
+	}{request.SenderAddress, request.RecipientAddress, request.Body, request.CorrelationID, request.ReplyToMessageID, request.ActivationPolicy, request.TTL.Nanoseconds(), request.AsSeat}
 	encoded, err := json.Marshal(canonical)
 	if err != nil {
 		return "", err
@@ -358,6 +372,9 @@ func (s *Service) RegisterAdapter(ctx context.Context, request RegisterAdapterRe
 	if err := required("instance_id", request.InstanceID); err != nil {
 		return AdapterLease{}, err
 	}
+	if strings.HasPrefix(strings.TrimSpace(request.AdapterID), "fabric/") {
+		return AdapterLease{}, invalid("adapter IDs starting with fabric/ are reserved for the service")
+	}
 	duration, err := s.leaseDuration(request.LeaseDuration)
 	if err != nil {
 		return AdapterLease{}, err
@@ -392,6 +409,9 @@ func (s *Service) PutBinding(ctx context.Context, request PutBindingRequest) (Bi
 		if err := required(field.name, field.value); err != nil {
 			return Binding{}, err
 		}
+	}
+	if store.IsSeatAddress(strings.TrimSpace(request.Address)) {
+		return Binding{}, invalid("name@scope addresses are seats; take the seat instead of binding it")
 	}
 	capabilities, err := canonicalCapabilities(request.Capabilities)
 	if err != nil {
@@ -477,10 +497,11 @@ func mapStoreError(err error) error {
 		target error
 		code   ErrorCode
 	}{
+		{store.ErrSeatHeld, CodeSeatHeld}, {store.ErrSeatVacant, CodeSeatVacant}, {store.ErrNotHolder, CodeNotHolder}, {store.ErrSeatNotFound, CodeSeatNotFound}, {store.ErrSeatRetired, CodeSeatRetired}, {store.ErrVersionConflict, CodeVersionConflict}, {store.ErrVersionPruned, CodeVersionPruned}, {store.ErrVersionNotFound, CodeVersionNotFound},
 		{store.ErrNotFound, CodeNotFound}, {store.ErrConflict, CodeConflict}, {store.ErrOperationConflict, CodeOperationConflict}, {store.ErrStaleRevision, CodeStaleRevision}, {store.ErrLeaseExpired, CodeLeaseExpired}, {store.ErrLeaseFenced, CodeLeaseFenced}, {store.ErrClaimFenced, CodeClaimFenced}, {store.ErrNotBound, CodeNotBound}, {store.ErrAdapterMismatch, CodeAdapterMismatch},
 	} {
 		if errors.Is(err, candidate.target) {
-			return &Error{Code: candidate.code, Err: err}
+			return &Error{Code: candidate.code, Err: err, Detail: seatErrorDetail(err)}
 		}
 	}
 	return err

@@ -15,6 +15,7 @@ const (
 	maxLeaseDuration = 24 * time.Hour
 	maxTTLDuration   = 365 * 24 * time.Hour
 	maxRetention     = 365 * 24 * time.Hour
+	maxSeatVersions  = 10000
 )
 
 // Config contains the runtime settings supported by the first runnable slice.
@@ -24,16 +25,20 @@ type Config struct {
 	LeaseDuration time.Duration
 	TTLDuration   time.Duration
 	Retention     time.Duration
+	// SeatTextVersions is how many versions of each seat charter and handoff
+	// stay readable.
+	SeatTextVersions int
 }
 
 // Defaults returns local development defaults. SQLitePath remains empty so a
 // caller must explicitly choose where durable state is stored.
 func Defaults() Config {
 	return Config{
-		ListenAddress: "127.0.0.1:8787",
-		LeaseDuration: 5 * time.Minute,
-		TTLDuration:   24 * time.Hour,
-		Retention:     7 * 24 * time.Hour,
+		ListenAddress:    "127.0.0.1:8787",
+		LeaseDuration:    5 * time.Minute,
+		TTLDuration:      24 * time.Hour,
+		Retention:        7 * 24 * time.Hour,
+		SeatTextVersions: 50,
 	}
 }
 
@@ -46,6 +51,7 @@ func Parse(args []string) (Config, error) {
 	flags.DurationVar(&cfg.LeaseDuration, "lease-duration", cfg.LeaseDuration, "maximum lease duration")
 	flags.DurationVar(&cfg.TTLDuration, "ttl", cfg.TTLDuration, "maximum message lifetime")
 	flags.DurationVar(&cfg.Retention, "retention", cfg.Retention, "terminal record retention")
+	flags.IntVar(&cfg.SeatTextVersions, "seat-text-versions", cfg.SeatTextVersions, "versions kept per seat charter and handoff")
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -69,7 +75,13 @@ func (c Config) Validate() error {
 	if err := validateDuration("TTL", c.TTLDuration, maxTTLDuration); err != nil {
 		return err
 	}
-	return validateDuration("retention", c.Retention, maxRetention)
+	if err := validateDuration("retention", c.Retention, maxRetention); err != nil {
+		return err
+	}
+	if c.SeatTextVersions <= 0 || c.SeatTextVersions > maxSeatVersions {
+		return fmt.Errorf("seat text versions must be from 1 through %d", maxSeatVersions)
+	}
+	return nil
 }
 
 func validateLoopbackAddress(address string) error {

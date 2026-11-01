@@ -358,27 +358,37 @@ func acceptMessage(ctx context.Context, tx *sql.Tx, now time.Time, request store
 	if sender.AdapterID != request.ProducerID {
 		return store.Message{}, store.Delivery{}, store.ErrAdapterMismatch
 	}
-	if request.ExpectedSenderGeneration != nil && sender.Generation != *request.ExpectedSenderGeneration {
+	senderAddress, senderGeneration := request.SenderAddress, sender.Generation
+	var senderSession string
+	var senderHolding, senderCharter int64
+	if request.AsSeat != "" {
+		// Sending as a seat is accepted only from its current holder: this is
+		// the fence that keeps a relieved session from speaking for the seat.
+		seat, holding, err := currentHolding(ctx, tx, request.AsSeat)
+		if err != nil {
+			return store.Message{}, store.Delivery{}, err
+		}
+		if holding == nil || holding.HolderAddress != sender.Address || holding.HolderGeneration != sender.Generation || holding.HolderAdapterID != sender.AdapterID {
+			return store.Message{}, store.Delivery{}, store.ErrNotHolder
+		}
+		senderAddress, senderGeneration = seat.address, seat.generation
+		senderSession, senderHolding, senderCharter = sender.Address, holding.HoldingID, seat.charterVersion
+	}
+	if request.ExpectedSenderGeneration != nil && senderGeneration != *request.ExpectedSenderGeneration {
 		return store.Message{}, store.Delivery{}, store.ErrStaleRevision
 	}
-	recipient, found, err := readBinding(ctx, tx, request.RecipientAddress)
+	recipientGeneration, err := recipientForSubmit(ctx, tx, request.RecipientAddress)
 	if err != nil {
 		return store.Message{}, store.Delivery{}, err
 	}
-	if !found {
-		return store.Message{}, store.Delivery{}, store.ErrNotFound
-	}
-	if !recipient.Bound {
-		return store.Message{}, store.Delivery{}, store.ErrNotBound
-	}
-	if request.ExpectedRecipientGeneration != nil && recipient.Generation != *request.ExpectedRecipientGeneration {
+	if request.ExpectedRecipientGeneration != nil && recipientGeneration != *request.ExpectedRecipientGeneration {
 		return store.Message{}, store.Delivery{}, store.ErrStaleRevision
 	}
-	message := store.Message{ProducerID: request.ProducerID, OperationID: request.OperationID, MessageID: request.MessageID, SenderAddress: request.SenderAddress, RecipientAddress: request.RecipientAddress, Body: request.Body, CorrelationID: request.CorrelationID, ReplyToMessageID: request.ReplyToMessageID, ActivationPolicy: request.ActivationPolicy, CreatedAt: now.UTC(), ExpiresAt: request.ExpiresAt.UTC(), SenderGeneration: sender.Generation, RecipientGeneration: recipient.Generation}
+	message := store.Message{ProducerID: request.ProducerID, OperationID: request.OperationID, MessageID: request.MessageID, SenderAddress: senderAddress, RecipientAddress: request.RecipientAddress, Body: request.Body, CorrelationID: request.CorrelationID, ReplyToMessageID: request.ReplyToMessageID, ActivationPolicy: request.ActivationPolicy, CreatedAt: now.UTC(), ExpiresAt: request.ExpiresAt.UTC(), SenderGeneration: senderGeneration, RecipientGeneration: recipientGeneration, SenderSession: senderSession, SenderHoldingID: senderHolding, SenderCharterVersion: senderCharter}
 	if err := validateReply(ctx, tx, message); err != nil {
 		return store.Message{}, store.Delivery{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO messages (message_id, producer_id, operation_id, request_fingerprint, sender_address, recipient_address, body, correlation_id, reply_to_message_id, activation_policy, created_at, expires_at, sender_generation, recipient_generation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, message.MessageID, message.ProducerID, message.OperationID, request.Fingerprint, message.SenderAddress, message.RecipientAddress, message.Body, message.CorrelationID, message.ReplyToMessageID, message.ActivationPolicy, timestamp(message.CreatedAt), timestamp(message.ExpiresAt), message.SenderGeneration, message.RecipientGeneration); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messages (message_id, producer_id, operation_id, request_fingerprint, sender_address, recipient_address, body, correlation_id, reply_to_message_id, activation_policy, created_at, expires_at, sender_generation, recipient_generation, sender_session_address, sender_holding_id, sender_charter_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, message.MessageID, message.ProducerID, message.OperationID, request.Fingerprint, message.SenderAddress, message.RecipientAddress, message.Body, message.CorrelationID, message.ReplyToMessageID, message.ActivationPolicy, timestamp(message.CreatedAt), timestamp(message.ExpiresAt), message.SenderGeneration, message.RecipientGeneration, message.SenderSession, message.SenderHoldingID, message.SenderCharterVersion); err != nil {
 		return store.Message{}, store.Delivery{}, fmt.Errorf("insert immutable message: %w", err)
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO deliveries (delivery_id, message_id, recipient_address, recipient_generation, state, created_at, expires_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)`, request.DeliveryID, message.MessageID, message.RecipientAddress, message.RecipientGeneration, timestamp(now), timestamp(message.ExpiresAt))
@@ -390,6 +400,62 @@ func acceptMessage(ctx context.Context, tx *sql.Tx, now time.Time, request store
 		return store.Message{}, store.Delivery{}, fmt.Errorf("read delivery sequence: %w", err)
 	}
 	return message, store.Delivery{DeliveryID: request.DeliveryID, MessageID: message.MessageID, RecipientAddress: message.RecipientAddress, RecipientGeneration: message.RecipientGeneration, AcceptedSequence: sequence, State: "queued", CreatedAt: now.UTC(), ExpiresAt: message.ExpiresAt}, nil
+}
+
+// recipientForSubmit returns the generation a new message to address is
+// accepted under. A seat accepts mail while it exists and is not retired,
+// whether or not anyone holds it.
+func recipientForSubmit(ctx context.Context, q queryer, address string) (int64, error) {
+	if store.IsSeatAddress(address) {
+		row, found, err := readSeatRow(ctx, q, address)
+		if err != nil {
+			return 0, err
+		}
+		if !found {
+			return 0, store.ErrSeatNotFound
+		}
+		if row.retired {
+			return 0, store.ErrSeatRetired
+		}
+		return row.generation, nil
+	}
+	recipient, found, err := readBinding(ctx, q, address)
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, store.ErrNotFound
+	}
+	if !recipient.Bound {
+		return 0, store.ErrNotBound
+	}
+	return recipient.Generation, nil
+}
+
+// undeliverableReason says why queued work to address under generation can no
+// longer be delivered, or "" if it still can. A vacant seat keeps its mail.
+func undeliverableReason(ctx context.Context, q queryer, address string, generation int64) (string, error) {
+	if store.IsSeatAddress(address) {
+		row, found, err := readSeatRow(ctx, q, address)
+		if err != nil {
+			return "", err
+		}
+		if !found || row.retired || row.generation != generation {
+			return "seat_retired", nil
+		}
+		return "", nil
+	}
+	binding, found, err := readBinding(ctx, q, address)
+	if err != nil {
+		return "", err
+	}
+	if !found || !binding.Bound {
+		return "recipient_unbound", nil
+	}
+	if binding.Generation != generation {
+		return "binding_generation_changed", nil
+	}
+	return "", nil
 }
 
 func (s *Store) GetMessage(ctx context.Context, messageID string) (store.Message, error) {
@@ -404,7 +470,7 @@ func (s *Store) GetMessage(ctx context.Context, messageID string) (store.Message
 }
 
 func (s *Store) ListMessages(ctx context.Context) ([]store.Message, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT message_id, producer_id, operation_id, sender_address, recipient_address, body, correlation_id, reply_to_message_id, activation_policy, created_at, expires_at, sender_generation, recipient_generation FROM messages ORDER BY created_at ASC, message_id ASC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+messageColumns+` FROM messages ORDER BY created_at ASC, message_id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list messages: %w", err)
 	}
@@ -542,14 +608,12 @@ func (s *Store) SettlePending(ctx context.Context, now time.Time) ([]store.Deliv
 		} else if !delivery.ExpiresAt.After(now.UTC()) {
 			reason, state = "ttl_expired", "expired"
 		} else {
-			binding, found, err := readBinding(ctx, tx, delivery.RecipientAddress)
+			why, err := undeliverableReason(ctx, tx, delivery.RecipientAddress, delivery.RecipientGeneration)
 			if err != nil {
 				return nil, err
 			}
-			if !found || !binding.Bound {
-				reason, state = "recipient_unbound", "failed"
-			} else if binding.Generation != delivery.RecipientGeneration {
-				reason, state = "binding_generation_changed", "failed"
+			if why != "" {
+				reason, state = why, "failed"
 			}
 			if reason == "" && delivery.State == "claimed" && delivery.ClaimExpiresAt != nil && !delivery.ClaimExpiresAt.After(now.UTC()) {
 				if _, err := tx.ExecContext(ctx, `UPDATE deliveries SET state='queued', claim_owner_adapter_id='', claim_owner_instance_id='', claim_token='', claim_expires_at=NULL, claimed_at=NULL, dispatch_action='' WHERE delivery_id=? AND state='claimed'`, delivery.DeliveryID); err != nil {
@@ -610,10 +674,10 @@ type submission struct {
 }
 
 func readSubmission(ctx context.Context, query queryer, producerID, operationID string) (submission, bool, error) {
-	row := query.QueryRowContext(ctx, `SELECT message_id, producer_id, operation_id, sender_address, recipient_address, body, correlation_id, reply_to_message_id, activation_policy, created_at, expires_at, sender_generation, recipient_generation, request_fingerprint FROM messages WHERE producer_id = ? AND operation_id = ?`, producerID, operationID)
+	row := query.QueryRowContext(ctx, `SELECT `+messageColumns+`, request_fingerprint FROM messages WHERE producer_id = ? AND operation_id = ?`, producerID, operationID)
 	var result submission
 	var created, expires string
-	err := row.Scan(&result.message.MessageID, &result.message.ProducerID, &result.message.OperationID, &result.message.SenderAddress, &result.message.RecipientAddress, &result.message.Body, &result.message.CorrelationID, &result.message.ReplyToMessageID, &result.message.ActivationPolicy, &created, &expires, &result.message.SenderGeneration, &result.message.RecipientGeneration, &result.fingerprint)
+	err := row.Scan(&result.message.MessageID, &result.message.ProducerID, &result.message.OperationID, &result.message.SenderAddress, &result.message.RecipientAddress, &result.message.Body, &result.message.CorrelationID, &result.message.ReplyToMessageID, &result.message.ActivationPolicy, &created, &expires, &result.message.SenderGeneration, &result.message.RecipientGeneration, &result.message.SenderSession, &result.message.SenderHoldingID, &result.message.SenderCharterVersion, &result.fingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
 		return submission{}, false, nil
 	}
@@ -651,7 +715,7 @@ func readDeliveryByMessage(ctx context.Context, query queryer, messageID string)
 }
 
 func readMessage(ctx context.Context, query queryer, messageID string) (store.Message, bool, error) {
-	row := query.QueryRowContext(ctx, `SELECT message_id, producer_id, operation_id, sender_address, recipient_address, body, correlation_id, reply_to_message_id, activation_policy, created_at, expires_at, sender_generation, recipient_generation FROM messages WHERE message_id = ?`, messageID)
+	row := query.QueryRowContext(ctx, `SELECT `+messageColumns+` FROM messages WHERE message_id = ?`, messageID)
 	message, err := scanMessage(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.Message{}, false, nil
@@ -672,10 +736,13 @@ func readDelivery(ctx context.Context, query queryer, deliveryID string) (store.
 	}
 	return delivery, true, nil
 }
+
+const messageColumns = `message_id, producer_id, operation_id, sender_address, recipient_address, body, correlation_id, reply_to_message_id, activation_policy, created_at, expires_at, sender_generation, recipient_generation, sender_session_address, sender_holding_id, sender_charter_version`
+
 func scanMessage(row scanner) (store.Message, error) {
 	var value store.Message
 	var created, expires string
-	if err := row.Scan(&value.MessageID, &value.ProducerID, &value.OperationID, &value.SenderAddress, &value.RecipientAddress, &value.Body, &value.CorrelationID, &value.ReplyToMessageID, &value.ActivationPolicy, &created, &expires, &value.SenderGeneration, &value.RecipientGeneration); err != nil {
+	if err := row.Scan(&value.MessageID, &value.ProducerID, &value.OperationID, &value.SenderAddress, &value.RecipientAddress, &value.Body, &value.CorrelationID, &value.ReplyToMessageID, &value.ActivationPolicy, &created, &expires, &value.SenderGeneration, &value.RecipientGeneration, &value.SenderSession, &value.SenderHoldingID, &value.SenderCharterVersion); err != nil {
 		return store.Message{}, err
 	}
 	createdAt, err := parseTimestamp(created)
@@ -690,13 +757,13 @@ func scanMessage(row scanner) (store.Message, error) {
 	return value, nil
 }
 
-const deliveryProjection = `SELECT delivery_id, message_id, recipient_address, recipient_generation, accepted_sequence, state, attempt_count, claim_owner_adapter_id, claim_owner_instance_id, claim_token, claim_expires_at, claimed_at, dispatch_action, native_attempt_ref, dispatching_at, terminal_reason, created_at, expires_at, terminal_at`
+const deliveryProjection = `SELECT delivery_id, message_id, recipient_address, recipient_generation, accepted_sequence, state, attempt_count, claim_owner_adapter_id, claim_owner_instance_id, claim_token, claim_expires_at, claimed_at, dispatch_action, native_attempt_ref, dispatching_at, claim_holding_id, terminal_reason, created_at, expires_at, terminal_at`
 
 func scanDelivery(row scanner) (store.Delivery, error) {
 	var value store.Delivery
 	var created, expires string
 	var terminal, claimExpires, claimed, dispatching sql.NullString
-	if err := row.Scan(&value.DeliveryID, &value.MessageID, &value.RecipientAddress, &value.RecipientGeneration, &value.AcceptedSequence, &value.State, &value.AttemptCount, &value.ClaimOwnerAdapterID, &value.ClaimOwnerInstanceID, &value.ClaimToken, &claimExpires, &claimed, &value.DispatchAction, &value.NativeAttemptRef, &dispatching, &value.TerminalReason, &created, &expires, &terminal); err != nil {
+	if err := row.Scan(&value.DeliveryID, &value.MessageID, &value.RecipientAddress, &value.RecipientGeneration, &value.AcceptedSequence, &value.State, &value.AttemptCount, &value.ClaimOwnerAdapterID, &value.ClaimOwnerInstanceID, &value.ClaimToken, &claimExpires, &claimed, &value.DispatchAction, &value.NativeAttemptRef, &dispatching, &value.ClaimHoldingID, &value.TerminalReason, &created, &expires, &terminal); err != nil {
 		return store.Delivery{}, err
 	}
 	if err := populateTimes(nil, &value, "", "", created, expires, terminal); err != nil {

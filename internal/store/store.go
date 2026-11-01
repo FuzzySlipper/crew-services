@@ -98,6 +98,11 @@ type Message struct {
 	ExpiresAt           time.Time `json:"expires_at"`
 	SenderGeneration    int64     `json:"sender_generation"`
 	RecipientGeneration int64     `json:"recipient_generation"`
+	// A message sent as a seat has the seat as SenderAddress (and its
+	// generation as SenderGeneration); these name the real session behind it.
+	SenderSession        string `json:"sender_session,omitempty"`
+	SenderHoldingID      int64  `json:"sender_holding_id,omitempty"`
+	SenderCharterVersion int64  `json:"sender_charter_version,omitempty"`
 }
 
 // Delivery is the mutable ledger entry for one immutable message. This slice
@@ -120,10 +125,12 @@ type Delivery struct {
 	DispatchAction   string     `json:"dispatch_action,omitempty"`
 	NativeAttemptRef string     `json:"native_attempt_ref,omitempty"`
 	DispatchingAt    *time.Time `json:"dispatching_at,omitempty"`
-	TerminalReason   string     `json:"terminal_reason,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	ExpiresAt        time.Time  `json:"expires_at"`
-	TerminalAt       *time.Time `json:"terminal_at,omitempty"`
+	// ClaimHoldingID is the seat holding a seat-mail claim was made under.
+	ClaimHoldingID int64      `json:"claim_holding_id,omitempty"`
+	TerminalReason string     `json:"terminal_reason,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	ExpiresAt      time.Time  `json:"expires_at"`
+	TerminalAt     *time.Time `json:"terminal_at,omitempty"`
 }
 
 type SubmitMessageRequest struct {
@@ -142,6 +149,8 @@ type SubmitMessageRequest struct {
 	ExpiresAt                   time.Time
 	ExpectedSenderGeneration    *int64
 	ExpectedRecipientGeneration *int64
+	// AsSeat sends the message as a seat SenderAddress holds.
+	AsSeat string
 }
 
 type SubmitMessageResult struct {
@@ -237,4 +246,12 @@ type Store interface {
 	LookupDeliveryOperation(context.Context, string, string) (DeliveryOperationLookup, error)
 	DeliveryOperation(context.Context, time.Time, DeliveryOperationRequest) (DeliveryOperationResult, error)
 	PruneDeliveryOperations(context.Context, time.Time, int) (int64, error)
+	SeatOperation(context.Context, time.Time, SeatOperationRequest) (SeatOperationResult, error)
+	LookupSeatOperation(context.Context, string, string) (SeatOperationLookup, error)
+	ListSeats(context.Context, time.Time, SeatFilter) ([]Seat, error)
+	GetSeat(context.Context, time.Time, string) (Seat, error)
+	GetSeatText(context.Context, string, string, int64) (SeatText, error)
+	ListSeatTexts(context.Context, string, string) ([]SeatText, error)
+	ListSeatHoldings(context.Context, time.Time, string) ([]Holding, error)
+	PruneSeatOperations(context.Context, time.Time, int) (int64, error)
 }

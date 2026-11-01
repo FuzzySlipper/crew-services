@@ -47,6 +47,7 @@ func NewHandler(svc *service.Service) http.Handler {
 	mux.HandleFunc("POST /v1/maintenance/reap", reap(svc))
 	mux.HandleFunc("GET /v1/mailbox/{address}", mailbox(svc))
 	mux.HandleFunc("GET /v1/mailbox/{address}/head", mailboxHead(svc))
+	registerSeatRoutes(mux, svc)
 	return mux
 }
 
@@ -111,6 +112,7 @@ type messageRequest struct {
 	TTL                         string `json:"ttl"`
 	ExpectedSenderGeneration    *int64 `json:"expected_sender_generation,omitempty"`
 	ExpectedRecipientGeneration *int64 `json:"expected_recipient_generation,omitempty"`
+	AsSeat                      string `json:"as_seat,omitempty"`
 }
 
 func registerAdapter(svc *service.Service) http.HandlerFunc {
@@ -235,7 +237,7 @@ func submitMessage(svc *service.Service) http.HandlerFunc {
 			writeError(w, &service.Error{Code: service.CodeInvalid, Err: errors.New("invalid ttl")})
 			return
 		}
-		result, err := svc.SubmitMessage(r.Context(), service.SubmitMessageRequest{ProducerID: body.ProducerID, LeaseToken: body.LeaseToken, OperationID: body.OperationID, SenderAddress: body.SenderAddress, RecipientAddress: body.RecipientAddress, Body: body.Body, CorrelationID: body.CorrelationID, ReplyToMessageID: body.ReplyToMessageID, ActivationPolicy: body.ActivationPolicy, TTL: ttl, ExpectedSenderGeneration: body.ExpectedSenderGeneration, ExpectedRecipientGeneration: body.ExpectedRecipientGeneration})
+		result, err := svc.SubmitMessage(r.Context(), service.SubmitMessageRequest{ProducerID: body.ProducerID, LeaseToken: body.LeaseToken, OperationID: body.OperationID, SenderAddress: body.SenderAddress, RecipientAddress: body.RecipientAddress, Body: body.Body, CorrelationID: body.CorrelationID, ReplyToMessageID: body.ReplyToMessageID, ActivationPolicy: body.ActivationPolicy, TTL: ttl, ExpectedSenderGeneration: body.ExpectedSenderGeneration, ExpectedRecipientGeneration: body.ExpectedRecipientGeneration, AsSeat: body.AsSeat})
 		if err != nil {
 			writeError(w, err)
 			return
@@ -383,8 +385,18 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case service.CodeNotBound:
 		status = http.StatusConflict
+	case service.CodeSeatNotFound, service.CodeVersionNotFound:
+		status = http.StatusNotFound
+	case service.CodeVersionPruned:
+		status = http.StatusGone
+	case service.CodeSeatHeld, service.CodeSeatVacant, service.CodeNotHolder, service.CodeSeatRetired, service.CodeVersionConflict:
+		status = http.StatusConflict
 	case service.CodeConflict, service.CodeOperationConflict, service.CodeStaleRevision, service.CodeLeaseExpired, service.CodeLeaseFenced, service.CodeClaimFenced, service.CodeAdapterMismatch, service.CodeReplySenderMismatch, service.CodeReplyRecipientMismatch, service.CodeReplyGenerationMismatch:
 		status = http.StatusConflict
 	}
-	writeJSON(w, status, map[string]string{"code": string(typed.Code)})
+	body := map[string]any{"code": string(typed.Code)}
+	if typed.Detail != nil {
+		body["detail"] = typed.Detail
+	}
+	writeJSON(w, status, body)
 }

@@ -108,22 +108,14 @@ func (s *Store) claim(ctx context.Context, tx *sql.Tx, now time.Time, r store.De
 	if err != nil {
 		return store.DeliveryOperationResult{}, err
 	}
-	binding, found, err := readBinding(ctx, tx, r.Address)
+	route, err := claimRoute(ctx, tx, r)
 	if err != nil {
 		return store.DeliveryOperationResult{}, err
 	}
-	if !found {
-		return store.DeliveryOperationResult{}, store.ErrNotFound
+	if route.reason != "" {
+		return noClaim(route.reason, nil), nil
 	}
-	if !binding.Bound {
-		return store.DeliveryOperationResult{}, store.ErrNotBound
-	}
-	if binding.AdapterID != r.AdapterID {
-		return store.DeliveryOperationResult{}, store.ErrAdapterMismatch
-	}
-	if binding.Generation != r.Generation {
-		return store.DeliveryOperationResult{}, store.ErrConflict
-	}
+	binding := route.binding
 	for {
 		head, found, err := headForUpdate(ctx, tx, r.Address, r.Generation)
 		if err != nil {
@@ -161,7 +153,7 @@ func (s *Store) claim(ctx context.Context, tx *sql.Tx, now time.Time, r store.De
 			return noClaim(reason, &head), nil
 		}
 		expires := now.UTC().Add(r.ClaimDuration)
-		_, err = tx.ExecContext(ctx, `UPDATE deliveries SET state='claimed',attempt_count=attempt_count+1,claim_owner_adapter_id=?,claim_owner_instance_id=?,claim_token=?,claim_expires_at=?,claimed_at=?,dispatch_action=? WHERE delivery_id=? AND state='queued'`, r.AdapterID, lease.InstanceID, r.GeneratedClaimToken, timestamp(expires), timestamp(now), action, head.DeliveryID)
+		_, err = tx.ExecContext(ctx, `UPDATE deliveries SET state='claimed',attempt_count=attempt_count+1,claim_owner_adapter_id=?,claim_owner_instance_id=?,claim_token=?,claim_expires_at=?,claimed_at=?,dispatch_action=?,claim_holding_id=? WHERE delivery_id=? AND state='queued'`, r.AdapterID, lease.InstanceID, r.GeneratedClaimToken, timestamp(expires), timestamp(now), action, route.holdingID, head.DeliveryID)
 		if err != nil {
 			return store.DeliveryOperationResult{}, fmt.Errorf("claim delivery: %w", err)
 		}
@@ -170,7 +162,7 @@ func (s *Store) claim(ctx context.Context, tx *sql.Tx, now time.Time, r store.De
 			return store.DeliveryOperationResult{}, err
 		}
 		updated = publicDelivery(updated)
-		return store.DeliveryOperationResult{Claim: store.ClaimResult{Claimed: true, Message: &message, Delivery: &updated, ClaimToken: r.GeneratedClaimToken, DispatchAction: action}}, nil
+		return store.DeliveryOperationResult{Claim: store.ClaimResult{Claimed: true, Message: &message, Delivery: &updated, ClaimToken: r.GeneratedClaimToken, DispatchAction: action, HolderAddress: route.holder}}, nil
 	}
 }
 func noClaim(reason string, head *store.Delivery) store.DeliveryOperationResult {
@@ -191,18 +183,76 @@ func queuedInvalid(ctx context.Context, q queryer, now time.Time, d store.Delive
 	if !d.ExpiresAt.After(now) {
 		return true, "ttl_expired", nil
 	}
-	b, found, err := readBinding(ctx, q, d.RecipientAddress)
-	if err != nil {
-		return false, "", err
-	}
-	if !found || !b.Bound {
-		return true, "recipient_unbound", nil
-	}
-	if b.Generation != d.RecipientGeneration {
-		return true, "binding_generation_changed", nil
-	}
-	return false, "", nil
+	reason, err := undeliverableReason(ctx, q, d.RecipientAddress, d.RecipientGeneration)
+	return reason != "", reason, err
 }
+
+// route is what a claim delivers through: the recipient's own binding, or for
+// a seat, the current holder's session binding.
+type route struct {
+	binding   store.Binding
+	holder    string
+	holdingID int64
+	reason    string // set when there is nothing to claim through
+}
+
+func claimRoute(ctx context.Context, q queryer, r store.DeliveryOperationRequest) (route, error) {
+	if !store.IsSeatAddress(r.Address) {
+		binding, err := ownedBinding(ctx, q, r.Address, r.AdapterID)
+		if err != nil {
+			return route{}, err
+		}
+		if binding.Generation != r.Generation {
+			return route{}, store.ErrConflict
+		}
+		return route{binding: binding}, nil
+	}
+	// Seat mail queues on the seat and is resolved to its holder only now, so
+	// a change of holder carries queued mail over to the next one.
+	row, found, err := readSeatRow(ctx, q, r.Address)
+	if err != nil {
+		return route{}, err
+	}
+	if !found {
+		return route{}, store.ErrSeatNotFound
+	}
+	if row.retired || row.generation != r.Generation {
+		return route{}, store.ErrConflict
+	}
+	if !row.current.Valid {
+		return route{reason: "seat_vacant"}, nil
+	}
+	holding, err := readHolding(ctx, q, row.address, row.current.Int64)
+	if err != nil {
+		return route{}, err
+	}
+	binding, err := ownedBinding(ctx, q, holding.HolderAddress, r.AdapterID)
+	if err != nil {
+		return route{}, err
+	}
+	if binding.Generation != holding.HolderGeneration {
+		return route{reason: "holding_stale"}, nil
+	}
+	return route{binding: binding, holder: holding.HolderAddress, holdingID: holding.HoldingID}, nil
+}
+
+func ownedBinding(ctx context.Context, q queryer, address, adapterID string) (store.Binding, error) {
+	binding, found, err := readBinding(ctx, q, address)
+	if err != nil {
+		return store.Binding{}, err
+	}
+	if !found {
+		return store.Binding{}, store.ErrNotFound
+	}
+	if !binding.Bound {
+		return store.Binding{}, store.ErrNotBound
+	}
+	if binding.AdapterID != adapterID {
+		return store.Binding{}, store.ErrAdapterMismatch
+	}
+	return binding, nil
+}
+
 func claimAction(policy string, caps []string, availability string) (string, string) {
 	has := func(want string) bool {
 		for _, v := range caps {
