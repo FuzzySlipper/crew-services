@@ -386,7 +386,7 @@ func seatWrite(ctx context.Context, request SeatRequest, parsed seatArgs, self, 
 			fmt.Fprintf(stdout, "You wrote no handoff while you held it; the next holder sees the previous one. `seat handoff %s --set` still works for anyone.\n", seat)
 		}
 	case "retire":
-		fmt.Fprintf(stdout, "retired %s; mail still queued for it failed with seat_retired.\n", seat)
+		fmt.Fprintf(stdout, "retired %s; any mail still queued for it failed with seat_retired.\n", seat)
 	default:
 		fmt.Fprintf(stdout, "set the %s of %s to version %d (%d characters).\n", request.Write, seat, result.Text.Version, result.Text.Length)
 	}
