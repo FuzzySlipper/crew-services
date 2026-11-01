@@ -59,6 +59,8 @@ type Fabric interface {
 	Fail(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
 	NotInserted(ctx context.Context, deliveryID string, request fabricclient.NotInsertedRequest) (fabricclient.Delivery, error)
 	Submit(ctx context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error)
+	ListSeats(ctx context.Context, filter fabricclient.SeatFilter) ([]fabricclient.Seat, error)
+	SeatWrite(ctx context.Context, write, seat string, request fabricclient.SeatWriteRequest) (json.RawMessage, error)
 }
 
 // target is one fabric address the driver delivers to and the thread behind it.
@@ -67,6 +69,9 @@ type target struct {
 	ThreadID   string
 	Generation int64
 	Pinned     bool
+	// Holder is set for a seat the thread holds: the thread's own session
+	// address, which a seat-mail claim must name.
+	Holder string
 }
 
 // knownThread is a thread that has a session address, remembered across
@@ -90,12 +95,13 @@ type Driver struct {
 	mu      sync.Mutex
 	lease   fabricclient.Lease
 	native  Native
-	known   map[string]*knownThread // thread id -> session address record
-	targets map[string]*target      // address -> target
-	skipped map[string]struct{}     // threads that cannot take input
-	started []string                // threads announced by thread/started
-	read    map[string]NativeThread // latest read of each thread, for who
-	refused map[string]int          // consecutive passes the daemon refused to read a thread
+	known   map[string]*knownThread             // thread id -> session address record
+	targets map[string]*target                  // address -> target
+	skipped map[string]struct{}                 // threads that cannot take input
+	started []string                            // threads announced by thread/started
+	read    map[string]NativeThread             // latest read of each thread, for who
+	refused map[string]int                      // consecutive passes the daemon refused to read a thread
+	seats   map[string][]fabricclient.SeatRoute // held seats by holder address, as the last pass read them
 	passes  int
 	pumpMu  sync.Mutex
 	wake    chan struct{}
@@ -117,7 +123,7 @@ const forgetAfter = 14 * 24 * time.Hour
 const goneAfter = 3
 
 func NewDriver(fabric Fabric, now func() time.Time, cfg Config, log *slog.Logger) (*Driver, error) {
-	d := &Driver{fabric: fabric, now: now, cfg: cfg, log: log, known: map[string]*knownThread{}, read: map[string]NativeThread{}, refused: map[string]int{}, targets: map[string]*target{}, skipped: map[string]struct{}{}, wake: make(chan struct{}, 1)}
+	d := &Driver{fabric: fabric, now: now, cfg: cfg, log: log, known: map[string]*knownThread{}, read: map[string]NativeThread{}, refused: map[string]int{}, seats: map[string][]fabricclient.SeatRoute{}, targets: map[string]*target{}, skipped: map[string]struct{}{}, wake: make(chan struct{}, 1)}
 	if err := d.load(); err != nil {
 		return nil, err
 	}
@@ -258,11 +264,69 @@ func (d *Driver) Send(ctx context.Context, request crewcli.SendRequest) (crewcli
 	if request.To == "" || strings.TrimSpace(request.Body) == "" || request.OperationID == "" {
 		return crewcli.SendResult{}, errors.New("to, body and operation_id are required")
 	}
-	submitted, err := d.fabric.Submit(ctx, fabricclient.MessageRequest{ProducerID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), OperationID: request.OperationID, SenderAddress: from, RecipientAddress: request.To, Body: request.Body, ActivationPolicy: request.Policy, TTL: "24h"})
+	submitted, err := d.fabric.Submit(ctx, fabricclient.MessageRequest{ProducerID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), OperationID: request.OperationID, SenderAddress: from, RecipientAddress: request.To, Body: request.Body, ActivationPolicy: request.Policy, TTL: "24h", AsSeat: request.AsSeat})
 	if err != nil {
 		return crewcli.SendResult{}, err
 	}
-	return crewcli.SendResult{MessageID: submitted.Message.MessageID, From: from, To: request.To, Replayed: submitted.Replayed}, nil
+	return crewcli.SendResult{MessageID: submitted.Message.MessageID, From: submitted.Message.SenderAddress, To: request.To, Replayed: submitted.Replayed}, nil
+}
+
+// SeatWrite makes a seat write for a thread: take, leave, relieve, retire, or
+// setting a charter or handoff.
+func (d *Driver) SeatWrite(ctx context.Context, request crewcli.SeatRequest) (json.RawMessage, error) {
+	from, ok := d.Address(request.From)
+	if !ok {
+		address, err := d.RegisterThread(ctx, request.From)
+		if err != nil {
+			return nil, fmt.Errorf("thread %s has no crew address: %w", request.From, err)
+		}
+		from = address
+	}
+	body, err := crewcli.SeatWriteRequest(request, d.cfg.AdapterID, d.leaseToken(), from)
+	if err != nil {
+		return nil, err
+	}
+	result, err := d.fabric.SeatWrite(ctx, request.Write, request.Seat, body)
+	if err == nil {
+		d.Poke()
+	}
+	return result, err
+}
+
+// HeldSeats lists the seats a session address holds, as the last pass read
+// them.
+func (d *Driver) HeldSeats(address string) []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := []string{}
+	for _, r := range d.seats[address] {
+		out = append(out, r.Seat)
+	}
+	return out
+}
+
+// refreshSeats reads which seats this driver's threads hold. A failed read
+// keeps the last answer.
+func (d *Driver) refreshSeats(ctx context.Context) {
+	seats, err := fabricclient.HeldSeats(ctx, d.fabric, d.cfg.AdapterID)
+	if err != nil {
+		d.log.Warn("list held seats", "error", err)
+		return
+	}
+	d.mu.Lock()
+	d.seats = seats
+	d.mu.Unlock()
+}
+
+// routes are t followed by a target for each seat its thread holds.
+func (d *Driver) routes(t target) []target {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := []target{t}
+	for _, r := range d.seats[t.Address] {
+		out = append(out, target{Address: r.Seat, ThreadID: t.ThreadID, Generation: r.Generation, Holder: t.Address})
+	}
+	return out
 }
 
 // Address returns a registered thread's session address.
@@ -470,6 +534,7 @@ func (d *Driver) Pump(ctx context.Context) error {
 		loaded[id] = true
 	}
 	d.discover(ctx, native, loadedIDs)
+	d.refreshSeats(ctx)
 	statuses := map[string]string{}
 	for _, t := range d.snapshot() {
 		if !loaded[t.ThreadID] && pass%notLoadedEvery != 1 {
@@ -509,20 +574,19 @@ func (d *Driver) Pump(ctx context.Context) error {
 		if availability == "" {
 			continue
 		}
-		for i := 0; i < 20; i++ {
-			delivered, err := d.deliverOne(ctx, native, t, availability)
-			if err != nil {
-				d.log.Warn("delivery failed", "thread", t.ThreadID, "address", t.Address, "error", err)
-			}
-			if !delivered {
-				break
-			}
-			// What was just delivered may have started a turn.
-			if thread, err := native.ReadThread(ctx, t.ThreadID); err == nil {
-				statuses[t.ThreadID] = thread.Status
-				availability = availabilityOf(thread.Status)
-				if availability == "" {
+		for _, route := range d.routes(t) {
+			for i := 0; i < 20 && availability != ""; i++ {
+				delivered, err := d.deliverOne(ctx, native, route, availability)
+				if err != nil {
+					d.log.Warn("delivery failed", "thread", route.ThreadID, "address", route.Address, "error", err)
+				}
+				if !delivered {
 					break
+				}
+				// What was just delivered may have started a turn.
+				if thread, err := native.ReadThread(ctx, t.ThreadID); err == nil {
+					statuses[t.ThreadID] = thread.Status
+					availability = availabilityOf(thread.Status)
 				}
 			}
 		}
@@ -619,6 +683,13 @@ func (d *Driver) deliverOne(ctx context.Context, native Native, t target, availa
 	release := func() error {
 		_, err := d.fabric.Release(ctx, delivery.DeliveryID, fabricclient.ClaimTokenRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: fmt.Sprintf("crew-codex/release/%s/%d", delivery.DeliveryID, now.UnixNano()), ClaimToken: claim.ClaimToken})
 		return err
+	}
+	if claim.HolderAddress != "" && claim.HolderAddress != t.Holder {
+		// The seat changed hands since this pass read it.
+		if err := release(); err != nil {
+			return false, fmt.Errorf("release seat mail for %s: %w", claim.HolderAddress, err)
+		}
+		return false, nil
 	}
 	noWake := claim.Message.ActivationPolicy == "no_wake"
 	activeTurn := ""
@@ -835,13 +906,7 @@ func nativeHas(ctx context.Context, native Native, threadID, clientID string) (b
 
 // render is the text the session reads, naming the sender when Lookup knows it.
 func (d *Driver) render(ctx context.Context, m fabricclient.Message) string {
-	var sender *crewcli.SessionInfo
-	if d.Lookup != nil {
-		if info, ok := d.Lookup(ctx, m.SenderAddress); ok {
-			sender = &info
-		}
-	}
-	return crewcli.RenderMessage(m.SenderAddress, m.MessageID, m.Body, "crew-codex", sender)
+	return crewcli.RenderFabricMessage(ctx, m, "crew-codex", d.Lookup)
 }
 
 func (d *Driver) load() error {

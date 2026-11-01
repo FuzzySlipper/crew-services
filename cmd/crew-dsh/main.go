@@ -3,9 +3,10 @@
 // or restarts DSH; the host resumes a cold session itself when prompted.
 //
 //	crew-dsh [serve] [flags]   run the driver
-//	crew-dsh send [--policy P] --to ADDRESS TEXT...
+//	crew-dsh send [--policy P] [--as SEAT] --to ADDRESS TEXT...
 //	                           send a crew message from this DSH session
 //	crew-dsh who               list the sessions with crew addresses
+//	crew-dsh seat COMMAND      take, leave, relieve or read crew seats (seat alone lists the commands)
 //	crew-dsh address           print this DSH session's crew address
 //
 // send and address read the session from DSH_SESSION_ID, which DSH sets for
@@ -35,7 +36,7 @@ const defaultDriverURL = "http://127.0.0.1:8793"
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "send", "who":
+		case "send", "who", "seat":
 			os.Exit(crewcli.Main(context.Background(), os.Args[1:], os.Getenv("DSH_SESSION_ID"), driverURL(), os.Stdin, os.Stdout, os.Stderr))
 		case "address":
 			os.Exit(address())

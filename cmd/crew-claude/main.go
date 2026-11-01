@@ -3,9 +3,10 @@
 //
 //	crew-claude serve [flags]   run the driver
 //	crew-claude hook EVENT      run as a Claude Code hook (session-start, busy, step, idle, fill-notify)
-//	crew-claude send [--policy P] --to ADDRESS TEXT...
+//	crew-claude send [--policy P] [--as SEAT] --to ADDRESS TEXT...
 //	                            send a crew message from this Claude session
 //	crew-claude who             list Claude and Codex sessions with crew addresses
+//	crew-claude seat COMMAND    take, leave, relieve or read crew seats (seat alone lists the commands)
 package main
 
 import (
@@ -37,7 +38,7 @@ func main() {
 		hook(os.Args[2:])
 		return
 	}
-	if len(os.Args) > 1 && (os.Args[1] == "send" || os.Args[1] == "who") {
+	if len(os.Args) > 1 && (os.Args[1] == "send" || os.Args[1] == "who" || os.Args[1] == "seat") {
 		os.Exit(crewcli.Main(context.Background(), os.Args[1:], os.Getenv("CLAUDE_CODE_SESSION_ID"), driverURL(), os.Stdin, os.Stdout, os.Stderr))
 	}
 	args := os.Args[1:]

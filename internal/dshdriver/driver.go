@@ -2,6 +2,7 @@ package dshdriver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -46,6 +47,8 @@ type Fabric interface {
 	Fail(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
 	NotInserted(ctx context.Context, deliveryID string, request fabricclient.NotInsertedRequest) (fabricclient.Delivery, error)
 	Submit(ctx context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error)
+	ListSeats(ctx context.Context, filter fabricclient.SeatFilter) ([]fabricclient.Seat, error)
+	SeatWrite(ctx context.Context, write, seat string, request fabricclient.SeatWriteRequest) (json.RawMessage, error)
 }
 
 // target is one session address and the DSH session behind it.
@@ -57,6 +60,9 @@ type target struct {
 	UpdatedAt  time.Time
 	// State is what the last session/list said: busy, idle or not loaded.
 	State string
+	// Holder is set for a seat the session holds: the session's own address,
+	// which a seat-mail claim must name.
+	Holder string
 }
 
 // Driver delivers fabric messages into DSH sessions through the web host.
@@ -73,9 +79,10 @@ type Driver struct {
 
 	mu       sync.Mutex
 	lease    fabricclient.Lease
-	targets  map[string]*target // session id -> target
-	parents  map[string]string  // subagent session id -> parent session id
-	backoff  map[string]backoff // session id -> when a refused session is tried again
+	targets  map[string]*target                  // session id -> target
+	parents  map[string]string                   // subagent session id -> parent session id
+	backoff  map[string]backoff                  // session id -> when a refused session is tried again
+	seats    map[string][]fabricclient.SeatRoute // held seats by holder address, as the last pass read them
 	passes   int
 	pumpMu   sync.Mutex
 	wakeChan chan struct{}
@@ -95,7 +102,7 @@ const coldEvery = 5
 const eventWindow = 40
 
 func NewDriver(fabric Fabric, native Native, now func() time.Time, cfg Config, log *slog.Logger) *Driver {
-	return &Driver{fabric: fabric, native: native, now: now, sleep: sleepContext, cfg: cfg, log: log, targets: map[string]*target{}, parents: map[string]string{}, backoff: map[string]backoff{}, wakeChan: make(chan struct{}, 1)}
+	return &Driver{fabric: fabric, native: native, now: now, sleep: sleepContext, cfg: cfg, log: log, targets: map[string]*target{}, parents: map[string]string{}, backoff: map[string]backoff{}, seats: map[string][]fabricclient.SeatRoute{}, wakeChan: make(chan struct{}, 1)}
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {
@@ -217,6 +224,7 @@ func (d *Driver) Pump(ctx context.Context) error {
 		return fmt.Errorf("list sessions: %w", err)
 	}
 	d.refresh(ctx, sessions)
+	d.refreshSeats(ctx)
 	for _, t := range d.snapshot() {
 		if t.State == "not loaded" && pass%coldEvery != 1 {
 			continue
@@ -225,21 +233,23 @@ func (d *Driver) Pump(ctx context.Context) error {
 			continue
 		}
 		availability := availabilityOf(t.State)
-		for i := 0; i < 20; i++ {
-			delivered, err := d.deliverOne(ctx, t, availability)
-			if err != nil {
-				d.log.Warn("delivery failed", "session", t.SessionID, "address", t.Address, "error", err)
+		for _, route := range d.routes(t) {
+			for i := 0; i < 20; i++ {
+				delivered, err := d.deliverOne(ctx, route, availability)
+				if err != nil {
+					d.log.Warn("delivery failed", "session", route.SessionID, "address", route.Address, "error", err)
+				}
+				if !delivered {
+					break
+				}
+				// What was just delivered may have started a turn or loaded the
+				// session.
+				state, err := d.native.State(ctx, t.SessionID)
+				if err != nil {
+					break
+				}
+				availability = availabilityOf(liveState(state))
 			}
-			if !delivered {
-				break
-			}
-			// What was just delivered may have started a turn or loaded the
-			// session.
-			state, err := d.native.State(ctx, t.SessionID)
-			if err != nil {
-				break
-			}
-			availability = availabilityOf(liveState(state))
 		}
 	}
 	return nil
@@ -392,11 +402,55 @@ func (d *Driver) Send(ctx context.Context, request crewcli.SendRequest) (crewcli
 	if err != nil {
 		return crewcli.SendResult{}, fmt.Errorf("session %s has no crew address: %w", request.From, err)
 	}
-	submitted, err := d.fabric.Submit(ctx, fabricclient.MessageRequest{ProducerID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), OperationID: request.OperationID, SenderAddress: from, RecipientAddress: request.To, Body: request.Body, ActivationPolicy: request.Policy, TTL: "24h"})
+	submitted, err := d.fabric.Submit(ctx, fabricclient.MessageRequest{ProducerID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), OperationID: request.OperationID, SenderAddress: from, RecipientAddress: request.To, Body: request.Body, ActivationPolicy: request.Policy, TTL: "24h", AsSeat: request.AsSeat})
 	if err != nil {
 		return crewcli.SendResult{}, err
 	}
-	return crewcli.SendResult{MessageID: submitted.Message.MessageID, From: from, To: request.To, Replayed: submitted.Replayed}, nil
+	return crewcli.SendResult{MessageID: submitted.Message.MessageID, From: submitted.Message.SenderAddress, To: request.To, Replayed: submitted.Replayed}, nil
+}
+
+// SeatWrite makes a seat write for a session: take, leave, relieve, retire,
+// or setting a charter or handoff.
+func (d *Driver) SeatWrite(ctx context.Context, request crewcli.SeatRequest) (json.RawMessage, error) {
+	from, err := d.Address(ctx, request.From)
+	if err != nil {
+		return nil, fmt.Errorf("session %s has no crew address: %w", request.From, err)
+	}
+	body, err := crewcli.SeatWriteRequest(request, d.cfg.AdapterID, d.leaseToken(), from)
+	if err != nil {
+		return nil, err
+	}
+	result, err := d.fabric.SeatWrite(ctx, request.Write, request.Seat, body)
+	if err == nil {
+		d.Poke()
+	}
+	return result, err
+}
+
+// refreshSeats reads which seats this driver's sessions hold. A failed read
+// keeps the last answer.
+func (d *Driver) refreshSeats(ctx context.Context) {
+	seats, err := fabricclient.HeldSeats(ctx, d.fabric, d.cfg.AdapterID)
+	if err != nil {
+		d.log.Warn("list held seats", "error", err)
+		return
+	}
+	d.mu.Lock()
+	d.seats = seats
+	d.mu.Unlock()
+}
+
+// routes are t followed by a target for each seat its session holds.
+func (d *Driver) routes(t target) []target {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := []target{t}
+	for _, r := range d.seats[t.Address] {
+		seat := t
+		seat.Address, seat.Generation, seat.Holder = r.Seat, r.Generation, t.Address
+		out = append(out, seat)
+	}
+	return out
 }
 
 const attemptPrefix = "dsh:"
@@ -467,6 +521,10 @@ func (d *Driver) deliverOne(ctx context.Context, t target, availability string) 
 			return fmt.Errorf("release (%s): %w", why, err)
 		}
 		return nil
+	}
+	if claim.HolderAddress != "" && claim.HolderAddress != t.Holder {
+		// The seat changed hands since this pass read it.
+		return false, release("seat now held by " + claim.HolderAddress)
 	}
 	// Read the session before recording the dispatch: if the host is gone,
 	// the claim goes back to the queue instead of becoming unknown.
@@ -618,11 +676,5 @@ func (d *Driver) reconcileStuck(ctx context.Context, t target, head fabricclient
 
 // render is the text the session reads, naming the sender when Lookup knows it.
 func (d *Driver) render(ctx context.Context, m fabricclient.Message) string {
-	var sender *crewcli.SessionInfo
-	if d.Lookup != nil {
-		if info, ok := d.Lookup(ctx, m.SenderAddress); ok {
-			sender = &info
-		}
-	}
-	return crewcli.RenderMessage(m.SenderAddress, m.MessageID, m.Body, "crew-dsh", sender)
+	return crewcli.RenderFabricMessage(ctx, m, "crew-dsh", d.Lookup)
 }

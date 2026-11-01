@@ -139,6 +139,8 @@ type harness struct {
 	driver   *claudedriver.Driver
 	producer fabricclient.Lease
 	dir      string
+	// fabricURL is the test fabric's loopback API.
+	fabricURL string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -160,7 +162,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{ctx: ctx, svc: svc, fabric: fabric, clock: &clock{now: time.Now()}, inbox: &fakeInbox{gone: map[string]bool{}, failPost: map[string]bool{}, behaviour: map[string]string{}, transcripts: map[string]string{}}, dir: dir}
+	h := &harness{ctx: ctx, svc: svc, fabric: fabric, clock: &clock{now: time.Now()}, inbox: &fakeInbox{gone: map[string]bool{}, failPost: map[string]bool{}, behaviour: map[string]string{}, transcripts: map[string]string{}}, dir: dir, fabricURL: server.URL}
 	h.driver = h.newDriver(t)
 	if err := h.driver.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -868,5 +870,114 @@ func TestFailedAcknowledgementIsRetriedFromSavedInsertion(t *testing.T) {
 	defer flaky.mu.Unlock()
 	if len(flaky.ops) != 2 || flaky.ops[0] != flaky.ops[1] {
 		t.Fatalf("ack operation ids=%v, want one id retried", flaky.ops)
+	}
+}
+
+// Seat mail queues at the seat and goes into whichever session holds it when
+// the driver claims it; relief hands the seat and its later mail over, tells
+// the old holder, and fences sending as the seat.
+func TestSeatMailFollowsTheHolder(t *testing.T) {
+	h := newHarness(t)
+	sockA, sockB := h.socket(t, "a"), h.socket(t, "b")
+	addressA := h.register(t, h.driver, "session-a", sockA)
+	addressB := h.register(t, h.driver, "session-b", sockB)
+	seat := "reviewer@crew"
+	if _, err := h.driver.SeatWrite(h.ctx, crewcli.SeatRequest{From: "session-a", Write: "take", Seat: seat, OperationID: "take-a"}); err != nil {
+		t.Fatal(err)
+	}
+	h.send(t, "to-seat-1", seat, "please review the parser", "next_turn")
+	h.driver.Pump(h.ctx)
+	h.driver.Pump(h.ctx)
+	posts := h.inbox.sent()
+	if len(posts) != 1 || posts[0].socket != sockA {
+		t.Fatalf("posts = %+v", posts)
+	}
+	if !strings.HasPrefix(posts[0].text, "Crew message to your seat reviewer@crew from s/") || !strings.Contains(posts[0].text, "please review the parser") || !strings.HasSuffix(posts[0].text, `crew-claude send --as reviewer@crew --to `+service.SessionAddress("producer", "sender")+` "your reply"`) {
+		t.Fatalf("seat mail text = %q", posts[0].text)
+	}
+	if got := h.states(t, seat); len(got) != 1 || got[0] != "delivered" {
+		t.Fatalf("seat deliveries = %v", got)
+	}
+
+	if _, err := h.driver.SeatWrite(h.ctx, crewcli.SeatRequest{From: "session-b", Write: "relieve", Seat: seat, Note: "taking over reviews", OperationID: "relieve-b"}); err != nil {
+		t.Fatal(err)
+	}
+	h.send(t, "to-seat-2", seat, "and the lexer", "next_turn")
+	h.driver.Pump(h.ctx)
+	h.driver.Pump(h.ctx)
+	var toB, notice []posted
+	for _, p := range h.inbox.sent()[1:] {
+		switch p.socket {
+		case sockB:
+			toB = append(toB, p)
+		case sockA:
+			notice = append(notice, p)
+		}
+	}
+	if len(toB) != 1 || !strings.Contains(toB[0].text, "and the lexer") {
+		t.Fatalf("posts to the new holder = %+v", toB)
+	}
+	if len(notice) != 1 || !strings.Contains(notice[0].text, "Crew message from fabric/seats") || !strings.Contains(notice[0].text, "You no longer hold the seat reviewer@crew") || strings.Contains(notice[0].text, "To reply") {
+		t.Fatalf("relief notice = %+v", notice)
+	}
+
+	if _, err := h.driver.Send(h.ctx, crewcli.SendRequest{From: "session-a", To: addressB, Body: "still me", OperationID: "as-a", AsSeat: seat}); fabricclient.Code(err) != "not_holder" {
+		t.Fatalf("relieved holder sent as the seat: %v", err)
+	}
+	result, err := h.driver.Send(h.ctx, crewcli.SendRequest{From: "session-b", To: addressA, Body: "handover read", OperationID: "as-b", AsSeat: seat})
+	if err != nil || result.From != seat {
+		t.Fatalf("send as seat = %+v, %v", result, err)
+	}
+
+	api := httptest.NewServer(claudedriver.Handler(h.driver))
+	defer api.Close()
+	out := claudedriver.RunHook(h.ctx, api.URL, "session-start", claudedriver.HookInput{SessionID: "session-b", TranscriptPath: h.transcript("session-b")}, claudedriver.HookEnv{Socket: sockB, Token: "tok"})
+	if !strings.Contains(string(out), "You hold the crew seat reviewer@crew") {
+		t.Fatalf("session start context = %s", out)
+	}
+}
+
+// The seat commands every driver's CLI shares, run against a real fabric and
+// this driver's loopback API.
+func TestSeatCommands(t *testing.T) {
+	h := newHarness(t)
+	h.register(t, h.driver, "session-a", h.socket(t, "a"))
+	api := httptest.NewServer(claudedriver.Handler(h.driver))
+	defer api.Close()
+	t.Setenv("CREW_FABRIC_URL", h.fabricURL)
+	previous := crewcli.DriverURLs
+	crewcli.DriverURLs = map[string]string{"claude-code": api.URL}
+	t.Cleanup(func() { crewcli.DriverURLs = previous })
+	run := func(stdin string, args ...string) (int, string, string) {
+		var stdout, stderr strings.Builder
+		code := crewcli.Main(h.ctx, args, "session-a", api.URL, strings.NewReader(stdin), &stdout, &stderr)
+		return code, stdout.String(), stderr.String()
+	}
+	if code, out, errOut := run("", "seat", "take", "reviewer@crew", "--note", "first shift"); code != 0 || !strings.Contains(out, "you hold reviewer@crew") || !strings.Contains(out, "no charter yet") {
+		t.Fatalf("take = %d %q %q", code, out, errOut)
+	}
+	if code, out, errOut := run("Review parser changes.\nBe terse.", "seat", "charter", "reviewer@crew", "--set", "--expect", "0"); code != 0 || !strings.Contains(out, "version 1") {
+		t.Fatalf("charter set = %d %q %q", code, out, errOut)
+	}
+	if code, _, errOut := run("", "seat", "charter", "reviewer@crew", "--set", "--expect", "0", "stale edit"); code == 0 || !strings.Contains(errOut, "version_conflict: the current version is 1") {
+		t.Fatalf("stale charter set = %d %q", code, errOut)
+	}
+	if code, out, _ := run("", "seat", "show", "reviewer@crew"); code != 0 || !strings.Contains(out, "Review parser changes.\nBe terse.") || !strings.Contains(out, "Handoff: none yet") {
+		t.Fatalf("show = %q", out)
+	}
+	if code, out, _ := run("", "seat", "list", "--mine"); code != 0 || !strings.Contains(out, "reviewer@crew") || !strings.Contains(out, "(you)") || !strings.Contains(out, "Review parser changes.") {
+		t.Fatalf("list = %q", out)
+	}
+	if code, out, _ := run("", "who"); code != 0 || !strings.Contains(out, "SEATS") || !strings.Contains(out, "reviewer@crew") {
+		t.Fatalf("who = %q", out)
+	}
+	if code, out, _ := run("", "seat", "leave", "reviewer@crew"); code != 0 || !strings.Contains(out, "You wrote no handoff") {
+		t.Fatalf("leave = %q", out)
+	}
+	if code, out, _ := run("", "seat", "versions", "reviewer@crew", "charter"); code != 0 || !strings.Contains(out, "\n1 ") || !strings.Contains(out, "reviewer@crew") {
+		t.Fatalf("versions = %q", out)
+	}
+	if code, out, _ := run("", "seat", "charter", "reviewer@crew", "--version", "1"); code != 0 || !strings.Contains(out, "Be terse.") {
+		t.Fatalf("charter version 1 = %q", out)
 	}
 }

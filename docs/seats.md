@@ -1,12 +1,13 @@
 # Seats
 
-Status: the fabric core is built (2026-10-31, Den task #10519): schema
+Status: built (2026-10-31, Den task #10519). The fabric core is schema
 migration 10, the store and service operations, the HTTP routes under
-`/v1/seats`, and the proving-slice tests in `internal/sqlite/seat_test.go`.
-The `seat` CLI subcommands, driver support for claiming seat mail, and the
-cross-harness demo are not built yet. Once they are, the lasting contract rules
-move into the [messaging service specification](messaging-service-spec.md),
-and this note keeps the decisions and the reasons behind them.
+`/v1/seats`, and the proving-slice tests in `internal/sqlite/seat_test.go`. The
+drivers (crew-claude, crew-codex, crew-dsh) claim seat mail and share the
+`seat` commands and `send --as`. The cross-harness demo is still to come. After
+it, the lasting contract rules move into the
+[messaging service specification](messaging-service-spec.md), and this note
+keeps the decisions and the reasons behind them.
 
 ## Why
 
@@ -306,38 +307,56 @@ exact replay.
 Errors return `{"code": …}` and, for `seat_held` and `version_conflict`, a
 `detail` with the holding in the way or the current version.
 
-## Driver and CLI surface (not built yet)
+## Driver and CLI surface
 
-Each driver (crew-claude, crew-codex, crew-dsh) gets the same subcommands
-through the shared `crewcli` package, next to `send` and `who`, and Hermes calls
+Each driver (crew-claude, crew-codex, crew-dsh) has the same subcommands
+through the shared `crewcli` package, next to `send` and `who`. Hermes can call
 the same HTTP operations. No harness needs more than its driver already does.
 
 ```
-seat take ADDRESS [--note TEXT]
-seat leave ADDRESS [--note TEXT]
-seat relieve ADDRESS [--note TEXT]
-seat list [--scope SCOPE] [--mine] [--state vacant|held|stale]
-seat show ADDRESS
-seat charter ADDRESS [--set TEXT|-] [--expected-version N]
-seat handoff ADDRESS [--set TEXT|-] [--expected-version N]
-seat versions ADDRESS charter|handoff [--version N]
-seat holdings ADDRESS
-send --as ADDRESS --to ADDRESS TEXT...
+seat take SEAT [--note TEXT]
+seat leave SEAT [--note TEXT]
+seat relieve SEAT [--note TEXT]
+seat retire SEAT [--note TEXT]
+seat list [--scope SCOPE] [--state vacant|held|stale|retired] [--mine]
+seat show SEAT
+seat charter SEAT [--version N]
+seat charter SEAT --set [--expect VERSION] [TEXT... | -]
+seat handoff SEAT [--version N]
+seat handoff SEAT --set [--expect VERSION] [TEXT... | -]
+seat versions SEAT charter|handoff
+seat holdings SEAT
+send --as SEAT --to ADDRESS TEXT...
 ```
 
-`who` gains a seats column (the seats each session holds), from `list seats`
-filtered by holder. The session-start hook names the seats a resumed session
-still holds, with each charter's first line. Drivers learn which seats their
-sessions hold from the same listing when they claim work.
+Reads go straight to the fabric (`CREW_FABRIC_URL`, by default
+`http://127.0.0.1:8787`) and take `--json`. Writes go through the caller's own
+driver at `POST /v1/seat-write`, because a seat write needs the adapter's lease
+and the session's address. A fabric refusal comes back with its own status and
+body, so the command can name the holding in the way, or the current version
+to pass as `--expect`. `--set` with no text, or with `-`, reads the text from
+stdin.
 
-The text the agent sees frames the seat as something it holds, not something
-it is: "You hold the seat `lead@rusty-engine`. Its charter: … Mail sent to it
-comes to you." The charter sets behavior; the name is a handle.
+`who` has a SEATS column (the seats each session holds, marked stale where
+they are). On each delivery pass, every driver lists the held seats once. For
+each of its sessions it claims the session's own address first, then each seat
+that session holds, at the seat's generation. A claim names the holder it
+resolved. If that holder is another session (the seat changed hands since the
+listing), the driver releases the claim, and the pass for that session takes
+it. A stale holding is not in the listing, so its mail waits for relief.
 
-`seat take`, `seat relieve` and the session-start hook put charter and handoff
-text into the agent's context. That is the one place a size limit may later
-prove necessary (for example the first part plus a pointer to `seat show`).
-None is set at first.
+Seat mail is rendered as "Crew message to your seat SEAT from …", and its reply
+line is `send --as SEAT --to SENDER`. A message sent as a seat names the seat
+and the session holding it. Notices from `fabric/seats` have no reply line. The
+Claude Code and Codex session-start hooks name the seats a resumed session
+still holds, framed as held and not as identity. They point at
+`seat show SEAT` for the charter and handoff, and at writing a handoff before
+leaving. DSH has no session-start hook. A DSH agent sees its seats with
+`crew-dsh seat list --mine`.
+
+The context-injecting surfaces are where a size limit may later prove
+necessary. They do not inline charter text yet, only the pointer to
+`seat show`. No limit is set.
 
 ## Decisions
 

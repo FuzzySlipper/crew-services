@@ -134,20 +134,22 @@ func (f *fakeNative) callsWith(prefix string) []string {
 
 // fakeFabric hands out scripted claims and records settlements.
 type fakeFabric struct {
-	mu        sync.Mutex
-	bindings  map[string]fabricclient.Binding
-	claims    map[string][]fabricclient.Claim // address -> next claims
-	claimReqs []fabricclient.ClaimRequest
-	binds     []fabricclient.BindRequest
-	begun     []string
-	beginOps  []string
-	acked     []string
-	unknown   []string
-	released  []string
-	failed    []string
-	requeued  []fabricclient.NotInsertedRequest
-	ackErr    error
-	submitted []fabricclient.MessageRequest
+	mu         sync.Mutex
+	bindings   map[string]fabricclient.Binding
+	claims     map[string][]fabricclient.Claim // address -> next claims
+	claimReqs  []fabricclient.ClaimRequest
+	binds      []fabricclient.BindRequest
+	begun      []string
+	beginOps   []string
+	acked      []string
+	unknown    []string
+	released   []string
+	failed     []string
+	requeued   []fabricclient.NotInsertedRequest
+	ackErr     error
+	submitted  []fabricclient.MessageRequest
+	seats      []fabricclient.Seat
+	seatWrites []string
 }
 
 func newFakeFabric() *fakeFabric {
@@ -240,6 +242,25 @@ func (f *fakeFabric) Unknown(_ context.Context, id string, _ fabricclient.Reconc
 	defer f.mu.Unlock()
 	f.unknown = append(f.unknown, id)
 	return fabricclient.Delivery{DeliveryID: id, State: "outcome_unknown"}, nil
+}
+
+func (f *fakeFabric) ListSeats(_ context.Context, _ fabricclient.SeatFilter) ([]fabricclient.Seat, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.seats, nil
+}
+func (f *fakeFabric) SeatWrite(_ context.Context, write, seat string, r fabricclient.SeatWriteRequest) (json.RawMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seatWrites = append(f.seatWrites, write+" "+seat+" "+r.SessionAddress)
+	return json.RawMessage(`{"seat":{"address":"` + seat + `"},"holding":{"holding_id":1},"replayed":false}`), nil
+}
+
+// holdSeat makes holder (driven by adapterID) the holder of seat.
+func (f *fakeFabric) holdSeat(seat string, generation int64, holder, adapterID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seats = append(f.seats, fabricclient.Seat{Address: seat, Generation: generation, State: "held", Holding: &fabricclient.Holding{SeatAddress: seat, HoldingID: 1, HolderAddress: holder, HolderAdapterID: adapterID}})
 }
 
 func (f *fakeFabric) Submit(_ context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error) {
@@ -852,5 +873,50 @@ func TestNotLoadedThreadWithOnlyItsOwnQueueIsNotWoken(t *testing.T) {
 	}
 	if got := wakeCalls(native); len(got) != 0 {
 		t.Fatalf("woke a thread with no crew delivery queued: %v", got)
+	}
+}
+
+func TestSeatMailIsClaimedAtTheSeatAndQueuedIntoTheHolder(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	address := loadedThread(t, d, native, "thread-1", "idle")
+	fabric.holdSeat("reviewer@crew", 2, address, d.cfg.AdapterID)
+	fabric.holdSeat("lead@crew", 1, "s/elsewhere", "crew-claude")
+	claim := claimFor("reviewer@crew", "d1", "deliver_at_idle")
+	claim.HolderAddress = address
+	fabric.claims["reviewer@crew"] = []fabricclient.Claim{claim}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := native.callsWith("queue "); !slices.Equal(got, []string{"queue thread-1 crew-delivery:d1"}) {
+		t.Fatalf("queue calls = %v", got)
+	}
+	seatClaims := map[string]int64{}
+	for _, r := range fabric.claimReqs {
+		if r.RecipientAddress != address {
+			seatClaims[r.RecipientAddress] = r.RecipientGeneration
+		}
+	}
+	if len(seatClaims) != 1 || seatClaims["reviewer@crew"] != 2 {
+		t.Fatalf("seat claims = %v; want only reviewer@crew at generation 2", seatClaims)
+	}
+	if !slices.Equal(fabric.acked, []string{"d1"}) {
+		t.Fatalf("acked %v", fabric.acked)
+	}
+}
+
+func TestSeatMailForAnotherHolderIsReleased(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	address := loadedThread(t, d, native, "thread-1", "idle")
+	fabric.holdSeat("reviewer@crew", 1, address, d.cfg.AdapterID)
+	claim := claimFor("reviewer@crew", "d1", "deliver_at_idle")
+	claim.HolderAddress = "s/the-new-holder"
+	fabric.claims["reviewer@crew"] = []fabricclient.Claim{claim}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(native.callsWith("queue ")) != 0 || !slices.Equal(fabric.released, []string{"d1"}) || len(fabric.begun) != 0 {
+		t.Fatalf("queue %v released %v begun %v", native.callsWith("queue "), fabric.released, fabric.begun)
 	}
 }

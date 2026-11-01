@@ -58,6 +58,10 @@ type Message struct {
 	RecipientAddress string `json:"recipient_address"`
 	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
 	ActivationPolicy string `json:"activation_policy"`
+	// SenderSession is the session behind a message sent as a seat, whose
+	// SenderAddress is then the seat.
+	SenderSession        string `json:"sender_session,omitempty"`
+	SenderCharterVersion int64  `json:"sender_charter_version,omitempty"`
 }
 
 type MessageRequest struct {
@@ -69,6 +73,8 @@ type MessageRequest struct {
 	Body             string `json:"body"`
 	ActivationPolicy string `json:"activation_policy,omitempty"`
 	TTL              string `json:"ttl"`
+	// AsSeat sends as a seat SenderAddress holds.
+	AsSeat string `json:"as_seat,omitempty"`
 }
 
 type SubmittedMessage struct {
@@ -98,6 +104,8 @@ type Claim struct {
 	Head           *Delivery `json:"head,omitempty"`
 	ClaimToken     string    `json:"claim_token,omitempty"`
 	DispatchAction string    `json:"dispatch_action,omitempty"`
+	// HolderAddress is the session a seat-mail claim delivers into.
+	HolderAddress string `json:"holder_address,omitempty"`
 }
 
 type ClaimRequest struct {
@@ -248,6 +256,7 @@ func (c *Client) call(ctx context.Context, method, path string, body any, target
 		reader = bytes.NewReader(encoded)
 	}
 	u := *c.base
+	path, u.RawQuery, _ = strings.Cut(path, "?")
 	escapedPath := strings.TrimRight(u.EscapedPath(), "/") + path
 	decodedPath, err := url.PathUnescape(escapedPath)
 	if err != nil {

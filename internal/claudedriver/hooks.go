@@ -39,7 +39,9 @@ func Handler(d *Driver) http.Handler {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"address": address})
+		// A resumed session may still hold seats.
+		d.refreshSeats(r.Context())
+		writeJSON(w, http.StatusOK, map[string]any{"address": address, "seats": d.HeldSeats(address)})
 	})
 	mux.HandleFunc("POST /v1/sessions/{sessionID}/state", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -78,6 +80,7 @@ func Handler(d *Driver) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("POST /v1/seat-write", crewcli.ServeSeatWrite(d.SeatWrite))
 	mux.HandleFunc("GET /v1/sessions/{sessionID}/address", func(w http.ResponseWriter, r *http.Request) {
 		address, ok := d.Address(r.PathValue("sessionID"))
 		if !ok {
@@ -126,12 +129,14 @@ func RunHook(ctx context.Context, driverURL, event string, in HookInput, env Hoo
 			return nil
 		}
 		var out struct {
-			Address string `json:"address"`
+			Address string   `json:"address"`
+			Seats   []string `json:"seats"`
 		}
 		if err := client.do(ctx, http.MethodPost, "/v1/sessions", map[string]string{"session_id": in.SessionID, "socket": env.Socket, "token": env.Token, "cwd": in.Cwd, "transcript": in.TranscriptPath}, &out); err != nil || out.Address == "" {
 			return nil
 		}
-		return hookOutput("SessionStart", map[string]any{"additionalContext": fmt.Sprintf("Your crew messaging address is %s. Crew services (for example crew-review, when a review check gate fails) send messages to this session there; pass it as notify_address where a tool accepts one.", out.Address)})
+		text := fmt.Sprintf("Your crew messaging address is %s. Crew services (for example crew-review, when a review check gate fails) send messages to this session there; pass it as notify_address where a tool accepts one.", out.Address)
+		return hookOutput("SessionStart", map[string]any{"additionalContext": text + crewcli.SeatContext("crew-claude", out.Seats)})
 	case "busy", "step":
 		// UserPromptSubmit (busy) and PostToolUse (step) run only inside an
 		// active turn, so context they return can never start one. The call

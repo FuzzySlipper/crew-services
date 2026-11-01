@@ -25,6 +25,7 @@ func Handler(d *Driver) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"address": address})
 	})
+	mux.HandleFunc("POST /v1/seat-write", crewcli.ServeSeatWrite(d.SeatWrite))
 	mux.HandleFunc("POST /v1/send", func(w http.ResponseWriter, r *http.Request) {
 		var body crewcli.SendRequest
 		if err := json.NewDecoder(io.LimitReader(r.Body, 512*1024)).Decode(&body); err != nil {

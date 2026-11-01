@@ -428,17 +428,19 @@ func (h *fakeHost) promptCalls() []string {
 
 // fakeFabric hands out scripted claims and records settlements.
 type fakeFabric struct {
-	mu        sync.Mutex
-	bindings  map[string]fabricclient.Binding
-	claims    map[string][]fabricclient.Claim
-	claimReqs []fabricclient.ClaimRequest
-	begun     []string
-	acked     []string
-	unknown   []string
-	released  []string
-	failed    []string
-	requeued  []fabricclient.NotInsertedRequest
-	submitted []fabricclient.MessageRequest
+	mu         sync.Mutex
+	bindings   map[string]fabricclient.Binding
+	claims     map[string][]fabricclient.Claim
+	claimReqs  []fabricclient.ClaimRequest
+	begun      []string
+	acked      []string
+	unknown    []string
+	released   []string
+	failed     []string
+	requeued   []fabricclient.NotInsertedRequest
+	submitted  []fabricclient.MessageRequest
+	seats      []fabricclient.Seat
+	seatWrites []string
 }
 
 func newFakeFabric() *fakeFabric {
@@ -506,6 +508,25 @@ func (f *fakeFabric) Unknown(_ context.Context, id string, _ fabricclient.Reconc
 	f.unknown = append(f.unknown, id)
 	return fabricclient.Delivery{DeliveryID: id, State: "outcome_unknown"}, nil
 }
+func (f *fakeFabric) ListSeats(_ context.Context, _ fabricclient.SeatFilter) ([]fabricclient.Seat, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.seats, nil
+}
+func (f *fakeFabric) SeatWrite(_ context.Context, write, seat string, r fabricclient.SeatWriteRequest) (json.RawMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seatWrites = append(f.seatWrites, write+" "+seat+" "+r.SessionAddress)
+	return json.RawMessage(`{"seat":{"address":"` + seat + `"},"holding":{"holding_id":1},"replayed":false}`), nil
+}
+
+// holdSeat makes holder (driven by adapterID) the holder of seat.
+func (f *fakeFabric) holdSeat(seat string, generation int64, holder, adapterID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seats = append(f.seats, fabricclient.Seat{Address: seat, Generation: generation, State: "held", Holding: &fabricclient.Holding{SeatAddress: seat, HoldingID: 1, HolderAddress: holder, HolderAdapterID: adapterID}})
+}
+
 func (f *fakeFabric) Submit(_ context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -962,4 +983,53 @@ type capture struct {
 func (c *capture) Prompt(ctx context.Context, p PromptRequest) error {
 	*c.text = p.Text
 	return c.Native.Prompt(ctx, p)
+}
+
+func TestSeatMailIsPromptedIntoTheHolder(t *testing.T) {
+	h := newHarness(t)
+	h.host.add("session-a", SessionSummary{}, true, false)
+	h.pump(t)
+	h.fabric.holdSeat("reviewer@crew", 3, "s/session-a", "crew-dsh")
+	var text string
+	h.d.native = &capture{Native: h.d.native, text: &text}
+	claim := claimFor("reviewer@crew", "d1", "deliver_at_idle", "next_turn")
+	claim.HolderAddress = "s/session-a"
+	claim.Message.SenderAddress = "s/peer"
+	h.fabric.queue("reviewer@crew", claim)
+	h.pump(t)
+	if calls := h.host.promptCalls(); len(calls) != 1 || calls[0] != "session-a queue crew-delivery:d1" {
+		t.Fatalf("prompts = %v", calls)
+	}
+	if !strings.HasPrefix(text, "Crew message to your seat reviewer@crew from s/peer") || !strings.HasSuffix(text, `crew-dsh send --as reviewer@crew --to s/peer "your reply"`) {
+		t.Fatalf("text = %q", text)
+	}
+	for _, r := range h.fabric.claimReqs {
+		if r.RecipientAddress == "reviewer@crew" && r.RecipientGeneration != 3 {
+			t.Fatalf("claimed the seat at generation %d", r.RecipientGeneration)
+		}
+	}
+}
+
+func TestHandlerSeatWriteAndSendAsSeat(t *testing.T) {
+	h := newHarness(t)
+	h.host.add("session-a", SessionSummary{}, true, false)
+	h.pump(t)
+	server := httptest.NewServer(Handler(h.d))
+	defer server.Close()
+	request := crewcli.SeatRequest{From: "session-a", Write: "take", Seat: "reviewer@crew", OperationID: "op-take"}
+	data, _ := json.Marshal(request)
+	resp, err := http.Post(server.URL+"/v1/seat-write", "application/json", strings.NewReader(string(data)))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("seat write = %v, %v", resp, err)
+	}
+	resp.Body.Close()
+	if len(h.fabric.seatWrites) != 1 || h.fabric.seatWrites[0] != "take reviewer@crew s/session-a" {
+		t.Fatalf("seat writes = %v", h.fabric.seatWrites)
+	}
+	if _, err := crewcli.Send(context.Background(), server.URL, crewcli.SendRequest{From: "session-a", To: "s/other", Body: "hi", OperationID: "op1", AsSeat: "reviewer@crew"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.fabric.submitted[0]; got.AsSeat != "reviewer@crew" || got.SenderAddress != "s/session-a" {
+		t.Fatalf("submitted %+v", got)
+	}
 }

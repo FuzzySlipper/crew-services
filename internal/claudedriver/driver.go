@@ -38,6 +38,8 @@ type Fabric interface {
 	Acknowledge(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
 	Unknown(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
 	Submit(ctx context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error)
+	ListSeats(ctx context.Context, filter fabricclient.SeatFilter) ([]fabricclient.Seat, error)
+	SeatWrite(ctx context.Context, write, seat string, request fabricclient.SeatWriteRequest) (json.RawMessage, error)
 }
 
 type Config struct {
@@ -128,6 +130,10 @@ type Driver struct {
 	// pump released, so passes do not keep claiming it while it waits for an
 	// in-turn hook. Any hook from the session clears it.
 	noWakeHeld map[string]time.Time
+	// seats are the seats this driver's sessions hold, by holder address, as
+	// the last pass read them. Their mail is claimed at the seat and delivered
+	// into the holder like the holder's own.
+	seats map[string][]fabricclient.SeatRoute
 }
 
 // noWakeHoldFor is how long the pump leaves a released no_wake head alone
@@ -151,7 +157,7 @@ func New(fabric Fabric, inbox Inbox, now func() time.Time, cfg Config, log *slog
 	if cfg.QueuedTimeout == 0 {
 		cfg.QueuedTimeout = 6 * time.Hour
 	}
-	d := &Driver{fabric: fabric, inbox: inbox, now: now, cfg: cfg, log: log, sessions: map[string]*Session{}, dispatches: map[string]*Dispatch{}, wake: make(chan struct{}, 1), noWakeHeld: map[string]time.Time{}}
+	d := &Driver{fabric: fabric, inbox: inbox, now: now, cfg: cfg, log: log, sessions: map[string]*Session{}, dispatches: map[string]*Dispatch{}, wake: make(chan struct{}, 1), noWakeHeld: map[string]time.Time{}, seats: map[string][]fabricclient.SeatRoute{}}
 	if err := d.load(); err != nil {
 		return nil, err
 	}
@@ -265,11 +271,72 @@ func (d *Driver) Send(ctx context.Context, request crewcli.SendRequest) (crewcli
 	if request.To == "" || strings.TrimSpace(request.Body) == "" || request.OperationID == "" {
 		return crewcli.SendResult{}, errors.New("to, body and operation_id are required")
 	}
-	submitted, err := d.fabric.Submit(ctx, fabricclient.MessageRequest{ProducerID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), OperationID: request.OperationID, SenderAddress: from, RecipientAddress: request.To, Body: request.Body, ActivationPolicy: request.Policy, TTL: "24h"})
+	submitted, err := d.fabric.Submit(ctx, fabricclient.MessageRequest{ProducerID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), OperationID: request.OperationID, SenderAddress: from, RecipientAddress: request.To, Body: request.Body, ActivationPolicy: request.Policy, TTL: "24h", AsSeat: request.AsSeat})
 	if err != nil {
 		return crewcli.SendResult{}, err
 	}
-	return crewcli.SendResult{MessageID: submitted.Message.MessageID, From: from, To: request.To, Replayed: submitted.Replayed}, nil
+	return crewcli.SendResult{MessageID: submitted.Message.MessageID, From: submitted.Message.SenderAddress, To: request.To, Replayed: submitted.Replayed}, nil
+}
+
+// SeatWrite makes a seat write for a registered session: take, leave,
+// relieve, retire, or setting a charter or handoff.
+func (d *Driver) SeatWrite(ctx context.Context, request crewcli.SeatRequest) (json.RawMessage, error) {
+	from, ok := d.Address(request.From)
+	if !ok {
+		return nil, fmt.Errorf("session %s is not registered with crew-claude; it registers when it starts or resumes", request.From)
+	}
+	body, err := crewcli.SeatWriteRequest(request, d.cfg.AdapterID, d.leaseToken(), from)
+	if err != nil {
+		return nil, err
+	}
+	result, err := d.fabric.SeatWrite(ctx, request.Write, request.Seat, body)
+	if err == nil {
+		// A seat just taken may have mail waiting.
+		d.Poke()
+	}
+	return result, err
+}
+
+// HeldSeats lists the seats a session holds, as the last pass read them.
+func (d *Driver) HeldSeats(address string) []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := []string{}
+	for _, r := range d.seats[address] {
+		out = append(out, r.Seat)
+	}
+	return out
+}
+
+// refreshSeats reads which seats this driver's sessions hold. A failed read
+// keeps the last answer: seat mail then waits a pass, and the claim fences a
+// seat that changed hands.
+func (d *Driver) refreshSeats(ctx context.Context) {
+	seats, err := fabricclient.HeldSeats(ctx, d.fabric, d.cfg.AdapterID)
+	if err != nil {
+		d.log.Warn("list held seats", "error", err)
+		return
+	}
+	d.mu.Lock()
+	d.seats = seats
+	d.mu.Unlock()
+}
+
+// route is one fabric queue a session takes mail from: its own address, or a
+// seat it holds.
+type route struct {
+	Address    string
+	Generation int64
+}
+
+func (d *Driver) routes(s Session) []route {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := []route{{s.Address, s.Generation}}
+	for _, r := range d.seats[s.Address] {
+		out = append(out, route{r.Seat, r.Generation})
+	}
+	return out
 }
 
 // Poke asks the run loop for an immediate delivery pass.
@@ -323,14 +390,17 @@ func (d *Driver) renew(ctx context.Context) error {
 func (d *Driver) Pump(ctx context.Context) {
 	d.pumpMu.Lock()
 	defer d.pumpMu.Unlock()
+	d.refreshSeats(ctx)
 	for _, s := range d.snapshot() {
-		for i := 0; i < 20; i++ {
-			delivered, err := d.deliverOne(ctx, s.SessionID)
-			if err != nil {
-				d.log.Warn("delivery pass failed", "session", s.SessionID, "address", s.Address, "error", err)
-			}
-			if !delivered {
-				break
+		for _, r := range d.routes(s) {
+			for i := 0; i < 20; i++ {
+				delivered, err := d.deliverOne(ctx, s.SessionID, r)
+				if err != nil {
+					d.log.Warn("delivery pass failed", "session", s.SessionID, "address", r.Address, "error", err)
+				}
+				if !delivered {
+					break
+				}
 			}
 		}
 	}
@@ -374,10 +444,10 @@ func (d *Driver) availability(s Session) string {
 	return "idle"
 }
 
-// deliverOne claims and posts at most one message for a session, or settles
-// the one it posted earlier. It reports whether a message went out, so the
-// caller keeps draining.
-func (d *Driver) deliverOne(ctx context.Context, sessionID string) (bool, error) {
+// deliverOne claims and posts at most one message from one of a session's
+// routes, or settles the one it posted earlier. It reports whether a message
+// went out, so the caller keeps draining.
+func (d *Driver) deliverOne(ctx context.Context, sessionID string, r route) (bool, error) {
 	s, ok := d.session(sessionID)
 	if !ok {
 		return false, nil
@@ -390,7 +460,7 @@ func (d *Driver) deliverOne(ctx context.Context, sessionID string) (bool, error)
 	if held && now.Sub(heldAt) < noWakeHoldFor {
 		return false, nil
 	}
-	claim, err := d.fabric.Claim(ctx, fabricclient.ClaimRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("claim", s.Address, now), RecipientAddress: s.Address, RecipientGeneration: s.Generation, Availability: d.availability(s), ClaimDuration: d.cfg.ClaimDuration.String()})
+	claim, err := d.fabric.Claim(ctx, fabricclient.ClaimRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("claim", r.Address, now), RecipientAddress: r.Address, RecipientGeneration: r.Generation, Availability: d.availability(s), ClaimDuration: d.cfg.ClaimDuration.String()})
 	if err != nil {
 		return false, fmt.Errorf("claim: %w", err)
 	}
@@ -407,6 +477,10 @@ func (d *Driver) deliverOne(ctx context.Context, sessionID string) (bool, error)
 		action = delivery.DispatchAction
 	}
 	release := d.releaser(ctx, token, claim, now)
+	if claim.HolderAddress != "" && claim.HolderAddress != s.Address {
+		// The seat changed hands since this pass read it.
+		return false, release(errors.New("seat " + r.Address + " is now held by " + claim.HolderAddress))
+	}
 	if policy, _ := normalizePolicy(claim.Message.ActivationPolicy); policy == "no_wake" {
 		// Every inbox frame can start a turn: "next" landing during a turn's
 		// final, tool-free response starts a new one after Stop. A no_wake
@@ -450,7 +524,7 @@ func (d *Driver) deliverOne(ctx context.Context, sessionID string) (bool, error)
 		d.log.Warn("inbox write failed; settling from the transcript", "session", s.SessionID, "delivery", delivery.DeliveryID, "error", err)
 		return false, nil
 	}
-	d.log.Info("posted", "session", s.SessionID, "address", s.Address, "delivery", delivery.DeliveryID, "action", action, "priority", priority)
+	d.log.Info("posted", "session", s.SessionID, "address", r.Address, "delivery", delivery.DeliveryID, "action", action, "priority", priority)
 	return true, nil
 }
 
@@ -635,6 +709,7 @@ func (d *Driver) TurnContext(ctx context.Context, sessionID string) (string, err
 	defer cancel()
 	d.mu.Lock()
 	s, ok := d.sessions[sessionID]
+	var self Session
 	if ok {
 		delete(d.noWakeHeld, sessionID)
 		if !s.Busy {
@@ -642,15 +717,21 @@ func (d *Driver) TurnContext(ctx context.Context, sessionID string) (string, err
 			s.SeenAt = d.now().UTC()
 			_ = d.saveLocked()
 		}
+		self = *s
 	}
 	d.mu.Unlock()
 	if !ok {
 		return "", nil
 	}
-	for i := 0; i < 5; i++ {
-		text, settled, err := d.turnOne(ctx, sessionID)
-		if err != nil || text != "" || !settled {
-			return text, err
+	for _, r := range d.routes(self) {
+		for i := 0; i < 5; i++ {
+			text, settled, err := d.turnOne(ctx, sessionID, r)
+			if err != nil || text != "" {
+				return text, err
+			}
+			if !settled {
+				break
+			}
 		}
 	}
 	return "", nil
@@ -658,14 +739,14 @@ func (d *Driver) TurnContext(ctx context.Context, sessionID string) (string, err
 
 // turnOne claims the head for an active turn and returns its text, or settles
 // a head already handed out (settled reports that, so the caller looks again).
-func (d *Driver) turnOne(ctx context.Context, sessionID string) (string, bool, error) {
+func (d *Driver) turnOne(ctx context.Context, sessionID string, r route) (string, bool, error) {
 	s, ok := d.session(sessionID)
 	if !ok {
 		return "", false, nil
 	}
 	token := d.leaseToken()
 	now := d.now().UTC()
-	claim, err := d.fabric.Claim(ctx, fabricclient.ClaimRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("claim", s.Address, now), RecipientAddress: s.Address, RecipientGeneration: s.Generation, Availability: "busy", ClaimDuration: d.cfg.ClaimDuration.String()})
+	claim, err := d.fabric.Claim(ctx, fabricclient.ClaimRequest{AdapterID: d.cfg.AdapterID, LeaseToken: token, OperationID: opID("claim", r.Address, now), RecipientAddress: r.Address, RecipientGeneration: r.Generation, Availability: "busy", ClaimDuration: d.cfg.ClaimDuration.String()})
 	if err != nil {
 		return "", false, fmt.Errorf("claim: %w", err)
 	}
@@ -682,6 +763,9 @@ func (d *Driver) turnOne(ctx context.Context, sessionID string) (string, bool, e
 		action = delivery.DispatchAction
 	}
 	release := d.releaser(ctx, token, claim, now)
+	if claim.HolderAddress != "" && claim.HolderAddress != s.Address {
+		return "", false, release(errors.New("seat " + r.Address + " is now held by " + claim.HolderAddress))
+	}
 	if action != "deliver_next_step" {
 		return "", false, release(errors.New("unexpected dispatch action " + action + " for an active turn"))
 	}
@@ -705,19 +789,13 @@ func (d *Driver) turnOne(ctx context.Context, sessionID string) (string, bool, e
 	if saveErr != nil {
 		d.log.Warn("save driver state", "error", saveErr)
 	}
-	d.log.Info("handed to the active turn through a hook", "session", s.SessionID, "address", s.Address, "delivery", delivery.DeliveryID, "policy", claim.Message.ActivationPolicy)
+	d.log.Info("handed to the active turn through a hook", "session", s.SessionID, "address", r.Address, "delivery", delivery.DeliveryID, "policy", claim.Message.ActivationPolicy)
 	return text, false, nil
 }
 
 // render is the text the session reads, naming the sender when Lookup knows it.
 func (d *Driver) render(ctx context.Context, m fabricclient.Message) string {
-	var sender *crewcli.SessionInfo
-	if d.Lookup != nil {
-		if info, ok := d.Lookup(ctx, m.SenderAddress); ok {
-			sender = &info
-		}
-	}
-	return crewcli.RenderMessage(m.SenderAddress, m.MessageID, m.Body, "crew-claude", sender)
+	return crewcli.RenderFabricMessage(ctx, m, "crew-claude", d.Lookup)
 }
 
 // nativeMessageID derives the UUID-shaped msg_id the inbox records (it ignores
