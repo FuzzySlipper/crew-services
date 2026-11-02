@@ -362,6 +362,42 @@ func (d *Driver) Sessions() []crewcli.SessionInfo {
 
 // Address returns a session's crew address. A subagent session answers with
 // its parent's address, since a subagent cannot take crew messages itself.
+// Model is the model of a session's newest assistant message, read from the
+// end of its log, or "".
+func (d *Driver) Model(ctx context.Context, sessionID string) string {
+	if strings.TrimSpace(sessionID) == "" {
+		return ""
+	}
+	events, err := d.native.Events(ctx, sessionID, 20)
+	if err != nil {
+		return ""
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		if model := eventModel(events[i]); model != "" {
+			return model
+		}
+	}
+	return ""
+}
+
+// eventModel is the model an assistant/message event names, or "".
+func eventModel(e Event) string {
+	if e.Type != "assistant/message" {
+		return ""
+	}
+	var data struct {
+		Message struct {
+			Source struct {
+				Model string `json:"model"`
+			} `json:"source"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(e.Data, &data) != nil {
+		return ""
+	}
+	return data.Message.Source.Model
+}
+
 func (d *Driver) Address(ctx context.Context, sessionID string) (string, error) {
 	if strings.TrimSpace(sessionID) == "" {
 		return "", errors.New("session id is required")

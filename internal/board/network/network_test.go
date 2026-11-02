@@ -564,3 +564,27 @@ func TestAReleasedAttachmentIsSharedSoThePartnerCanShowIt(t *testing.T) {
 		t.Fatalf("den's render = %q", text)
 	}
 }
+
+func TestASessionsModelTravelsWithItsPosts(t *testing.T) {
+	den, interlake, _, _, _ := twoSites(t)
+	if _, _, err := den.svc.CreateBoard(den.ctx, board.CreateBoardRequest{Actor: board.Actor{Person: "patch"}, OperationID: den.op(), Name: "design", Network: "friends"}); err != nil {
+		t.Fatal(err)
+	}
+	opened, _, err := den.svc.OpenThread(den.ctx, board.OpenThreadRequest{Actor: board.Actor{SessionAddress: den.session, Model: "claude-opus-5-5"}, OperationID: den.op(), Board: "design", Title: "Models", Body: "written by a session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := den.svc.Edit(den.ctx, board.EditRequest{Actor: board.Actor{SessionAddress: den.session, Model: "claude-sonnet-5-5"}, OperationID: den.op(), Post: opened.Post.ID, Body: "edited by a session"}); err != nil {
+		t.Fatal(err)
+	}
+	den.pass()
+	interlake.pass()
+	got, err := interlake.svc.GetPost(interlake.ctx, opened.Post.ID)
+	if err != nil || got.Author.Model != "claude-opus-5-5" || got.Body != "edited by a session" {
+		t.Fatalf("interlake's copy = %+v, %v", got, err)
+	}
+	revisions, _ := interlake.svc.Revisions(interlake.ctx, opened.Post.ID)
+	if len(revisions) != 2 || revisions[0].Model != "claude-opus-5-5" || revisions[1].Model != "claude-sonnet-5-5" {
+		t.Fatalf("interlake's revisions = %+v", revisions)
+	}
+}

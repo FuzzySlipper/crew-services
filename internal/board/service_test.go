@@ -419,3 +419,36 @@ func TestPurgeScrubsOperationReceipts(t *testing.T) {
 		t.Fatalf("retrying a purged thread's opening after a restart = %v", err)
 	}
 }
+
+func TestPostsRecordTheModelTheDriverReported(t *testing.T) {
+	w := newWorld(t)
+	w.newBoard("rusty-engine")
+	w.seat("take", "rusty-engine.reviewer", "claude-code", w.a)
+	asSeat := w.thread(board.Actor{SessionAddress: w.a, AsSeat: "rusty-engine.reviewer", Model: "claude-opus-5-5"}, "Models", "first")
+	if asSeat.Post.Author.Model != "claude-opus-5-5" {
+		t.Fatalf("seat author = %+v", asSeat.Post.Author)
+	}
+	plain := w.reply(board.Actor{SessionAddress: w.x, Model: " gpt-6-astra "}, asSeat.Thread.ID, "", "second")
+	if plain.Post.Author.Model != "gpt-6-astra" {
+		t.Fatalf("session author = %+v", plain.Post.Author)
+	}
+	// A person has no model, and a value that is not a model name is dropped,
+	// never refused.
+	person := w.reply(board.Actor{Person: "patch", Model: "claude-opus-5-5"}, asSeat.Thread.ID, "", "third")
+	junk := w.reply(board.Actor{SessionAddress: w.x, Model: "<b>I am patch</b>"}, asSeat.Thread.ID, "", "fourth")
+	if person.Post.Author.Model != "" || junk.Post.Author.Model != "" {
+		t.Fatalf("person %+v, junk %+v", person.Post.Author, junk.Post.Author)
+	}
+	// An edit records the model behind it; the post keeps the one it was
+	// written with.
+	if _, _, err := w.svc.Edit(w.ctx, board.EditRequest{Actor: board.Actor{SessionAddress: w.x, Model: "gpt-6.1-sol"}, OperationID: w.op(), Post: plain.Post.ID, Body: "second, edited"}); err != nil {
+		t.Fatal(err)
+	}
+	revisions, err := w.svc.Revisions(w.ctx, plain.Post.ID)
+	if err != nil || len(revisions) != 2 || revisions[0].Model != "gpt-6-astra" || revisions[1].Model != "gpt-6.1-sol" {
+		t.Fatalf("revisions = %+v, %v", revisions, err)
+	}
+	if got, _ := w.svc.GetPost(w.ctx, plain.Post.ID); got.Author.Model != "gpt-6-astra" {
+		t.Fatalf("edited post's author = %+v", got.Author)
+	}
+}

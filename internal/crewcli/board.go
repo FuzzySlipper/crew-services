@@ -276,7 +276,7 @@ func (b boardCLI) actor() (board.Actor, error) {
 	if address == "" {
 		return board.Actor{}, errors.New("this session has no crew address yet")
 	}
-	return board.Actor{SessionAddress: address, AsSeat: b.args.as}, nil
+	return board.Actor{SessionAddress: address, AsSeat: b.args.as, Model: SessionModel(b.ctx, b.self)}, nil
 }
 
 // agentDrivers are the session variables each harness sets and its driver
@@ -834,11 +834,20 @@ func (b boardCLI) printPost(p board.Post) {
 func AuthorName(a board.Author) string {
 	switch a.Kind {
 	case board.AuthorSeat:
-		return fmt.Sprintf("%s (%s, %s)", a.Address, runtimeName(a.Adapter), a.Session)
+		return fmt.Sprintf("%s (%s, %s)", a.Address, runtimeAndModel(a), a.Session)
 	case board.AuthorSession:
-		return fmt.Sprintf("%s (%s)", a.Address, runtimeName(a.Adapter))
+		return fmt.Sprintf("%s (%s)", a.Address, runtimeAndModel(a))
 	}
 	return a.Address
+}
+
+// runtimeAndModel names an author's harness, and the model when its driver
+// reported one: "Claude Code, claude-opus-5-5".
+func runtimeAndModel(a board.Author) string {
+	if a.Model == "" {
+		return runtimeName(a.Adapter)
+	}
+	return runtimeName(a.Adapter) + ", " + a.Model
 }
 
 func runtimeName(adapter string) string {
@@ -872,7 +881,11 @@ func (b boardCLI) revisions() int {
 		if i > 0 {
 			fmt.Fprintln(b.stdout)
 		}
-		fmt.Fprintf(b.stdout, "── revision %d · %s\n%s\n", r.Revision, r.CreatedAt.UTC().Format("2006-01-02 15:04Z"), strings.TrimRight(board.RenderForAgent(r.Body, b.args.unfold), "\n"))
+		model := ""
+		if r.Model != "" {
+			model = " · " + r.Model
+		}
+		fmt.Fprintf(b.stdout, "── revision %d · %s%s\n%s\n", r.Revision, r.CreatedAt.UTC().Format("2006-01-02 15:04Z"), model, strings.TrimRight(board.RenderForAgent(r.Body, b.args.unfold), "\n"))
 	}
 	return 0
 }

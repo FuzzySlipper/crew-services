@@ -409,12 +409,13 @@ func (s *Service) applyPost(ctx context.Context, f RemoteFile, now time.Time) er
 	if err != nil {
 		return ignore("post for a thread this site does not have: %s", head.Thread)
 	}
-	revision := Revision{PostID: head.ID, Revision: head.Revision, Body: body, Mentions: head.Mentions, CreatedAt: head.CreatedAt}
+	revision := Revision{PostID: head.ID, Revision: head.Revision, Body: body, Mentions: head.Mentions, Model: cleanModel(head.Model), CreatedAt: head.CreatedAt}
 	existing, err := s.store.GetPost(ctx, head.ID)
 	if head.Revision == 1 {
 		if err == nil {
 			return nil
 		}
+		head.Author.Model = cleanModel(head.Author.Model)
 		post := Post{ID: head.ID, ThreadID: head.Thread, ParentID: head.Parent, Author: head.Author, Site: head.Site, State: PostVisible, Revision: 1, Body: body, Mentions: head.Mentions, Urgent: head.Urgent, Kind: head.Kind, CreatedAt: head.CreatedAt, Sync: SyncSynced}
 		changes := []Change{{Post: &post}, {Revision: &revision}, {Touch: &Touch{ThreadID: thread.ID, At: maxTime(thread.LastActivityAt, head.CreatedAt)}}}
 		var replyTo []Participant

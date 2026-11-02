@@ -1,6 +1,7 @@
 package claudedriver
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -248,6 +249,40 @@ func (d *Driver) Address(sessionID string) (string, bool) {
 		return "", false
 	}
 	return s.Address, true
+}
+
+// Model is the model a registered session's newest turn used, from its
+// transcript, or "".
+func (d *Driver) Model(sessionID string) string {
+	d.mu.Lock()
+	s, ok := d.sessions[sessionID]
+	var path string
+	if ok {
+		path = s.Transcript
+		if path == "" {
+			path = defaultTranscript(d.cfg.ProjectsDir, s.Cwd, s.SessionID)
+		}
+	}
+	d.mu.Unlock()
+	return crewcli.LastModel(path, transcriptModel)
+}
+
+// transcriptModel is the model of a Claude Code assistant line, or "".
+// Messages Claude Code makes up itself say "<synthetic>" and are skipped.
+func transcriptModel(line []byte) string {
+	if !bytes.Contains(line, []byte(`"assistant"`)) {
+		return ""
+	}
+	var entry struct {
+		Type    string `json:"type"`
+		Message struct {
+			Model string `json:"model"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(line, &entry) != nil || entry.Type != "assistant" || strings.HasPrefix(entry.Message.Model, "<") {
+		return ""
+	}
+	return entry.Message.Model
 }
 
 // Sessions lists the sessions this driver has registered.

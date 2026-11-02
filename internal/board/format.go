@@ -68,16 +68,18 @@ type ThreadFile struct {
 
 // PostFile is a post revision's frontmatter; the text is its body.
 type PostFile struct {
-	ID        string    `json:"id"`
-	Thread    string    `json:"thread"`
-	Board     string    `json:"board"`
-	Parent    string    `json:"parent,omitempty"`
-	Site      string    `json:"site"`
-	Author    Author    `json:"author"`
-	Kind      string    `json:"kind,omitempty"`
-	Urgent    bool      `json:"urgent,omitempty"`
-	Revision  int       `json:"revision"`
-	Mentions  []Mention `json:"mentions,omitempty"`
+	ID       string    `json:"id"`
+	Thread   string    `json:"thread"`
+	Board    string    `json:"board"`
+	Parent   string    `json:"parent,omitempty"`
+	Site     string    `json:"site"`
+	Author   Author    `json:"author"`
+	Kind     string    `json:"kind,omitempty"`
+	Urgent   bool      `json:"urgent,omitempty"`
+	Revision int       `json:"revision"`
+	Mentions []Mention `json:"mentions,omitempty"`
+	// Model is the model behind this revision, as its site recorded it.
+	Model     string    `json:"model,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -135,7 +137,7 @@ func EncodeThread(t Thread) []byte {
 }
 
 func EncodePost(board string, p Post, r Revision) []byte {
-	return frontmatter(PostFile{ID: p.ID, Thread: p.ThreadID, Board: board, Parent: p.ParentID, Site: p.Site, Author: p.Author, Kind: p.Kind, Urgent: p.Urgent, Revision: r.Revision, Mentions: r.Mentions, CreatedAt: r.CreatedAt}, r.Body)
+	return frontmatter(PostFile{ID: p.ID, Thread: p.ThreadID, Board: board, Parent: p.ParentID, Site: p.Site, Author: p.Author, Kind: p.Kind, Urgent: p.Urgent, Revision: r.Revision, Mentions: r.Mentions, Model: r.Model, CreatedAt: r.CreatedAt}, r.Body)
 }
 
 func EncodeEvent(board string, e Event, site string) []byte {

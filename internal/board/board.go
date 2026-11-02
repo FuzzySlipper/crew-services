@@ -111,10 +111,12 @@ type Post struct {
 
 // Revision is one version of a post's text.
 type Revision struct {
-	PostID    string    `json:"post_id"`
-	Revision  int       `json:"revision"`
-	Body      string    `json:"body,omitempty"`
-	Mentions  []Mention `json:"mentions,omitempty"`
+	PostID   string    `json:"post_id"`
+	Revision int       `json:"revision"`
+	Body     string    `json:"body,omitempty"`
+	Mentions []Mention `json:"mentions,omitempty"`
+	// Model is the model the writing session's driver reported, if any.
+	Model     string    `json:"model,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -145,7 +147,10 @@ type Author struct {
 	Address string `json:"address"`
 	Session string `json:"session,omitempty"`
 	Adapter string `json:"adapter,omitempty"`
-	Site    string `json:"site"`
+	// Model is the model the session's driver reported when the post was
+	// written: display only, never part of who the author is.
+	Model string `json:"model,omitempty"`
+	Site  string `json:"site"`
 }
 
 // Participant is anyone who can be notified or keep read state: a seat, a
@@ -228,6 +233,9 @@ type Actor struct {
 	SessionAddress string `json:"session_address,omitempty"`
 	AsSeat         string `json:"as_seat,omitempty"`
 	Person         string `json:"person,omitempty"`
+	// Model is the model the session's driver reports it is using. It is
+	// recorded on what the session writes and checked against nothing.
+	Model string `json:"model,omitempty"`
 }
 
 // ErrorCode is a stable reason code (docs/crew-board.md, Reason codes).

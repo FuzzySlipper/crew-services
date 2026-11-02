@@ -241,7 +241,7 @@ func (s *Service) author(ctx context.Context, actor Actor) (Author, error) {
 		return Author{}, refuse(CodeSessionUnbound, "%s is not a bound session address", actor.SessionAddress)
 	}
 	if actor.AsSeat == "" {
-		return Author{Kind: AuthorSession, Address: actor.SessionAddress, Adapter: adapter, Site: s.cfg.Site}, nil
+		return Author{Kind: AuthorSession, Address: actor.SessionAddress, Adapter: adapter, Model: cleanModel(actor.Model), Site: s.cfg.Site}, nil
 	}
 	if !seatForm.MatchString(actor.AsSeat) {
 		return Author{}, refuse(CodeInvalid, "as_seat must be a seat address, scope.name")
@@ -253,7 +253,7 @@ func (s *Service) author(ctx context.Context, actor Actor) (Author, error) {
 	if !exists || holder != actor.SessionAddress {
 		return Author{}, &Error{Code: CodeNotHolder, Err: errors.New(actor.SessionAddress + " does not hold " + actor.AsSeat), Detail: map[string]any{"holder": holder}}
 	}
-	return Author{Kind: AuthorSeat, Address: actor.AsSeat, Session: actor.SessionAddress, Adapter: adapter, Site: s.cfg.Site}, nil
+	return Author{Kind: AuthorSeat, Address: actor.AsSeat, Session: actor.SessionAddress, Adapter: adapter, Model: cleanModel(actor.Model), Site: s.cfg.Site}, nil
 }
 
 // sameParticipant reports whether the caller is the post's author: the same
@@ -448,7 +448,7 @@ func (s *Service) OpenThread(ctx context.Context, request OpenThreadRequest) (Po
 		thread := Thread{ID: NewID(s.cfg.Site, now), Board: request.Board, Title: title, State: ThreadOpen, CreatedAt: now, CreatedBy: author, LastActivityAt: now, Posts: 1}
 		post := Post{ID: NewID(s.cfg.Site, now), ThreadID: thread.ID, Author: author, Site: s.cfg.Site, State: PostVisible, Revision: 1, Body: request.Body, Mentions: mentions, Urgent: request.Urgent, Kind: normalKind(request.Kind), CreatedAt: now}
 		thread.OpeningPostID = post.ID
-		revision := Revision{PostID: post.ID, Revision: 1, Body: request.Body, Mentions: mentions, CreatedAt: now}
+		revision := Revision{PostID: post.ID, Revision: 1, Body: request.Body, Mentions: mentions, Model: author.Model, CreatedAt: now}
 		changes := []Change{{Thread: &thread}, {Post: &post}, {Revision: &revision}}
 		notices, err := s.noticesFor(ctx, now, thread, post, "", nil)
 		if err != nil {
@@ -511,7 +511,7 @@ func (s *Service) Reply(ctx context.Context, request ReplyRequest) (PostResult, 
 		}
 		mentions, warnings := s.resolveMentions(ctx, request.Body)
 		post := Post{ID: NewID(s.cfg.Site, now), ThreadID: thread.ID, ParentID: parent, Author: author, Site: s.cfg.Site, State: PostVisible, Revision: 1, Body: request.Body, Mentions: mentions, Urgent: request.Urgent, Kind: normalKind(request.Kind), CreatedAt: now}
-		revision := Revision{PostID: post.ID, Revision: 1, Body: request.Body, Mentions: mentions, CreatedAt: now}
+		revision := Revision{PostID: post.ID, Revision: 1, Body: request.Body, Mentions: mentions, Model: author.Model, CreatedAt: now}
 		thread.LastActivityAt, thread.Posts = now, thread.Posts+1
 		changes := []Change{{Post: &post}, {Revision: &revision}, {Touch: &Touch{ThreadID: thread.ID, At: now}}}
 		var replyTo []Participant
@@ -555,7 +555,7 @@ func (s *Service) Edit(ctx context.Context, request EditRequest) (PostResult, bo
 		for _, m := range post.Mentions {
 			earlier[m.Participant()] = true
 		}
-		revision := Revision{PostID: post.ID, Revision: post.Revision + 1, Body: request.Body, Mentions: mentions, CreatedAt: now}
+		revision := Revision{PostID: post.ID, Revision: post.Revision + 1, Body: request.Body, Mentions: mentions, Model: editorModel(request.Actor), CreatedAt: now}
 		post.Revision, post.Body, post.Mentions, post.EditedAt = revision.Revision, request.Body, mentions, now
 		thread.LastActivityAt = now
 		changes := []Change{
@@ -866,4 +866,29 @@ func decodeCursor(value string) (ThreadCursor, error) {
 		}
 	}
 	return ThreadCursor{}, refuse(CodeInvalid, "after is not a cursor this listing returned")
+}
+
+// cleanModel keeps a reported model name only when it looks like one: short,
+// with no spaces or markup. It is display information, so anything else is
+// dropped rather than refused.
+func cleanModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" || len(model) > 80 {
+		return ""
+	}
+	for _, r := range model {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._:/@+-", r)) {
+			return ""
+		}
+	}
+	return model
+}
+
+// editorModel is the model behind an edit: a session's report, never a
+// person's.
+func editorModel(actor Actor) string {
+	if actor.SessionAddress == "" {
+		return ""
+	}
+	return cleanModel(actor.Model)
 }

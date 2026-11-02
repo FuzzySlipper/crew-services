@@ -43,7 +43,10 @@ var migration008 string
 //go:embed migrations/009_purged_blobs.sql
 var migration009 string
 
-var migrations = []string{migration001, migration002, migration003, migration004, migration005, migration006, migration007, migration008, migration009}
+//go:embed migrations/010_revision_model.sql
+var migration010 string
+
+var migrations = []string{migration001, migration002, migration003, migration004, migration005, migration006, migration007, migration008, migration009, migration010}
 
 // Store is crew-board's records in one SQLite file.
 type Store struct {
@@ -182,7 +185,7 @@ func apply(ctx context.Context, tx *sql.Tx, c board.Change) error {
 		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO subscriptions (participant_kind, participant_address, participant_site, target_kind, target, created_at) VALUES (?, ?, ?, ?, ?, ?)`, p.Kind, p.Address, p.Site, kind, target, stamp(c.Subscribe.CreatedAt))
 	case c.Revision != nil:
 		r := c.Revision
-		_, err = tx.ExecContext(ctx, `INSERT INTO revisions (post_id, revision, body, mentions, created_at) VALUES (?, ?, ?, ?, ?)`, r.PostID, r.Revision, r.Body, encode(nonNil(r.Mentions)), stamp(r.CreatedAt))
+		_, err = tx.ExecContext(ctx, `INSERT INTO revisions (post_id, revision, body, mentions, model, created_at) VALUES (?, ?, ?, ?, ?, ?)`, r.PostID, r.Revision, r.Body, encode(nonNil(r.Mentions)), r.Model, stamp(r.CreatedAt))
 	case c.Event != nil:
 		e := c.Event
 		_, err = tx.ExecContext(ctx, `INSERT INTO events (id, thread_id, post_id, type, note, actor, data, created_at) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?)`, e.ID, e.ThreadID, e.PostID, e.Type, e.Note, encode(e.Actor), encode(e.Data), stamp(e.CreatedAt))
@@ -473,7 +476,7 @@ func collectPosts(rows *sql.Rows) ([]board.Post, error) {
 }
 
 func (s *Store) ListRevisions(ctx context.Context, postID string) ([]board.Revision, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT post_id, revision, body, mentions, created_at FROM revisions WHERE post_id = ? ORDER BY revision`, postID)
+	rows, err := s.db.QueryContext(ctx, `SELECT post_id, revision, body, mentions, model, created_at FROM revisions WHERE post_id = ? ORDER BY revision`, postID)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +485,7 @@ func (s *Store) ListRevisions(ctx context.Context, postID string) ([]board.Revis
 	for rows.Next() {
 		var r board.Revision
 		var mentions, created string
-		if err := rows.Scan(&r.PostID, &r.Revision, &r.Body, &mentions, &created); err != nil {
+		if err := rows.Scan(&r.PostID, &r.Revision, &r.Body, &mentions, &r.Model, &created); err != nil {
 			return nil, err
 		}
 		r.CreatedAt = parseStamp(created)

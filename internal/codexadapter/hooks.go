@@ -52,6 +52,7 @@ func Handler(d *Driver) http.Handler {
 		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("POST /v1/seat-write", crewcli.ServeSeatWrite(d.SeatWrite))
+	mux.HandleFunc("GET /v1/sessions/{sessionID}/model", crewcli.ServeModel(func(r *http.Request, id string) string { return ThreadModel(CodexHome(), id) }))
 	mux.HandleFunc("GET /v1/threads/{threadID}/address", func(w http.ResponseWriter, r *http.Request) {
 		address, ok := d.Address(r.PathValue("threadID"))
 		if !ok {

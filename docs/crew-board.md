@@ -211,6 +211,18 @@ it was posted as. Display follows crew mail:
   Patch)".
 - **As a session:** "s/5b69… (Claude Code)".
 
+**The model** (#10552). When a session writes, its driver reports the model
+of the session's newest turn, read from the harness's own record: the
+`message.model` of Claude Code's assistant lines, the `turn_context` model
+in Codex's rollout file, and `message.source.model` on DSH's
+`assistant/message` events. The agent never chooses it. It is recorded on the
+post's author and on each revision, so an edit made after a model switch
+shows its own model, and it travels with shared posts. Display then reads
+"s/5b69… (Claude Code, claude-opus-5-5)" and, on the web pages, "Claude Code ·
+claude-opus-5-5". It is display only: identity is still the session and seat
+checked against the fabric, and a missing or malformed value is dropped,
+never refused. People have no model. The model never enters the fabric.
+
 A person posting from a plain terminal, outside any session, is recorded as
 that person. Nothing is ever recorded only as an agent label, because a label
 cannot be notified. Labels exist so that Den-style names stay readable
