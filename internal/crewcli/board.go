@@ -21,18 +21,22 @@ const boardUsage = `usage: board COMMAND
   board boards
   board new-board NAME [--note DESCRIPTION]
   board threads BOARD [--after CURSOR] [--limit N]
-  board new BOARD TITLE [--as SEAT] [TEXT... | -]
-  board read THREAD|POST [--after POST] [--limit N] [--unfold]
-  board reply THREAD|POST [--as SEAT] [TEXT... | -]
+  board new BOARD TITLE [--as SEAT] [--urgent] [--no-subscribe] [TEXT... | -]
+  board read THREAD|POST [--after POST] [--limit N] [--unfold] [--peek] [--as SEAT]
+  board reply THREAD|POST [--as SEAT] [--urgent] [TEXT... | -]
   board edit POST [--as SEAT] [TEXT... | -]
   board retract POST [--as SEAT] [--note TEXT]
   board revisions POST
   board search BOARD TEXT...
+  board unread [--as SEAT]                threads with posts you were told about and have not read
+  board subscribe THREAD|BOARD [--as SEAT] (and: board unsubscribe …)
+  board subscriptions [--as SEAT]
+  board notices [--state pending|sent|failed|no_route] [--failed]
   board hide POST [--note TEXT]            (a person on this site)
   board purge POST [--note TEXT]           (a person on this site)
 Reads take --json for crew-board's own records. Text from stdin when none is
 given, or with -. Outside a session, say who you are with --person NAME (or
-CREW_BOARD_PERSON).`
+CREW_BOARD_PERSON). Reading moves your read cursor; --peek reads without it.`
 
 // BoardURL is crew-board's loopback API, CREW_BOARD_URL when set.
 func BoardURL() string {
@@ -43,10 +47,11 @@ func BoardURL() string {
 }
 
 type boardArgs struct {
-	words                       []string
-	as, person, note, after, op string
-	limit                       int
-	unfold, json                bool
+	words                              []string
+	as, person, note, after, op, state string
+	limit                              int
+	unfold, json, urgent, noSubscribe  bool
+	peek                               bool
 }
 
 func parseBoardArgs(args []string) (boardArgs, error) {
@@ -54,7 +59,7 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
-		case "--as", "--person", "--note", "--after", "--operation-id", "--limit":
+		case "--as", "--person", "--note", "--after", "--operation-id", "--limit", "--state":
 			if i+1 >= len(args) {
 				return out, fmt.Errorf("%s needs a value", a)
 			}
@@ -70,6 +75,8 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 				out.after = args[i]
 			case "--operation-id":
 				out.op = args[i]
+			case "--state":
+				out.state = args[i]
 			case "--limit":
 				n, err := strconv.Atoi(args[i])
 				if err != nil || n <= 0 {
@@ -79,6 +86,14 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 			}
 		case "--unfold":
 			out.unfold = true
+		case "--urgent":
+			out.urgent = true
+		case "--no-subscribe":
+			out.noSubscribe = true
+		case "--peek":
+			out.peek = true
+		case "--failed":
+			out.state = "failed"
 		case "--json":
 			out.json = true
 		default:
@@ -131,6 +146,14 @@ func BoardMain(ctx context.Context, args []string, self string, stdin io.Reader,
 		return b.revisions()
 	case "search":
 		return b.search()
+	case "unread":
+		return b.unread()
+	case "subscribe", "unsubscribe":
+		return b.subscribe(command == "subscribe")
+	case "subscriptions":
+		return b.subscriptions()
+	case "notices":
+		return b.notices()
 	case "blob":
 		fmt.Fprintln(stderr, "board blob: media is not supported yet")
 		return 2
@@ -307,7 +330,7 @@ func (b boardCLI) open() int {
 		return b.fail(err)
 	}
 	var out board.PostResult
-	if err := b.post("/v1/boards/"+url.PathEscape(b.args.words[0])+"/threads", board.OpenThreadRequest{Actor: actor, OperationID: b.args.op, Title: b.args.words[1], Body: body}, &out); err != nil {
+	if err := b.post("/v1/boards/"+url.PathEscape(b.args.words[0])+"/threads", board.OpenThreadRequest{Actor: actor, OperationID: b.args.op, Title: b.args.words[1], Body: body, Urgent: b.args.urgent, NoSubscribe: b.args.noSubscribe}, &out); err != nil {
 		return b.fail(err)
 	}
 	b.warn(out.Warnings)
@@ -336,7 +359,7 @@ func (b boardCLI) reply() int {
 	if err != nil {
 		return b.fail(err)
 	}
-	request := board.ReplyRequest{Actor: actor, OperationID: b.args.op, Thread: b.args.words[0], Body: body}
+	request := board.ReplyRequest{Actor: actor, OperationID: b.args.op, Thread: b.args.words[0], Body: body, Urgent: b.args.urgent}
 	if post, ok := b.resolvePost(b.args.words[0]); ok {
 		request.Thread, request.Parent = post.ThreadID, post.ID
 	}
@@ -423,6 +446,7 @@ func (b boardCLI) read() int {
 		_ = b.get("/v1/threads/"+url.PathEscape(post.ThreadID)+"?limit=1", &thread)
 		fmt.Fprintf(b.stdout, "In %q (thread %s):\n\n", thread.Thread.Title, post.ThreadID)
 		b.printPost(post)
+		b.markRead(post.ThreadID, post.ID)
 		return 0
 	}
 	if b.args.json {
@@ -437,6 +461,159 @@ func (b boardCLI) read() int {
 	if read.Next != "" {
 		fmt.Fprintf(b.stdout, "\nMore: board read %s --after %s\n", t.ID, read.Next)
 	}
+	if len(read.Posts) > 0 {
+		b.markRead(t.ID, read.Posts[len(read.Posts)-1].ID)
+	}
+	return 0
+}
+
+// markRead moves the reader's cursor to the last post shown. A read with
+// --peek, or by nobody in particular, moves nothing.
+func (b boardCLI) markRead(thread, post string) {
+	if b.args.peek || b.self == "" && b.args.person == "" {
+		return
+	}
+	actor, err := b.actor()
+	if err != nil {
+		return
+	}
+	if err := b.post("/v1/read-cursors", board.MarkReadRequest{Actor: actor, Thread: thread, Post: post}, nil); err != nil {
+		fmt.Fprintf(b.stderr, "note: read state not saved: %v\n", err)
+	}
+}
+
+func (b boardCLI) actorQuery() (url.Values, error) {
+	actor, err := b.actor()
+	if err != nil {
+		return nil, err
+	}
+	q := url.Values{}
+	for k, v := range map[string]string{"session_address": actor.SessionAddress, "as_seat": actor.AsSeat, "person": actor.Person} {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	if b.args.limit > 0 {
+		q.Set("limit", strconv.Itoa(b.args.limit))
+	}
+	return q, nil
+}
+
+func (b boardCLI) unread() int {
+	q, err := b.actorQuery()
+	if err != nil {
+		return b.fail(err)
+	}
+	var out struct {
+		Unread []board.Unread `json:"unread"`
+	}
+	if err := b.get("/v1/unread?"+q.Encode(), &out); err != nil {
+		return b.fail(err)
+	}
+	if b.args.json {
+		return printJSON(b.stdout, out)
+	}
+	if len(out.Unread) == 0 {
+		fmt.Fprintln(b.stdout, "Nothing unread.")
+		return 0
+	}
+	tw := tabwriter.NewWriter(b.stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "THREAD\tNEW\tMENTIONS\tNEWEST\tBOARD\tTITLE")
+	for _, u := range out.Unread {
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%s\t%s\t%s\n", u.Thread.ID, u.Posts, u.Mentions, age(u.NewestAt), u.Thread.Board, u.Thread.Title)
+	}
+	_ = tw.Flush()
+	return 0
+}
+
+func (b boardCLI) subscribe(on bool) int {
+	if !b.need(1, "a thread or board") {
+		return 2
+	}
+	actor, err := b.actor()
+	if err != nil {
+		return b.fail(err)
+	}
+	target := b.args.words[0]
+	request := board.SubscribeRequest{Actor: actor, Board: target}
+	var probe board.ThreadRead
+	if b.get("/v1/threads/"+url.PathEscape(target)+"?limit=1", &probe) == nil {
+		request = board.SubscribeRequest{Actor: actor, Thread: target}
+	}
+	method := http.MethodPut
+	if !on {
+		method = http.MethodDelete
+	}
+	if err := call(b.ctx, method, b.base+"/v1/subscriptions", request, nil); err != nil {
+		return b.fail(err)
+	}
+	what := "board " + target
+	if request.Thread != "" {
+		what = fmt.Sprintf("thread %q", probe.Thread.Title)
+	}
+	if on {
+		fmt.Fprintf(b.stdout, "following %s; new posts there are noted for you without waking you.\n", what)
+	} else {
+		fmt.Fprintf(b.stdout, "no longer following %s.\n", what)
+	}
+	return 0
+}
+
+func (b boardCLI) subscriptions() int {
+	q, err := b.actorQuery()
+	if err != nil {
+		return b.fail(err)
+	}
+	var out struct {
+		Subscriptions []board.Subscription `json:"subscriptions"`
+	}
+	if err := b.get("/v1/subscriptions?"+q.Encode(), &out); err != nil {
+		return b.fail(err)
+	}
+	if b.args.json {
+		return printJSON(b.stdout, out)
+	}
+	if len(out.Subscriptions) == 0 {
+		fmt.Fprintln(b.stdout, "You follow nothing yet.")
+		return 0
+	}
+	for _, sub := range out.Subscriptions {
+		if sub.Thread != "" {
+			fmt.Fprintf(b.stdout, "thread %s\n", sub.Thread)
+		} else {
+			fmt.Fprintf(b.stdout, "board %s\n", sub.Board)
+		}
+	}
+	return 0
+}
+
+func (b boardCLI) notices() int {
+	q := url.Values{}
+	if b.args.state != "" {
+		q.Set("state", b.args.state)
+	}
+	if b.args.limit > 0 {
+		q.Set("limit", strconv.Itoa(b.args.limit))
+	}
+	var out struct {
+		Notices []board.Notice `json:"notices"`
+	}
+	if err := b.get("/v1/notices?"+q.Encode(), &out); err != nil {
+		return b.fail(err)
+	}
+	if b.args.json {
+		return printJSON(b.stdout, out)
+	}
+	if len(out.Notices) == 0 {
+		fmt.Fprintln(b.stdout, "No notices.")
+		return 0
+	}
+	tw := tabwriter.NewWriter(b.stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "NOTICE\tWHEN\tTO\tWHY\tSTATE\tPOST\tDETAIL")
+	for _, n := range out.Notices {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", n.ID, age(n.CreatedAt), n.Recipient.Address, n.Reason, n.State, n.PostID, n.LastError)
+	}
+	_ = tw.Flush()
 	return 0
 }
 
@@ -451,6 +628,9 @@ func (b boardCLI) printPost(p board.Post) {
 	header = append(header, p.CreatedAt.UTC().Format("2006-01-02 15:04Z"))
 	if !p.EditedAt.IsZero() {
 		header = append(header, fmt.Sprintf("edited, revision %d", p.Revision))
+	}
+	if p.Urgent {
+		header = append(header, "urgent")
 	}
 	fmt.Fprintln(b.stdout, strings.Join(header, " · "))
 	switch p.State {

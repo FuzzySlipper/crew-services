@@ -19,7 +19,10 @@ import (
 //go:embed migrations/001_board.sql
 var migration001 string
 
-var migrations = []string{migration001}
+//go:embed migrations/002_notices.sql
+var migration002 string
+
+var migrations = []string{migration001, migration002}
 
 // Store is crew-board's records in one SQLite file.
 type Store struct {
@@ -115,8 +118,10 @@ func (s *Store) Apply(ctx context.Context, receipt board.Receipt, changes []boar
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO operations (operation_id, request_hash, result, created_at) VALUES (?, ?, ?, ?)`, receipt.OperationID, receipt.RequestHash, string(receipt.Result), stamp(receipt.CreatedAt)); err != nil {
-		return fmt.Errorf("store receipt: %w", err)
+	if receipt.OperationID != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO operations (operation_id, request_hash, result, created_at) VALUES (?, ?, ?, ?)`, receipt.OperationID, receipt.RequestHash, string(receipt.Result), stamp(receipt.CreatedAt)); err != nil {
+			return fmt.Errorf("store receipt: %w", err)
+		}
 	}
 	return tx.Commit()
 }
@@ -132,7 +137,17 @@ func apply(ctx context.Context, tx *sql.Tx, c board.Change) error {
 		_, err = tx.ExecContext(ctx, `INSERT INTO threads (id, board, title, state, opening_post_id, created_at, created_by, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, t.ID, t.Board, t.Title, t.State, t.OpeningPostID, stamp(t.CreatedAt), encode(t.CreatedBy), stamp(t.LastActivityAt))
 	case c.Post != nil:
 		p := c.Post
-		_, err = tx.ExecContext(ctx, `INSERT INTO posts (id, thread_id, parent_id, author, site, state, revision, note, created_at) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?)`, p.ID, p.ThreadID, p.ParentID, encode(p.Author), p.Site, p.State, p.Revision, p.Note, stamp(p.CreatedAt))
+		_, err = tx.ExecContext(ctx, `INSERT INTO posts (id, thread_id, parent_id, author, site, state, revision, note, urgent, created_at) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?)`, p.ID, p.ThreadID, p.ParentID, encode(p.Author), p.Site, p.State, p.Revision, p.Note, p.Urgent, stamp(p.CreatedAt))
+	case c.Notice != nil:
+		n := c.Notice
+		// One notice per post and participant: a later reason for the same post
+		// (an edit's new mention of a follower) keeps the first notice.
+		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO notices (id, post_id, thread_id, recipient_kind, recipient_address, recipient_site, reason, policy, urgent, state, next_attempt_at, last_error, created_at, give_up_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			n.ID, n.PostID, n.ThreadID, n.Recipient.Kind, n.Recipient.Address, n.Recipient.Site, n.Reason, n.Policy, n.Urgent, n.State, stamp(n.NextAttemptAt), n.LastError, stamp(n.CreatedAt), stamp(n.GiveUpAt))
+	case c.Subscribe != nil:
+		kind, target := subscriptionTarget(*c.Subscribe)
+		p := c.Subscribe.Participant
+		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO subscriptions (participant_kind, participant_address, participant_site, target_kind, target, created_at) VALUES (?, ?, ?, ?, ?, ?)`, p.Kind, p.Address, p.Site, kind, target, stamp(c.Subscribe.CreatedAt))
 	case c.Revision != nil:
 		r := c.Revision
 		_, err = tx.ExecContext(ctx, `INSERT INTO revisions (post_id, revision, body, mentions, created_at) VALUES (?, ?, ?, ?, ?)`, r.PostID, r.Revision, r.Body, encode(nonNil(r.Mentions)), stamp(r.CreatedAt))
@@ -171,6 +186,7 @@ func scrub(ctx context.Context, tx *sql.Tx, whereRevision, wherePost, arg string
 		`UPDATE revisions SET body = '', mentions = '[]' WHERE ` + whereRevision,
 		`UPDATE posts SET state = 'purged', author = '{}', note = '' WHERE ` + wherePost,
 		`UPDATE events SET note = '', actor = '{}' WHERE type != 'purge' AND ` + whereRevision,
+		`UPDATE notices SET state = 'failed', last_error = 'post purged before the notice went out' WHERE state = 'pending' AND ` + whereRevision,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt, arg); err != nil {
 			return err
@@ -270,14 +286,14 @@ func (s *Store) ListThreads(ctx context.Context, name string, after board.Thread
 	return out, rows.Err()
 }
 
-const postColumns = `p.id, p.thread_id, COALESCE(p.parent_id, ''), p.author, p.site, p.state, p.revision, p.note, p.created_at, COALESCE(p.edited_at, ''), r.body, r.mentions`
+const postColumns = `p.id, p.thread_id, COALESCE(p.parent_id, ''), p.author, p.site, p.state, p.revision, p.note, p.urgent, p.created_at, COALESCE(p.edited_at, ''), r.body, r.mentions`
 
 const postFrom = ` FROM posts p JOIN revisions r ON r.post_id = p.id AND r.revision = p.revision`
 
 func scanPost(row interface{ Scan(...any) error }) (board.Post, error) {
 	var p board.Post
 	var author, created, edited, mentions string
-	if err := row.Scan(&p.ID, &p.ThreadID, &p.ParentID, &author, &p.Site, &p.State, &p.Revision, &p.Note, &created, &edited, &p.Body, &mentions); err != nil {
+	if err := row.Scan(&p.ID, &p.ThreadID, &p.ParentID, &author, &p.Site, &p.State, &p.Revision, &p.Note, &p.Urgent, &created, &edited, &p.Body, &mentions); err != nil {
 		return board.Post{}, err
 	}
 	p.CreatedAt = parseStamp(created)
@@ -353,4 +369,182 @@ func (s *Store) Search(ctx context.Context, name, query string, limit int) ([]bo
 		return nil, err
 	}
 	return collectPosts(rows)
+}
+
+func subscriptionTarget(sub board.Subscription) (kind, target string) {
+	if sub.Thread != "" {
+		return "thread", sub.Thread
+	}
+	return "board", sub.Board
+}
+
+// Unsubscribe removes a subscription; one that does not exist is no error.
+func (s *Store) Unsubscribe(ctx context.Context, sub board.Subscription) error {
+	kind, target := subscriptionTarget(sub)
+	p := sub.Participant
+	_, err := s.db.ExecContext(ctx, `DELETE FROM subscriptions WHERE participant_kind = ? AND participant_address = ? AND participant_site = ? AND target_kind = ? AND target = ?`, p.Kind, p.Address, p.Site, kind, target)
+	return err
+}
+
+// Subscribe adds a subscription; one that exists already is kept as it was.
+func (s *Store) Subscribe(ctx context.Context, sub board.Subscription) error {
+	return s.Apply(ctx, board.Receipt{}, []board.Change{{Subscribe: &sub}})
+}
+
+// Subscribers lists who follows a thread, directly or through its board.
+func (s *Store) Subscribers(ctx context.Context, threadID, boardName string) ([]board.Participant, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT participant_kind, participant_address, participant_site FROM subscriptions
+		WHERE (target_kind = 'thread' AND target = ?) OR (target_kind = 'board' AND target = ?) ORDER BY 1, 2, 3`, threadID, boardName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []board.Participant{}
+	for rows.Next() {
+		var p board.Participant
+		if err := rows.Scan(&p.Kind, &p.Address, &p.Site); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// Subscriptions lists what a participant follows.
+func (s *Store) Subscriptions(ctx context.Context, p board.Participant) ([]board.Subscription, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT target_kind, target, created_at FROM subscriptions WHERE participant_kind = ? AND participant_address = ? AND participant_site = ? ORDER BY created_at`, p.Kind, p.Address, p.Site)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []board.Subscription{}
+	for rows.Next() {
+		var kind, target, created string
+		if err := rows.Scan(&kind, &target, &created); err != nil {
+			return nil, err
+		}
+		sub := board.Subscription{Participant: p, CreatedAt: parseStamp(created)}
+		if kind == "thread" {
+			sub.Thread = target
+		} else {
+			sub.Board = target
+		}
+		out = append(out, sub)
+	}
+	return out, rows.Err()
+}
+
+// MarkRead moves a participant's cursor in a thread forward to postID; it
+// never moves back.
+func (s *Store) MarkRead(ctx context.Context, p board.Participant, threadID, postID string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO read_cursors (participant_kind, participant_address, participant_site, thread_id, post_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (participant_kind, participant_address, participant_site, thread_id) DO UPDATE SET post_id = excluded.post_id, updated_at = excluded.updated_at WHERE excluded.post_id > read_cursors.post_id`,
+		p.Kind, p.Address, p.Site, threadID, postID, stamp(at))
+	return err
+}
+
+// Cursor is the newest post a participant has read in a thread, or "".
+func (s *Store) Cursor(ctx context.Context, p board.Participant, threadID string) (string, error) {
+	var post string
+	err := s.db.QueryRowContext(ctx, `SELECT post_id FROM read_cursors WHERE participant_kind = ? AND participant_address = ? AND participant_site = ? AND thread_id = ?`, p.Kind, p.Address, p.Site, threadID).Scan(&post)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return post, err
+}
+
+// Unread lists the threads with visible posts a participant was told about
+// and has not read past, those that mention it first, then the newest.
+func (s *Store) Unread(ctx context.Context, p board.Participant, limit int) ([]board.Unread, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT n.thread_id, COUNT(DISTINCT n.post_id), SUM(n.reason = 'mention'), MAX(n.post_id), MAX(p.created_at)
+		FROM notices n
+		JOIN threads t ON t.id = n.thread_id AND t.purged = 0
+		JOIN posts p ON p.id = n.post_id AND p.state = 'visible'
+		LEFT JOIN read_cursors c ON c.participant_kind = n.recipient_kind AND c.participant_address = n.recipient_address AND c.participant_site = n.recipient_site AND c.thread_id = n.thread_id
+		WHERE n.recipient_kind = ? AND n.recipient_address = ? AND n.recipient_site = ? AND (c.post_id IS NULL OR n.post_id > c.post_id)
+		GROUP BY n.thread_id ORDER BY SUM(n.reason = 'mention') > 0 DESC, MAX(n.post_id) DESC LIMIT ?`, p.Kind, p.Address, p.Site, limit)
+	if err != nil {
+		return nil, err
+	}
+	var out []board.Unread
+	for rows.Next() {
+		var u board.Unread
+		var newestAt string
+		if err := rows.Scan(&u.Thread.ID, &u.Posts, &u.Mentions, &u.NewestID, &newestAt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		u.NewestAt = parseStamp(newestAt)
+		out = append(out, u)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		thread, err := s.GetThread(ctx, out[i].Thread.ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Thread = thread
+	}
+	if out == nil {
+		out = []board.Unread{}
+	}
+	return out, nil
+}
+
+const noticeColumns = `id, post_id, thread_id, recipient_kind, recipient_address, recipient_site, reason, policy, urgent, state, attempts, next_attempt_at, last_error, message_id, created_at, give_up_at, COALESCE(sent_at, '')`
+
+func scanNotice(row interface{ Scan(...any) error }) (board.Notice, error) {
+	var n board.Notice
+	var next, created, giveUp, sent string
+	if err := row.Scan(&n.ID, &n.PostID, &n.ThreadID, &n.Recipient.Kind, &n.Recipient.Address, &n.Recipient.Site, &n.Reason, &n.Policy, &n.Urgent, &n.State, &n.Attempts, &next, &n.LastError, &n.MessageID, &created, &giveUp, &sent); err != nil {
+		return board.Notice{}, err
+	}
+	n.NextAttemptAt, n.CreatedAt, n.GiveUpAt = parseStamp(next), parseStamp(created), parseStamp(giveUp)
+	if sent != "" {
+		n.SentAt = parseStamp(sent)
+	}
+	return n, nil
+}
+
+func (s *Store) notices(ctx context.Context, query string, args ...any) ([]board.Notice, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+noticeColumns+` FROM notices `+query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []board.Notice{}
+	for rows.Next() {
+		n, err := scanNotice(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// DueNotices lists pending notices whose next attempt is due, oldest first.
+func (s *Store) DueNotices(ctx context.Context, now time.Time, limit int) ([]board.Notice, error) {
+	return s.notices(ctx, `WHERE state = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at, id LIMIT ?`, stamp(now), limit)
+}
+
+// ListNotices lists recent notices, newest first, in one state or all.
+func (s *Store) ListNotices(ctx context.Context, state string, limit int) ([]board.Notice, error) {
+	if state == "" {
+		return s.notices(ctx, `ORDER BY created_at DESC, id DESC LIMIT ?`, limit)
+	}
+	return s.notices(ctx, `WHERE state = ? ORDER BY created_at DESC, id DESC LIMIT ?`, state, limit)
+}
+
+// UpdateNotice records a send attempt's outcome.
+func (s *Store) UpdateNotice(ctx context.Context, n board.Notice) error {
+	sent := sql.NullString{}
+	if !n.SentAt.IsZero() {
+		sent = sql.NullString{String: stamp(n.SentAt), Valid: true}
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE notices SET state = ?, attempts = ?, next_attempt_at = ?, last_error = ?, message_id = ?, sent_at = ? WHERE id = ?`, n.State, n.Attempts, stamp(n.NextAttemptAt), n.LastError, n.MessageID, sent, n.ID)
+	return err
 }

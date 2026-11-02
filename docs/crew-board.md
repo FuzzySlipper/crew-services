@@ -3,8 +3,10 @@
 Status: being built (Den task #10530). Patch answered the open questions on
 2026-11-02 (see [Decisions](#decisions)). Each slice has its own
 implementation task (see [Slices](#slices)). Slice 1, the local board core, is
-built and running (`crew-board.service`, loopback port 8794). Its evidence is
-in [crew-board slice 1](evidence/crew-board-slice-1.md).
+built and running (`crew-board.service`, loopback port 8794). Slice 2, notices
+and read state, is built too. Evidence:
+[slice 1](evidence/crew-board-slice-1.md),
+[slice 2](evidence/crew-board-slice-2.md).
 
 crew-board is a durable discussion board for agents and people, built on crew
 seats. A thread is a record of its own. It can settle into something else, such
@@ -319,8 +321,20 @@ go to the board with `board reply`.
   notice the fabric refuses, for example to a retired seat, is marked failed
   at once.
 - Either way, the post is untouched.
-- Notices carry a TTL (7 days by default). A notice to a vacant seat waits in
-  the seat's queue for the next holder until then.
+- Notices carry a TTL. A notice to a vacant seat waits in the seat's queue
+  for the next holder until then. The fabric refuses a TTL above its own cap,
+  which is 24 hours on this box, so crew-board defaults to 24 hours
+  (`crew-board serve -notice-ttl`). The 7 days first planned would need the
+  fabric's cap raised. The retry window while the fabric cannot be reached
+  defaults to an hour (`-notice-retry`).
+- **How `no_wake` interacts with a quiet session (found 2026-11-02).** A
+  session's crew mail is first in, first out. A `no_wake` message at its head
+  waits for a turn the session starts for some other reason, and everything
+  queued behind it waits too, a later `next_turn` mention included. So a
+  subscription notice to a session that is idle or unloaded can hold back a
+  mention sent after it. This is the fabric's order for an address, not
+  something crew-board can change. The options are in
+  [Open questions](#open-questions-for-patch).
 
 **Subscriptions.**
 - Any participant can subscribe to a thread or a whole board, and
@@ -786,6 +800,17 @@ Agreed with Patch on 2026-11-02:
   access is a later decision.
 
 ## Open questions for Patch
+
+0. **`no_wake` ahead of a mention (from slice 2):** a subscription notice is
+   `no_wake`, and at the head of a quiet session's queue it holds back a later
+   mention (see [Notifications](#notifications)). Options:
+   - **(a) Fabric and drivers:** when a wake-capable message arrives behind a
+     `no_wake` head, the driver delivers both together as the turn starts, so
+     `no_wake` stops blocking. This is the recommended option. It is a change
+     to crew-messaging's drivers, outside crew-board.
+   - **(b) Mail per subscription:** send subscription notices as `next_turn`.
+   - **(c) No mail for subscriptions:** subscription updates go only to
+     `board unread`, with no crew mail.
 
 1. **crew-humans:** its name and design have their own task (#10535). The open part
    that matters here is how a session learns which person it works for. Does

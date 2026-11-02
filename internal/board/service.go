@@ -33,6 +33,19 @@ type Store interface {
 	// Search finds visible posts on a board whose current text or thread title
 	// contains query, newest first.
 	Search(ctx context.Context, board, query string, limit int) ([]Post, error)
+
+	// Subscribers lists who follows a thread, directly or through its board.
+	Subscribers(ctx context.Context, threadID, board string) ([]Participant, error)
+	Subscribe(ctx context.Context, sub Subscription) error
+	Unsubscribe(ctx context.Context, sub Subscription) error
+	Subscriptions(ctx context.Context, p Participant) ([]Subscription, error)
+	// MarkRead moves a read cursor forward, never back.
+	MarkRead(ctx context.Context, p Participant, threadID, postID string, at time.Time) error
+	Cursor(ctx context.Context, p Participant, threadID string) (string, error)
+	Unread(ctx context.Context, p Participant, limit int) ([]Unread, error)
+	DueNotices(ctx context.Context, now time.Time, limit int) ([]Notice, error)
+	ListNotices(ctx context.Context, state string, limit int) ([]Notice, error)
+	UpdateNotice(ctx context.Context, n Notice) error
 }
 
 // Receipt is a stored write: retries with the same operation ID and request
@@ -52,6 +65,8 @@ type ThreadCursor struct {
 
 // Change is one row a write adds or updates. Exactly one field is set.
 type Change struct {
+	Notice    *Notice
+	Subscribe *Subscription
 	Board     *Board
 	Thread    *Thread
 	Post      *Post
@@ -97,6 +112,9 @@ type Config struct {
 	// People are the people on this site, by short name. crew-humans will own
 	// this list (#10535); until then it is configured here.
 	People []string
+	// NoticeRetry is how long a notice is retried while the fabric cannot be
+	// reached before it is marked failed.
+	NoticeRetry time.Duration
 }
 
 const (
@@ -113,6 +131,7 @@ type Service struct {
 	now   func() time.Time
 	cfg   Config
 	mu    sync.Mutex
+	poke  func()
 }
 
 var siteName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
@@ -129,8 +148,15 @@ func New(store Store, dir Directory, now func() time.Time, cfg Config) (*Service
 			return nil, errors.New("board: person " + p + " must be lowercase letters, digits and hyphens")
 		}
 	}
-	return &Service{store: store, dir: dir, now: now, cfg: cfg}, nil
+	if cfg.NoticeRetry <= 0 {
+		cfg.NoticeRetry = time.Hour
+	}
+	return &Service{store: store, dir: dir, now: now, cfg: cfg, poke: func() {}}, nil
 }
+
+// OnNotices sets what to call after a write queues notices, so the sender
+// can go at once instead of on its next tick.
+func (s *Service) OnNotices(poke func()) { s.poke = poke }
 
 // Site is this site's name.
 func (s *Service) Site() string { return s.cfg.Site }
@@ -268,6 +294,12 @@ func do[T any](s *Service, ctx context.Context, operationID string, request any,
 	if err := s.store.Apply(ctx, Receipt{OperationID: operationID, RequestHash: hash, Result: stored, CreatedAt: now}, changes); err != nil {
 		return zero, false, err
 	}
+	for _, c := range changes {
+		if c.Notice != nil {
+			s.poke()
+			break
+		}
+	}
 	return result, false, nil
 }
 
@@ -313,6 +345,9 @@ type OpenThreadRequest struct {
 	Board       string `json:"board"`
 	Title       string `json:"title"`
 	Body        string `json:"body"`
+	Urgent      bool   `json:"urgent,omitempty"`
+	// NoSubscribe opts out of following the thread just opened.
+	NoSubscribe bool `json:"no_subscribe,omitempty"`
 }
 
 func (s *Service) OpenThread(ctx context.Context, request OpenThreadRequest) (PostResult, bool, error) {
@@ -335,10 +370,19 @@ func (s *Service) OpenThread(ctx context.Context, request OpenThreadRequest) (Po
 		}
 		mentions, warnings := s.resolveMentions(ctx, request.Body)
 		thread := Thread{ID: NewID(s.cfg.Site, now), Board: request.Board, Title: title, State: ThreadOpen, CreatedAt: now, CreatedBy: author, LastActivityAt: now, Posts: 1}
-		post := Post{ID: NewID(s.cfg.Site, now), ThreadID: thread.ID, Author: author, Site: s.cfg.Site, State: PostVisible, Revision: 1, Body: request.Body, Mentions: mentions, CreatedAt: now}
+		post := Post{ID: NewID(s.cfg.Site, now), ThreadID: thread.ID, Author: author, Site: s.cfg.Site, State: PostVisible, Revision: 1, Body: request.Body, Mentions: mentions, Urgent: request.Urgent, CreatedAt: now}
 		thread.OpeningPostID = post.ID
 		revision := Revision{PostID: post.ID, Revision: 1, Body: request.Body, Mentions: mentions, CreatedAt: now}
-		return PostResult{Thread: thread, Post: post, Warnings: warnings}, []Change{{Thread: &thread}, {Post: &post}, {Revision: &revision}}, nil
+		changes := []Change{{Thread: &thread}, {Post: &post}, {Revision: &revision}}
+		notices, err := s.noticesFor(ctx, now, thread, post, "", nil)
+		if err != nil {
+			return PostResult{}, nil, err
+		}
+		changes = append(changes, notices...)
+		if !request.NoSubscribe {
+			changes = append(changes, Change{Subscribe: &Subscription{Participant: author.Participant(), Thread: thread.ID, CreatedAt: now}})
+		}
+		return PostResult{Thread: thread, Post: post, Warnings: warnings}, changes, nil
 	})
 }
 
@@ -350,6 +394,7 @@ type ReplyRequest struct {
 	Thread      string `json:"thread"`
 	Parent      string `json:"parent,omitempty"`
 	Body        string `json:"body"`
+	Urgent      bool   `json:"urgent,omitempty"`
 }
 
 func (s *Service) Reply(ctx context.Context, request ReplyRequest) (PostResult, bool, error) {
@@ -362,6 +407,7 @@ func (s *Service) Reply(ctx context.Context, request ReplyRequest) (PostResult, 
 			return PostResult{}, nil, err
 		}
 		parent := thread.OpeningPostID
+		var parentAuthor *Author
 		if request.Parent != "" {
 			p, err := s.store.GetPost(ctx, request.Parent)
 			if errors.Is(err, ErrNotFound) {
@@ -373,16 +419,30 @@ func (s *Service) Reply(ctx context.Context, request ReplyRequest) (PostResult, 
 				return PostResult{}, nil, refuse(CodeParentNotInThread, "post %s is in another thread", request.Parent)
 			}
 			parent = p.ID
+			if p.State == PostVisible {
+				parentAuthor = &p.Author
+			}
+		} else if p, err := s.store.GetPost(ctx, parent); err == nil && p.State == PostVisible {
+			parentAuthor = &p.Author
 		}
 		author, err := s.author(ctx, request.Actor)
 		if err != nil {
 			return PostResult{}, nil, err
 		}
 		mentions, warnings := s.resolveMentions(ctx, request.Body)
-		post := Post{ID: NewID(s.cfg.Site, now), ThreadID: thread.ID, ParentID: parent, Author: author, Site: s.cfg.Site, State: PostVisible, Revision: 1, Body: request.Body, Mentions: mentions, CreatedAt: now}
+		post := Post{ID: NewID(s.cfg.Site, now), ThreadID: thread.ID, ParentID: parent, Author: author, Site: s.cfg.Site, State: PostVisible, Revision: 1, Body: request.Body, Mentions: mentions, Urgent: request.Urgent, CreatedAt: now}
 		revision := Revision{PostID: post.ID, Revision: 1, Body: request.Body, Mentions: mentions, CreatedAt: now}
 		thread.LastActivityAt, thread.Posts = now, thread.Posts+1
-		return PostResult{Thread: thread, Post: post, Warnings: warnings}, []Change{{Post: &post}, {Revision: &revision}, {Touch: &Touch{ThreadID: thread.ID, At: now}}}, nil
+		changes := []Change{{Post: &post}, {Revision: &revision}, {Touch: &Touch{ThreadID: thread.ID, At: now}}}
+		var replyTo []Participant
+		if parentAuthor != nil {
+			replyTo = []Participant{parentAuthor.Participant()}
+		}
+		notices, err := s.noticesFor(ctx, now, thread, post, ReasonReply, replyTo)
+		if err != nil {
+			return PostResult{}, nil, err
+		}
+		return PostResult{Thread: thread, Post: post, Warnings: warnings}, append(changes, notices...), nil
 	})
 }
 
@@ -408,14 +468,30 @@ func (s *Service) Edit(ctx context.Context, request EditRequest) (PostResult, bo
 			return PostResult{}, nil, refuse(CodePostNotVisible, "post %s is %s", post.ID, post.State)
 		}
 		mentions, warnings := s.resolveMentions(ctx, request.Body)
+		earlier := map[Participant]bool{}
+		for _, m := range post.Mentions {
+			earlier[m.Participant()] = true
+		}
 		revision := Revision{PostID: post.ID, Revision: post.Revision + 1, Body: request.Body, Mentions: mentions, CreatedAt: now}
 		post.Revision, post.Body, post.Mentions, post.EditedAt = revision.Revision, request.Body, mentions, now
 		thread.LastActivityAt = now
-		return PostResult{Thread: thread, Post: post, Warnings: warnings}, []Change{
+		changes := []Change{
 			{Revision: &revision},
 			{PostState: &PostState{PostID: post.ID, State: PostVisible, Revision: revision.Revision, EditedAt: now}},
 			{Touch: &Touch{ThreadID: thread.ID, At: now}},
-		}, nil
+		}
+		// An edit tells only the participants it newly mentions.
+		var added []Mention
+		for _, m := range mentions {
+			if !earlier[m.Participant()] {
+				added = append(added, m)
+			}
+		}
+		notices, err := s.mentionNotices(ctx, now, thread, post, added)
+		if err != nil {
+			return PostResult{}, nil, err
+		}
+		return PostResult{Thread: thread, Post: post, Warnings: warnings}, append(changes, notices...), nil
 	})
 }
 

@@ -88,6 +88,22 @@ func TestBoardCommandsEndToEnd(t *testing.T) {
 	if code, out, _ := run("", "", "reply", thread, "--person", "lore", "Per material, I think."); code != 0 || !strings.Contains(out, "posted den-") {
 		t.Fatalf("reply = %d %q", code, out)
 	}
+	// lore answered the seat's post, so the reply is unread for the seat
+	// until it reads; a --peek read moves nothing.
+	if code, out, _ := run("native-a", "", "unread", "--as", "rusty-engine.lead"); code != 0 || !strings.Contains(out, thread) || !strings.Contains(out, "Shader cache") {
+		t.Fatalf("unread = %d %q", code, out)
+	}
+	run("native-a", "", "read", thread, "--as", "rusty-engine.lead", "--peek")
+	if _, out, _ := run("native-a", "", "unread", "--as", "rusty-engine.lead"); !strings.Contains(out, thread) {
+		t.Fatalf("unread after a peek = %q", out)
+	}
+	run("native-a", "", "read", thread, "--as", "rusty-engine.lead")
+	if _, out, _ := run("native-a", "", "unread", "--as", "rusty-engine.lead"); !strings.Contains(out, "Nothing unread.") {
+		t.Fatalf("unread after reading = %q", out)
+	}
+	if code, out, _ := run("", "", "notices"); code != 0 || !strings.Contains(out, "rusty-engine.lead  reply") {
+		t.Fatalf("notices = %d %q", code, out)
+	}
 	code, out, _ = run("native-a", "", "read", thread)
 	if code != 0 || !strings.Contains(out, "Shader cache\n"+thread+" · board rusty-engine · open · 2 posts") ||
 		!strings.Contains(out, "rusty-engine.lead (Claude Code, "+binding.Address+")") ||

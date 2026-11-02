@@ -71,7 +71,45 @@ func NewHandler(svc *board.Service) http.Handler {
 			return op(ctx, request)
 		}))
 	}
+	mux.HandleFunc("PUT /v1/subscriptions", plain(svc.Subscribe))
+	mux.HandleFunc("DELETE /v1/subscriptions", plain(svc.Unsubscribe))
+	mux.HandleFunc("GET /v1/subscriptions", func(w http.ResponseWriter, r *http.Request) {
+		subs, err := svc.Subscriptions(r.Context(), actorFrom(r))
+		reply(w, map[string]any{"subscriptions": subs}, err)
+	})
+	mux.HandleFunc("POST /v1/read-cursors", plain(func(ctx context.Context, request board.MarkReadRequest) (map[string]string, error) {
+		return map[string]string{"thread": request.Thread, "post": request.Post}, svc.MarkRead(ctx, request)
+	}))
+	mux.HandleFunc("GET /v1/unread", func(w http.ResponseWriter, r *http.Request) {
+		unread, err := svc.Unread(r.Context(), actorFrom(r), limit(r))
+		reply(w, map[string]any{"unread": unread}, err)
+	})
+	mux.HandleFunc("GET /v1/notices", func(w http.ResponseWriter, r *http.Request) {
+		notices, err := svc.Notices(r.Context(), r.URL.Query().Get("state"), limit(r))
+		reply(w, map[string]any{"notices": notices}, err)
+	})
 	return mux
+}
+
+// actorFrom reads a reader's identity from the query: session_address with
+// as_seat, or person.
+func actorFrom(r *http.Request) board.Actor {
+	q := r.URL.Query()
+	return board.Actor{SessionAddress: q.Get("session_address"), AsSeat: q.Get("as_seat"), Person: q.Get("person")}
+}
+
+// plain decodes a request that needs no operation receipt (it is idempotent
+// by nature) and answers 200.
+func plain[T any, R any](run func(context.Context, T) (R, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var request T
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"code": string(board.CodeInvalid), "error": "invalid JSON"})
+			return
+		}
+		result, err := run(r.Context(), request)
+		reply(w, result, err)
+	}
 }
 
 // write decodes a request, runs it, and answers 201 for a new write and 200

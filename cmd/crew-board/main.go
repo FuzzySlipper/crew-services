@@ -51,6 +51,8 @@ func serve(args []string) error {
 	site := fs.String("site", "den", "this site's name, the prefix of every ID it makes")
 	people := fs.String("people", "patch,lore", "the people on this site, comma-separated (until crew-humans owns this list)")
 	fabricURL := fs.String("fabric", "http://127.0.0.1:8787", "the crew messaging fabric")
+	noticeTTL := fs.Duration("notice-ttl", 24*time.Hour, "how long a sent notice waits in the fabric (at most the fabric's own TTL cap)")
+	noticeRetry := fs.Duration("notice-retry", time.Hour, "how long a notice is retried while the fabric cannot be reached")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -81,10 +83,14 @@ func serve(args []string) error {
 			names = append(names, p)
 		}
 	}
-	svc, err := board.New(store, board.FabricDirectory{Fabric: fabric}, time.Now, board.Config{Site: *site, People: names})
+	dir := board.FabricDirectory{Fabric: fabric}
+	svc, err := board.New(store, dir, time.Now, board.Config{Site: *site, People: names, NoticeRetry: *noticeRetry})
 	if err != nil {
 		return err
 	}
+	notifier := board.NewNotifier(store, dir, fabric, time.Now, board.NotifierConfig{InstanceID: "crew-board-" + *site, TTL: *noticeTTL})
+	svc.OnNotices(notifier.Poke)
+	go notifier.Run(ctx, 5*time.Second)
 	server := &http.Server{Addr: *listen, Handler: boardhttp.NewHandler(svc), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()

@@ -22,6 +22,7 @@ type world struct {
 	t       *testing.T
 	ctx     context.Context
 	fabric  *fabricclient.Client
+	hub     *service.Service
 	dir     string
 	store   *boardsqlite.Store
 	svc     *board.Service
@@ -50,7 +51,7 @@ func newWorld(t *testing.T) *world {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &world{t: t, ctx: ctx, fabric: fabric, dir: dir, now: time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC), leases: map[string]fabricclient.Lease{}}
+	w := &world{t: t, ctx: ctx, fabric: fabric, hub: fsvc, dir: dir, now: time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC), leases: map[string]fabricclient.Lease{}}
 	w.a = w.session("claude-code", "a")
 	w.b = w.session("claude-code", "b")
 	w.x = w.session("crew-codex", "x")

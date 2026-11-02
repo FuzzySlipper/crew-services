@@ -52,16 +52,18 @@ const (
 // Post is one message in a thread. Its text is its current revision; an
 // edit adds a revision and never overwrites one.
 type Post struct {
-	ID        string    `json:"id"`
-	ThreadID  string    `json:"thread_id"`
-	ParentID  string    `json:"parent_id,omitempty"`
-	Author    Author    `json:"author"`
-	Site      string    `json:"site"`
-	State     string    `json:"state"`
-	Revision  int       `json:"revision"`
-	Body      string    `json:"body,omitempty"`
-	Mentions  []Mention `json:"mentions,omitempty"`
-	Note      string    `json:"note,omitempty"`
+	ID       string    `json:"id"`
+	ThreadID string    `json:"thread_id"`
+	ParentID string    `json:"parent_id,omitempty"`
+	Author   Author    `json:"author"`
+	Site     string    `json:"site"`
+	State    string    `json:"state"`
+	Revision int       `json:"revision"`
+	Body     string    `json:"body,omitempty"`
+	Mentions []Mention `json:"mentions,omitempty"`
+	Note     string    `json:"note,omitempty"`
+	// Urgent is the author's label; for now it changes only how notices read.
+	Urgent    bool      `json:"urgent,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	EditedAt  time.Time `json:"edited_at,omitempty"`
 }
@@ -103,6 +105,74 @@ type Author struct {
 	Session string `json:"session,omitempty"`
 	Adapter string `json:"adapter,omitempty"`
 	Site    string `json:"site"`
+}
+
+// Participant is anyone who can be notified or keep read state: a seat, a
+// session or a person, on a site.
+type Participant struct {
+	Kind    string `json:"kind"`
+	Address string `json:"address"`
+	Site    string `json:"site"`
+}
+
+// Participant is the author as a notification target: the seat itself when
+// the post was written as one.
+func (a Author) Participant() Participant {
+	return Participant{Kind: a.Kind, Address: a.Address, Site: a.Site}
+}
+
+// Notice reasons, strongest first.
+const (
+	ReasonMention      = "mention"
+	ReasonReply        = "reply"
+	ReasonSubscription = "subscription"
+)
+
+// Notice states. A notice to a person has no route until crew-humans exists.
+const (
+	NoticePending = "pending"
+	NoticeSent    = "sent"
+	NoticeFailed  = "failed"
+	NoticeNoRoute = "no_route"
+)
+
+// Notice is one participant to be told about one post. It is written with
+// the post and sent afterwards; whatever happens to it, the post stands.
+type Notice struct {
+	ID            string      `json:"id"`
+	PostID        string      `json:"post_id"`
+	ThreadID      string      `json:"thread_id"`
+	Recipient     Participant `json:"recipient"`
+	Reason        string      `json:"reason"`
+	Policy        string      `json:"activation_policy"`
+	Urgent        bool        `json:"urgent,omitempty"`
+	State         string      `json:"state"`
+	Attempts      int         `json:"attempts"`
+	NextAttemptAt time.Time   `json:"next_attempt_at"`
+	LastError     string      `json:"last_error,omitempty"`
+	MessageID     string      `json:"message_id,omitempty"`
+	CreatedAt     time.Time   `json:"created_at"`
+	// GiveUpAt ends the retry window for a fabric that cannot be reached.
+	GiveUpAt time.Time `json:"give_up_at"`
+	SentAt   time.Time `json:"sent_at,omitempty"`
+}
+
+// Subscription is a participant following a thread or a whole board.
+type Subscription struct {
+	Participant Participant `json:"participant"`
+	Thread      string      `json:"thread,omitempty"`
+	Board       string      `json:"board,omitempty"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
+// Unread is a thread with posts a participant was told about and has not read
+// past: Mentions of them name the participant.
+type Unread struct {
+	Thread   Thread    `json:"thread"`
+	Posts    int       `json:"posts"`
+	Mentions int       `json:"mentions"`
+	NewestID string    `json:"newest_post_id"`
+	NewestAt time.Time `json:"newest_at"`
 }
 
 // Actor is who is calling: a session (optionally acting as a seat it holds),
