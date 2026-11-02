@@ -479,6 +479,21 @@ func TestPulledMediaIsCheckedAgainOnTheReceivingSite(t *testing.T) {
 	if pending, _ := den.store.PendingOutbox(den.ctx, "friends", 100); len(pending) != 0 {
 		t.Errorf("den still has files to push: %+v", pending)
 	}
+	// Reindexing either site's existing index does not bring the image back,
+	// though the repo still holds it.
+	for _, s := range []*site{den, interlake} {
+		if err := s.sync.Reindex(s.ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.svc.Attachment(s.ctx, a.Ref); board.CodeOf(err) != board.CodeAttachmentUnknown {
+			t.Errorf("%s has the attachment again after reindex: %v", s.name, err)
+		}
+	}
+	for _, path := range []string{denPath, interlakePath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("purged image bytes back at %s after reindex", path)
+		}
+	}
 }
 
 // An image held by the scan and then released by a person is shared under

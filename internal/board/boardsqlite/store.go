@@ -40,7 +40,10 @@ var migration007 string
 //go:embed migrations/008_joined.sql
 var migration008 string
 
-var migrations = []string{migration001, migration002, migration003, migration004, migration005, migration006, migration007, migration008}
+//go:embed migrations/009_purged_blobs.sql
+var migration009 string
+
+var migrations = []string{migration001, migration002, migration003, migration004, migration005, migration006, migration007, migration008, migration009}
 
 // Store is crew-board's records in one SQLite file.
 type Store struct {
@@ -904,6 +907,9 @@ func (s *Store) DeleteAttachment(ctx context.Context, a board.Attachment) error 
 		if hash == "" {
 			continue
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO purged_blobs (hash, created_at) VALUES (?, ?)`, hash, stamp(time.Now())); err != nil {
+			return err
+		}
 		pattern := "blobs/sha256/" + hash[:2] + "/" + hash + "%"
 		if _, err := tx.ExecContext(ctx, `DELETE FROM sync_outbox WHERE state = 'pending' AND path LIKE ?`, pattern); err != nil {
 			return err
@@ -913,4 +919,18 @@ func (s *Store) DeleteAttachment(ctx context.Context, a board.Attachment) error 
 		}
 	}
 	return tx.Commit()
+}
+
+// BlobPurged reports whether a purge removed the attachment with this hash.
+func (s *Store) BlobPurged(ctx context.Context, hash string) bool {
+	var n int
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM purged_blobs WHERE hash = ?`, hash).Scan(&n)
+	return n > 0
+}
+
+// ThreadPurged reports whether a thread is in the index only as purged.
+func (s *Store) ThreadPurged(ctx context.Context, id string) bool {
+	var n int
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM threads WHERE id = ? AND purged = 1`, id).Scan(&n)
+	return n > 0
 }

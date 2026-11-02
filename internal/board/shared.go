@@ -351,6 +351,16 @@ func (s *Service) applyBoard(ctx context.Context, f RemoteFile, now time.Time) e
 	return s.store.Apply(ctx, Receipt{}, []Change{{Board: &b}})
 }
 
+// purgedThread reports whether a purge already removed a thread here, so a
+// replay of its files has nothing to add.
+func (s *Service) purgedThread(ctx context.Context, id string) bool {
+	type purged interface {
+		ThreadPurged(ctx context.Context, id string) bool
+	}
+	p, ok := s.store.(purged)
+	return ok && p.ThreadPurged(ctx, id)
+}
+
 func (s *Service) sharedBoard(ctx context.Context, f RemoteFile) error {
 	b, err := s.store.GetBoard(ctx, f.File.Board)
 	if err != nil || b.Network != f.Network {
@@ -362,6 +372,9 @@ func (s *Service) sharedBoard(ctx context.Context, f RemoteFile) error {
 func (s *Service) applyThread(ctx context.Context, f RemoteFile) error {
 	if err := s.sharedBoard(ctx, f); err != nil {
 		return err
+	}
+	if s.purgedThread(ctx, f.File.Thread) {
+		return nil
 	}
 	var head ThreadFile
 	if _, err := ParseFrontmatter(f.Data, &head); err != nil {
@@ -380,6 +393,9 @@ func (s *Service) applyThread(ctx context.Context, f RemoteFile) error {
 func (s *Service) applyPost(ctx context.Context, f RemoteFile, now time.Time) error {
 	if err := s.sharedBoard(ctx, f); err != nil {
 		return err
+	}
+	if s.purgedThread(ctx, f.File.Thread) {
+		return nil
 	}
 	var head PostFile
 	body, err := ParseFrontmatter(f.Data, &head)
@@ -599,6 +615,14 @@ func (s *Service) applyBlob(ctx context.Context, f RemoteFile) error {
 	}
 	if digest(f.Data) != f.File.ID {
 		return ignore("blob does not hash to its name")
+	}
+	type purgedBlobs interface {
+		BlobPurged(ctx context.Context, hash string) bool
+	}
+	if store, ok := s.attachments.(purgedBlobs); ok && store.BlobPurged(ctx, f.File.ID) {
+		// A purge removed it here; the repo still holds it, but replaying
+		// the repo never brings it back.
+		return nil
 	}
 	if a, err := s.attachments.GetAttachment(ctx, f.File.ID); err == nil && a.State != AttachmentDropped {
 		return nil
