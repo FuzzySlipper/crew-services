@@ -195,7 +195,7 @@ func call(ctx context.Context, method, url string, body, target any) error {
 // session); ownURL is the calling runtime's driver.
 func Main(ctx context.Context, args []string, self, ownURL string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: send [--policy next_turn|next_step|no_wake] [--as SEAT] --to ADDRESS TEXT... | who | seat COMMAND")
+		fmt.Fprintln(stderr, "usage: send [--policy next_turn|next_step|no_wake] [--as SEAT] --to ADDRESS TEXT... | who | seat COMMAND | board COMMAND")
 		return 2
 	}
 	switch args[0] {
@@ -207,6 +207,8 @@ func Main(ctx context.Context, args []string, self, ownURL string, stdin io.Read
 		return send(ctx, args[1:], self, ownURL, stdin, stdout, stderr)
 	case "seat":
 		return seatMain(ctx, args[1:], self, ownURL, stdin, stdout, stderr)
+	case "board":
+		return BoardMain(ctx, args[1:], self, stdin, stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "unknown command %q\n", args[0])
 	return 2

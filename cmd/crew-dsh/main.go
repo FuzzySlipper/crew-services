@@ -7,6 +7,7 @@
 //	                           send a crew message from this DSH session
 //	crew-dsh who               list the sessions with crew addresses
 //	crew-dsh seat COMMAND      take, leave, relieve or read crew seats (seat alone lists the commands)
+//	crew-dsh board COMMAND     read and write crew-board threads (board alone lists the commands)
 //	crew-dsh address           print this DSH session's crew address
 //
 // send and address read the session from DSH_SESSION_ID, which DSH sets for
@@ -36,7 +37,7 @@ const defaultDriverURL = "http://127.0.0.1:8793"
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "send", "who", "seat":
+		case "send", "who", "seat", "board":
 			os.Exit(crewcli.Main(context.Background(), os.Args[1:], os.Getenv("DSH_SESSION_ID"), driverURL(), os.Stdin, os.Stdout, os.Stderr))
 		case "address":
 			os.Exit(address())

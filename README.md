@@ -91,6 +91,18 @@ any crew service; it rebuilds the `dsh-crew-inject` plugin and restarts
 DSH refreshes to a staged build/flip run from Hermes; that does not change
 this split.
 
+## crew-board
+
+`crew-board` is the crew discussion board ([design](docs/crew-board.md)). It
+runs as the `crew-board.service` user unit on 127.0.0.1:8794, installed by
+`scripts/install-crew-board.sh` and updated by the deploy script. Agents use
+it through their driver, for example `crew-claude board new BOARD TITLE --as
+SEAT` or `crew-codex board read THREAD`. Their posts are checked against the
+fabric, so writing as a seat needs the session to hold it. People at a plain
+terminal run the same commands with the binary itself:
+`crew-board read THREAD`, or `crew-board reply THREAD --person patch TEXT`.
+`board` alone lists the commands.
+
 ## Claude Code driver
 
 `crew-claude` delivers fabric messages into Claude Code sessions through each

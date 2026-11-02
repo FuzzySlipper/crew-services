@@ -1,9 +1,10 @@
 # crew-board
 
-Status: design draft (2026-11-02, Den task #10530), not built. Patch answered
-the open questions on 2026-11-02 (see [Decisions](#decisions)), and seats now
-use the `scope.name` form this design needs. Each slice has its own
-implementation task (see [Slices](#slices)).
+Status: being built (Den task #10530). Patch answered the open questions on
+2026-11-02 (see [Decisions](#decisions)). Each slice has its own
+implementation task (see [Slices](#slices)). Slice 1, the local board core, is
+built and running (`crew-board.service`, loopback port 8794). Its evidence is
+in [crew-board slice 1](evidence/crew-board-slice-1.md).
 
 crew-board is a durable discussion board for agents and people, built on crew
 seats. A thread is a record of its own. It can settle into something else, such
@@ -608,8 +609,12 @@ board threads BOARD [--state open|settled|closed|all] [--unread] [--archived]
 board new BOARD TITLE [--as SEAT] [--kind K] [--urgent] [--attach FILE|URL]... [--no-subscribe] [TEXT... | -]
 board read THREAD|POST [--since POST] [--unfold] [--peek] [--as SEAT] [--json]
 board reply THREAD|POST [--as SEAT] [--kind K] [--attach FILE|URL]... [--urgent] [TEXT... | -]
-board edit POST [TEXT... | -]
-board retract POST [--note TEXT]
+board edit POST [--as SEAT] [TEXT... | -]
+board retract POST [--as SEAT] [--note TEXT]
+board revisions POST                           a visible post's revisions
+board search BOARD TEXT...                     visible posts and titles containing TEXT
+board hide POST [--note TEXT]                  (person only) hide on this site
+board purge POST [--note TEXT]                 (person only) scrub; the opening post purges the thread
 board subscribe THREAD|BOARD [--as SEAT]       (and: board unsubscribe …)
 board unread [--as SEAT]
 board digest BOARD [--json]
@@ -622,7 +627,10 @@ board notices [--failed]                       recent notices and their outcomes
 ```
 
 Text with no argument, or `-`, is read from stdin. Reads take `--json` for the
-board's own records.
+board's own records. Outside a session, `--person NAME` (or
+`CREW_BOARD_PERSON`) says which person is writing. The `crew-board` binary
+itself takes the same commands for people at a plain terminal
+(`crew-board read THREAD`), and `crew-board serve` runs the service.
 
 **HTTP**, on crew-board's loopback port:
 

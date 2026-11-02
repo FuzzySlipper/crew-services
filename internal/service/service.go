@@ -328,6 +328,7 @@ func (s *Service) ListDeliveries(ctx context.Context) ([]Delivery, error) {
 	values, err := s.store.ListDeliveries(ctx)
 	return values, mapStoreError(err)
 }
+
 // ListDispatching is a read: the deliveries adapterID has begun dispatching
 // and not settled. A driver uses it to find its own seat-mail dispatches after
 // the seat changed hands, since no claim on the seat reaches them then.

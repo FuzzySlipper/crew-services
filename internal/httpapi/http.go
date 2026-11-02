@@ -280,6 +280,7 @@ func getDelivery(svc *service.Service) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, value)
 	}
 }
+
 // errDeliveryFilter: the delivery listing filters only state=dispatching by
 // claim_owner.
 var errDeliveryFilter = errors.New("deliveries can be filtered only as state=dispatching&claim_owner=ADAPTER")

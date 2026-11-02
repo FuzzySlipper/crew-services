@@ -522,7 +522,7 @@ func describeRefusal(body []byte) string {
 			text += ", stale: " + h.StaleReason
 		}
 		text += "; `seat relieve` takes it over and tells them"
-	case e.Code == "not_holder":
+	case e.Code == "not_holder" && e.Error == "":
 		text += ": this session does not hold that seat now; `seat show` names its holder"
 	case e.Detail.CurrentVersion != nil:
 		text += fmt.Sprintf(": the current version is %d; read it, then set again with --expect %d", *e.Detail.CurrentVersion, *e.Detail.CurrentVersion)

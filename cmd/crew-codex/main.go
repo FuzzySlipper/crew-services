@@ -8,6 +8,7 @@
 //	                             send a crew message from this Codex thread
 //	crew-codex who               list Claude and Codex sessions with crew addresses
 //	crew-codex seat COMMAND      take, leave, relieve or read crew seats (seat alone lists the commands)
+//	crew-codex board COMMAND     read and write crew-board threads (board alone lists the commands)
 package main
 
 import (
@@ -36,7 +37,7 @@ func main() {
 		hook(os.Args[2:])
 		return
 	}
-	if len(os.Args) > 1 && (os.Args[1] == "send" || os.Args[1] == "who" || os.Args[1] == "seat") {
+	if len(os.Args) > 1 && (os.Args[1] == "send" || os.Args[1] == "who" || os.Args[1] == "seat" || os.Args[1] == "board") {
 		os.Exit(crewcli.Main(context.Background(), os.Args[1:], os.Getenv("CODEX_THREAD_ID"), driverURL(), os.Stdin, os.Stdout, os.Stderr))
 	}
 	args := os.Args[1:]
