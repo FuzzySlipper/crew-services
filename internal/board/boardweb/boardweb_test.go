@@ -3,6 +3,7 @@ package boardweb_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -84,7 +85,7 @@ func TestRenderingAllowsOnlyDetailsAndSummary(t *testing.T) {
 		"<details open><summary>Bench<script>x</script> results</summary>\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n<i>raw</i> inside\n</details>\n\n" +
 		"![remote](https://example.com/tracker.png)"
 	html := string(boardweb.RenderPost(body, nil))
-	for _, banned := range []string{"<script", "onerror", "<iframe", "javascript:", "<b>", "<i>", "<img src=\"https://", "<img src=\"x"} {
+	for _, banned := range []string{"<script", "<iframe", "javascript:", "<b>", "<i>", "<img"} {
 		if strings.Contains(html, banned) {
 			t.Errorf("rendered HTML has %q:\n%s", banned, html)
 		}
@@ -93,6 +94,9 @@ func TestRenderingAllowsOnlyDetailsAndSummary(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered HTML lacks %q:\n%s", want, html)
 		}
+	}
+	if regexp.MustCompile(`<[^>]*onerror`).MatchString(html) {
+		t.Errorf("a live tag carries onerror:\n%s", html)
 	}
 	// Every HTML tag is one goldmark makes, or details/summary.
 	allowed := map[string]bool{"p": true, "a": true, "strong": true, "em": true, "del": true, "code": true, "pre": true, "table": true, "thead": true, "tbody": true, "tr": true, "th": true, "td": true, "details": true, "summary": true, "span": true, "br": true, "ul": true, "ol": true, "li": true, "blockquote": true, "h1": true, "h2": true, "h3": true, "hr": true, "input": true}
@@ -267,5 +271,92 @@ func TestAnImageAttachedThroughTheForm(t *testing.T) {
 	}
 	if blob := w.do("GET", "/blob/"+m[1], "patch", nil); blob.Code != http.StatusOK || blob.Header().Get("Content-Type") != "image/webp" {
 		t.Fatalf("blob = %d %s", blob.Code, blob.Header().Get("Content-Type"))
+	}
+}
+
+func TestFoldsQuotedInCodeStayCode(t *testing.T) {
+	body := "Write a fold like this:\n\n```html\n<details><summary>Example</summary>text</details>\n```\n\n" +
+		"or inline, `<details><summary>Inline</summary>x</details>`.\n\n" +
+		"<details><summary>Real</summary>\n\nfolded **text**\n\n</details>\n\n" +
+		"<details><summary>Never closed</summary>\n\nstill inside"
+	html := string(boardweb.RenderPost(body, nil))
+	if n := strings.Count(html, "<details>"); n != 2 {
+		t.Fatalf("want the real fold and the unclosed one live, got %d:\n%s", n, html)
+	}
+	if strings.Count(html, "</details>") != 2 {
+		t.Fatalf("folds are not balanced:\n%s", html)
+	}
+	for _, want := range []string{
+		`<pre><code class="language-html">&lt;details&gt;&lt;summary&gt;Example&lt;/summary&gt;text&lt;/details&gt;`,
+		`<code>&lt;details&gt;&lt;summary&gt;Inline&lt;/summary&gt;x&lt;/details&gt;</code>`,
+		"<details><summary>Real</summary>",
+		"<strong>text</strong>",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered HTML lacks %q:\n%s", want, html)
+		}
+	}
+}
+
+func TestLongThreadsPage(t *testing.T) {
+	w := newWeb(t)
+	opened, _, err := w.svc.OpenThread(w.ctx, board.OpenThreadRequest{Actor: board.Actor{Person: "patch"}, OperationID: "open", Board: "design", Title: "Long", Body: "post 0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := opened.Thread.ID
+	for i := 1; i <= 230; i++ {
+		if _, _, err := w.svc.Reply(w.ctx, board.ReplyRequest{Actor: board.Actor{Person: "patch"}, OperationID: fmt.Sprintf("r%d", i), Thread: thread, Body: fmt.Sprintf("post %d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shows := func(page, path string, posts ...int) {
+		t.Helper()
+		for _, n := range posts {
+			if !strings.Contains(page, fmt.Sprintf("<p>post %d</p>", n)) {
+				t.Errorf("%s does not show post %d", path, n)
+			}
+		}
+	}
+	// Lore has read nothing, so the page opens at the start, and each page
+	// she reads is marked read.
+	first := w.do("GET", "/t/"+thread, "lore", nil).Body.String()
+	shows(first, "page 1", 0, 99)
+	if strings.Contains(first, "<p>post 100</p>") || !strings.Contains(first, `<a href="?page=3">3</a>`) {
+		t.Fatalf("page 1 should hold posts 0-99 and link page 3")
+	}
+	// Coming back, she opens where her new posts start.
+	second := w.do("GET", "/t/"+thread, "lore", nil).Body.String()
+	shows(second, "the next visit", 100, 199)
+	third := w.do("GET", "/t/"+thread+"?page=3", "lore", nil).Body.String()
+	shows(third, "page 3", 200, 230)
+	if again := w.do("GET", "/t/"+thread+"?page=1", "lore", nil).Body.String(); strings.Contains(again, `class="post unread`) {
+		t.Fatal("going back to page 1 marks posts new again")
+	}
+	if unread, _ := w.svc.Unread(w.ctx, board.Actor{Person: "lore"}, 10); len(unread) != 0 {
+		t.Fatalf("lore read every page and still has %+v", unread)
+	}
+	// A reply lands on the last page, where it shows.
+	rec := w.do("POST", "/t/"+thread+"/reply", "lore", url.Values{"op": {"lore-1"}, "body": {"the newest reply"}})
+	where := rec.Header().Get("Location")
+	if !strings.Contains(where, "?page=last#") {
+		t.Fatalf("reply went to %q", where)
+	}
+	shows(w.do("GET", strings.Split(where, "#")[0], "lore", nil).Body.String(), "the last page", 230)
+	if !strings.Contains(w.do("GET", strings.Split(where, "#")[0], "lore", nil).Body.String(), "the newest reply") {
+		t.Fatal("the last page does not show the reply just posted")
+	}
+}
+
+func TestEveryPageHasTheBoardPanel(t *testing.T) {
+	w := newWeb(t)
+	opened, _, _ := w.svc.OpenThread(w.ctx, board.OpenThreadRequest{Actor: board.Actor{Person: "patch"}, OperationID: "open", Board: "design", Title: "Panel check", Body: "hi @lore"})
+	thread := w.do("GET", "/t/"+opened.Thread.ID, "patch", nil).Body.String()
+	if !strings.Contains(thread, `<aside class="nav">`) || !strings.Contains(thread, `<li class="current">`) || !strings.Contains(thread, "Panel check") {
+		t.Fatalf("thread page lacks the panel with its thread current:\n%s", thread)
+	}
+	home := w.do("GET", "/", "lore", nil).Body.String()
+	if !strings.Contains(home, `<span class="count">1</span>`) || !strings.Contains(home, "mentions you") {
+		t.Fatalf("lore's home lacks her unread count and mention:\n%s", home)
 	}
 }

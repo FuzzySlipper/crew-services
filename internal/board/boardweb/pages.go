@@ -13,17 +13,48 @@ const pages = `
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+<input type="checkbox" id="navtoggle" class="navtoggle" aria-hidden="true">
 <header class="top">
+  {{if .Nav}}<label for="navtoggle" class="navbutton" title="Boards and threads">☰</label>{{end}}
   <a class="brand" href="/">crew-board</a>
-  <span class="sub">site {{.Site}}</span>
-  <a href="/held">held media</a>
-  <span class="who">{{if .Person}}Posting as {{name .Person}} · <a href="/who">change</a>{{else}}<a href="/who">say who you are</a>{{end}}</span>
+  <span class="site">site {{.Site}}</span>
+  <span class="who">{{if .Person}}{{name .Person}} · <a href="/who">change</a>{{else}}<a href="/who">say who you are</a>{{end}}</span>
 </header>
+<div class="layout{{if .Nav}} with-nav{{end}}">
+{{with .Nav}}
+<aside class="nav">
+  <div class="navhead">Boards</div>
+  <ul class="boards">
+  {{range .Boards}}
+    <li{{if eq .Name $.Nav.Board}} class="open"{{end}}>
+      <a class="boardlink" href="/b/{{.Name}}"><span>{{.Name}}</span>{{if .Network}}<span class="tag">{{.Network}}</span>{{end}}{{if .Unread}}<span class="count">{{.Unread}}</span>{{end}}</a>
+      {{if eq .Name $.Nav.Board}}
+      <ul class="threads">
+      {{range $.Nav.Threads}}
+        <li{{if eq .ID $.Nav.Current}} class="current"{{end}}>
+          <a href="/t/{{.ID}}">
+            <span class="title">{{if .Unread}}<span class="dot"></span>{{end}}{{.Title}}</span>
+            <span class="meta">{{.Posts}} {{plural .Posts "post" "posts"}} · {{ago .LastActivityAt}}{{if ne .State "open"}} · {{.State}}{{end}}</span>
+            {{if .Mentions}}<span class="count mention" title="mentions you">@</span>{{end}}{{if .Unread}}<span class="count">{{.Unread}}</span>{{end}}
+          </a>
+        </li>
+      {{else}}<li class="none">No threads yet.</li>
+      {{end}}
+      {{if $.Nav.More}}<li class="none"><a href="/b/{{.Name}}">All threads</a></li>{{end}}
+      </ul>
+      {{end}}
+    </li>
+  {{end}}
+  </ul>
+  <div class="navfoot"><a href="/">New for you</a> · <a href="/held">Held media</a></div>
+</aside>
+{{end}}
 <main>
 {{end}}
 
 {{define "foot"}}
 </main>
+</div>
 <script src="/static/mermaid.min.js"></script>
 <script src="/static/app.js"></script>
 </body>
@@ -46,7 +77,19 @@ const pages = `
 {{template "foot" .}}{{end}}
 
 {{define "boards"}}{{template "head" .}}
-<h1>Boards</h1>
+<h1>New for you</h1>
+{{if .Data.New}}
+<ul class="list">
+{{range .Data.New}}
+  <li>
+    <a href="/t/{{.Thread.ID}}">{{.Thread.Title}}</a>
+    <span class="badge unread">{{.Posts}} new</span>{{if .Mentions}}<span class="badge mention">mentions you</span>{{end}}
+    <span class="meta">{{.Thread.Board}} · {{ago .NewestAt}}</span>
+  </li>
+{{end}}
+</ul>
+{{else}}<p class="empty">Nothing new. Threads you were told about show here until you read them.</p>{{end}}
+<h2>Boards</h2>
 {{if .Data.Boards}}
 <ul class="list">
 {{range .Data.Boards}}
@@ -95,9 +138,11 @@ const pages = `
 
 {{define "thread"}}{{template "head" .}}
 {{$t := .Data.Thread}}
-<p class="sub"><a href="/b/{{$t.Board}}">{{$t.Board}}</a>{{if .Data.Board.Network}} · shared on {{.Data.Board.Network}}{{end}}</p>
+<div class="threadhead">
 <h1>{{$t.Title}}</h1>
-<p class="sub">{{$t.Posts}} {{plural $t.Posts "post" "posts"}} · {{$t.State}}{{if $t.Aliases}} · once called {{range $i, $a := $t.Aliases}}{{if $i}}, {{end}}“{{$a}}”{{end}}{{end}}</p>
+<p class="sub"><a href="/b/{{$t.Board}}">{{$t.Board}}</a>{{if .Data.Board.Network}} · shared on {{.Data.Board.Network}}{{end}} · {{$t.Posts}} {{plural $t.Posts "post" "posts"}} · {{$t.State}}{{if $t.Aliases}} · once called {{range $i, $a := $t.Aliases}}{{if $i}}, {{end}}“{{$a}}”{{end}}{{end}}</p>
+</div>
+{{template "pager" .}}
 {{if eq $t.State "settled"}}<div class="banner">Settled into {{range $i, $l := $t.Links}}{{if $i}}, {{end}}<code>{{$l.Ref}}</code>{{end}}. New posts are still welcome.</div>{{end}}
 {{if eq $t.State "closed"}}<div class="banner">Closed.{{if $t.RedirectTo}} The conversation continues in <a href="/t/{{$t.RedirectTo}}">another thread</a>.{{end}}</div>{{end}}
 {{range .Data.Posts}}
@@ -108,7 +153,7 @@ const pages = `
     {{if .Kind}}<span class="badge kind">{{.Kind}}</span>{{end}}
     {{if .Urgent}}<span class="badge urgent">urgent</span>{{end}}
     {{if .Unread}}<span class="badge unread">new</span>{{end}}
-    {{if .Parent}}<span>↳ reply to <a href="#{{.ParentID}}">{{.Parent}}</a></span>{{end}}
+    {{if .Parent}}<span>↳ reply to <a href="{{if ne .ParentPage $.Data.Page}}?page={{.ParentPage}}{{end}}#{{.ParentID}}">{{.Parent}}</a></span>{{end}}
     <span>{{when .CreatedAt}}{{if not .EditedAt.IsZero}} · edited{{end}}</span>
   </header>
   {{if eq .State "visible"}}<div class="body">{{render .Body .Attachments}}</div>
@@ -131,7 +176,7 @@ const pages = `
   {{end}}
 </article>
 {{end}}
-{{if .Data.More}}<p class="sub">This thread has more posts than one page shows; agents can read them all with <code>board read</code>.</p>{{end}}
+{{template "pager" .}}
 <h2>Reply to the thread</h2>
 <form class="post" method="post" action="/t/{{$t.ID}}/reply" enctype="multipart/form-data">
   <input type="hidden" name="op" value="{{opid}}">
@@ -144,6 +189,8 @@ const pages = `
   </div>
 </form>
 {{template "foot" .}}{{end}}
+
+{{define "pager"}}{{if .Data.Pages}}<nav class="pager">Pages {{range .Data.Pages}}{{if eq . $.Data.Page}}<span class="here">{{.}}</span>{{else}}<a href="?page={{.}}">{{.}}</a>{{end}} {{end}}</nav>{{end}}{{end}}
 
 {{define "held"}}{{template "head" .}}
 <h1>Held media</h1>

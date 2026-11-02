@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -196,8 +197,65 @@ type page struct {
 	Title  string
 	Site   string
 	Person string
+	Nav    *navData
 	Data   any
 	Error  string
+}
+
+// navData is the left panel every page for a known person shows: the
+// boards, and the open board's threads.
+type navData struct {
+	Boards  []navBoard
+	Board   string
+	Threads []navThread
+	More    bool
+	Current string
+}
+
+type navBoard struct {
+	Name    string
+	Network string
+	Unread  int
+}
+
+type navThread struct {
+	board.Thread
+	Unread   int
+	Mentions int
+}
+
+// navThreads is how many of a board's threads the panel lists.
+const navThreads = 60
+
+// nav builds the left panel for person, with boardName's threads listed and
+// thread marked as the one open. A failure leaves the panel out.
+func (h *Handler) nav(ctx context.Context, person, boardName, thread string) *navData {
+	boards, err := h.svc.ListBoards(ctx)
+	if err != nil {
+		return nil
+	}
+	unread := h.unread(ctx, person)
+	perBoard := map[string]int{}
+	for _, u := range unread {
+		perBoard[u.Thread.Board] += u.Posts
+	}
+	nav := &navData{Board: boardName, Current: thread}
+	for _, b := range boards {
+		nav.Boards = append(nav.Boards, navBoard{Name: b.Name, Network: b.Network, Unread: perBoard[b.Name]})
+	}
+	if boardName == "" {
+		return nav
+	}
+	threads, err := h.svc.ListThreads(ctx, boardName, "", navThreads, nil, false)
+	if err != nil {
+		return nav
+	}
+	nav.More = threads.Next != ""
+	for _, t := range threads.Threads {
+		u := unread[t.ID]
+		nav.Threads = append(nav.Threads, navThread{Thread: t, Unread: u.Posts, Mentions: u.Mentions})
+	}
+	return nav
 }
 
 func (h *Handler) render(w http.ResponseWriter, name string, p page, status int) {
@@ -217,7 +275,11 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case "":
 		status = http.StatusInternalServerError
 	}
-	h.render(w, "error", page{Title: "Something went wrong", Person: h.person(r), Error: err.Error()}, status)
+	p := page{Title: "Something went wrong", Person: h.person(r), Error: err.Error()}
+	if p.Person != "" {
+		p.Nav = h.nav(r.Context(), p.Person, "", "")
+	}
+	h.render(w, "error", p, status)
 }
 
 // needPerson sends a reader who has not said who they are to the chooser.
@@ -263,12 +325,15 @@ func (h *Handler) boards(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	unread := h.unread(r.Context(), person)
+	nav := h.nav(r.Context(), person, "", "")
 	perBoard := map[string]int{}
-	for _, u := range unread {
-		perBoard[u.Thread.Board] += u.Posts
+	if nav != nil {
+		for _, b := range nav.Boards {
+			perBoard[b.Name] = b.Unread
+		}
 	}
-	h.render(w, "boards", page{Title: "Boards", Person: person, Data: map[string]any{"Boards": boards, "Unread": perBoard}}, http.StatusOK)
+	list, _ := h.svc.Unread(r.Context(), board.Actor{Person: person}, 50)
+	h.render(w, "boards", page{Title: "Boards", Person: person, Nav: nav, Data: map[string]any{"Boards": boards, "Unread": perBoard, "New": list}}, http.StatusOK)
 }
 
 func (h *Handler) unread(ctx context.Context, person string) map[string]board.Unread {
@@ -299,44 +364,102 @@ func (h *Handler) board(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.render(w, "board", page{Title: b.Name, Person: person, Data: map[string]any{"Board": b, "Threads": threads, "Unread": h.unread(r.Context(), person), "Archived": archived}}, http.StatusOK)
+	h.render(w, "board", page{Title: b.Name, Person: person, Nav: h.nav(r.Context(), person, b.Name, ""), Data: map[string]any{"Board": b, "Threads": threads, "Unread": h.unread(r.Context(), person), "Archived": archived}}, http.StatusOK)
 }
 
 type postView struct {
 	board.Post
-	Unread bool
-	Parent string
+	Unread     bool
+	Parent     string
+	ParentPage int
 }
+
+// threadPage is how many posts one thread page shows.
+const threadPage = 100
 
 func (h *Handler) thread(w http.ResponseWriter, r *http.Request) {
 	person, ok := h.needPerson(w, r)
 	if !ok {
 		return
 	}
+	// The whole thread is read so any page can be shown; a page is a fixed
+	// slice of it, so links stay stable as replies arrive.
 	read, err := h.svc.ReadThread(r.Context(), r.PathValue("thread"), "", 200)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
+	all := read.Posts
+	for next := read.Next; next != ""; {
+		more, err := h.svc.ReadThread(r.Context(), read.Thread.ID, next, 200)
+		if err != nil {
+			h.fail(w, r, err)
+			return
+		}
+		all, next = append(all, more.Posts...), more.Next
+	}
 	actor := board.Actor{Person: person}
 	cursor, _ := h.svc.Cursor(r.Context(), actor, read.Thread.ID)
-	authors := map[string]string{}
-	var posts []postView
 	// Posts come in the order written; everything after the cursor is new.
-	seen := cursor == ""
-	for _, p := range read.Posts {
-		authors[p.ID] = authorName(p.Author)
+	unread := make([]bool, len(all))
+	seen, firstUnread := cursor == "", -1
+	for i, p := range all {
 		mine := p.Author.Kind == board.AuthorPerson && p.Author.Address == person && !p.Remote
-		posts = append(posts, postView{Post: p, Unread: seen && !mine, Parent: authors[p.ParentID]})
+		unread[i] = seen && !mine
+		if unread[i] && firstUnread < 0 {
+			firstUnread = i
+		}
 		if p.ID == cursor {
 			seen = true
 		}
 	}
-	if len(read.Posts) > 0 {
-		_ = h.svc.MarkRead(r.Context(), board.MarkReadRequest{Actor: actor, Thread: read.Thread.ID, Post: read.Posts[len(read.Posts)-1].ID})
+	pages := max(1, (len(all)+threadPage-1)/threadPage)
+	// With no page asked for, open where the reader's new posts start, or at
+	// the newest page when nothing is new.
+	number := pages
+	if firstUnread >= 0 {
+		number = firstUnread/threadPage + 1
+	}
+	switch asked := r.URL.Query().Get("page"); asked {
+	case "", "new":
+	case "last":
+		number = pages
+	default:
+		if n, err := strconv.Atoi(asked); err == nil && n >= 1 && n <= pages {
+			number = n
+		}
+	}
+	from, to := (number-1)*threadPage, min(number*threadPage, len(all))
+	authors := map[string]string{}
+	for _, p := range all {
+		authors[p.ID] = authorName(p.Author)
+	}
+	posts := make([]postView, 0, to-from)
+	for i := from; i < to; i++ {
+		posts = append(posts, postView{Post: all[i], Unread: unread[i], Parent: authors[all[i].ParentID], ParentPage: h.pageOf(all, all[i].ParentID)})
+	}
+	// Reading a page marks it read; the cursor never moves back.
+	if to > from {
+		_ = h.svc.MarkRead(r.Context(), board.MarkReadRequest{Actor: actor, Thread: read.Thread.ID, Post: all[to-1].ID})
+	}
+	var numbers []int
+	if pages > 1 {
+		for n := 1; n <= pages; n++ {
+			numbers = append(numbers, n)
+		}
 	}
 	b, _ := h.svc.GetBoard(r.Context(), read.Thread.Board)
-	h.render(w, "thread", page{Title: read.Thread.Title, Person: person, Data: map[string]any{"Thread": read.Thread, "Board": b, "Posts": posts, "More": read.Next}}, http.StatusOK)
+	h.render(w, "thread", page{Title: read.Thread.Title, Person: person, Nav: h.nav(r.Context(), person, read.Thread.Board, read.Thread.ID), Data: map[string]any{"Thread": read.Thread, "Board": b, "Posts": posts, "Page": number, "Pages": numbers, "Last": pages}}, http.StatusOK)
+}
+
+// pageOf is the thread page that shows post id, or 0.
+func (h *Handler) pageOf(all []board.Post, id string) int {
+	for i, p := range all {
+		if p.ID == id {
+			return i/threadPage + 1
+		}
+	}
+	return 0
 }
 
 // attach uploads a form's files and returns the Markdown that shows them.
@@ -431,7 +554,7 @@ func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/t/"+out.Thread.ID+"#"+out.Post.ID, http.StatusSeeOther)
+	http.Redirect(w, r, "/t/"+out.Thread.ID+"?page=last#"+out.Post.ID, http.StatusSeeOther)
 }
 
 func (h *Handler) blob(w http.ResponseWriter, r *http.Request) {
@@ -455,7 +578,7 @@ func (h *Handler) held(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.render(w, "held", page{Title: "Held media", Person: person, Data: held}, http.StatusOK)
+	h.render(w, "held", page{Title: "Held media", Person: person, Nav: h.nav(r.Context(), person, "", ""), Data: held}, http.StatusOK)
 }
 
 func (h *Handler) release(w http.ResponseWriter, r *http.Request) {

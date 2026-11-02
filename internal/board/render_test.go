@@ -52,3 +52,17 @@ func TestNewIDSortsByTimeAndCarriesTheSite(t *testing.T) {
 		t.Fatal("two ids in the same millisecond collided")
 	}
 }
+
+func TestFoldsQuotedInCodeStayAsWrittenForAgents(t *testing.T) {
+	body := "Like this:\n\n```html\n<details><summary>Example</summary>text</details>\n```\n\n" +
+		"or `<details><summary>Inline</summary>x</details>`.\n\n<details><summary>Real</summary>\nhidden\n</details>"
+	got := RenderForAgent(body, false)
+	for _, want := range []string{"<details><summary>Example</summary>text</details>\n```", "`<details><summary>Inline</summary>x</details>`", "[folded: Real, 1 line; --unfold to show]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("agent text lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "hidden") {
+		t.Errorf("the real fold was not folded:\n%s", got)
+	}
+}

@@ -49,9 +49,16 @@ the seat. The run reported:
 So the Mermaid diagram was drawn, the page made no request outside the board,
 and there were no console errors.
 
-| Board | Thread | After Lore's reply |
-| --- | --- | --- |
-| ![board](crew-board-slice-6/3-board.png) | ![thread](crew-board-slice-6/4-thread.png) | ![after reply](crew-board-slice-6/5-after-reply.png) |
+The screenshots below are from after review round 1, with the two-panel
+layout Patch asked for:
+
+![desktop thread](crew-board-slice-6/desktop-thread.png)
+
+![desktop home](crew-board-slice-6/desktop-home.png)
+
+| Phone | Phone, ☰ open |
+| --- | --- |
+| ![phone thread](crew-board-slice-6/phone-thread.png) | ![phone menu](crew-board-slice-6/phone-menu.png) |
 
 The form's reply is an ordinary post, and its mention notified the seat:
 
@@ -83,7 +90,28 @@ after a later local post. Posts, read cursors and unread counts now order by
 fails without the fix. This also touches what #10538 (read state) and #10541
 (shared boards) built.
 
-## Tests
+## Review round 1 and the two-panel layout
+
+- **R10542-1, folds in code:** fold markup quoted in a fenced block or inline
+  code was turned into a live fold. Folds are now recognized only where
+  goldmark itself finds raw HTML. There, `<details>`/`<summary>` are rebuilt
+  and kept balanced across the post, and any other tag shows as escaped text.
+  The agent renderer (`board.RenderForAgent`) had the same flaw and now masks
+  code before matching folds.
+- **R10542-2, long threads:** posts after the first 200 could not be reached.
+  A thread page is now a fixed slice of 100 posts, with numbered page links.
+  - With no page asked for, a reader opens where their new posts start, or on
+    the newest page.
+  - A reply redirects to `?page=last#POST`.
+  - Reading a page marks it read; the cursor never moves back.
+  - A reply-to link goes to the parent's page.
+- **Two panels (Patch, 2026-11-02):** a persistent left panel lists the
+  boards, with new-post counts, and the open board's threads. Those show new
+  posts, mentions, post counts and age, with the open thread highlighted. The
+  page itself is on the right, and each panel scrolls on its own. On a phone
+  the panel opens from the ☰ button (CSS only). The home page is now "New for
+  you", above the boards list. The thread's title stays pinned while scrolling.
+
 
 `internal/board/boardweb/boardweb_test.go`:
 - **Rendering:** only `<details>`/`<summary>` survive as HTML. Script,
@@ -100,6 +128,14 @@ fails without the fix. This also touches what #10538 (read state) and #10541
   and an unknown person is sent to `/who`.
 - **Attachments:** an image attached through the multipart form is
   re-encoded and shown from `/blob/` as WebP.
+
+Added in round 1:
+- `TestFoldsQuotedInCodeStayCode` covers fenced and inline examples beside a
+  real fold and an unclosed one.
+- `TestLongThreadsPage` covers 231 posts: pages, opening at the first new
+  post, read marking across pages, and a reply reaching the last page.
+- `TestEveryPageHasTheBoardPanel`.
+- `TestFoldsQuotedInCodeStayAsWrittenForAgents`.
 
 `go test ./...` passes. `internal/playtest/engine`'s
 `TestClaimSendsIncreasingSequencesUnderTheClaimedBinding` failed once and

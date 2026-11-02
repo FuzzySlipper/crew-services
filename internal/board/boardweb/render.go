@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"html"
 	"html/template"
+	"io"
 	"regexp"
 	"strings"
 
@@ -17,57 +18,125 @@ import (
 	"crew-services/internal/board"
 )
 
-// detailsBlock is a folded section, the one piece of HTML a post may use.
-var detailsBlock = regexp.MustCompile(`(?is)<details(\s+open)?\s*>\s*(?:<summary>(.*?)</summary>)?(.*?)</details>`)
+// foldTag is a tag a post may use: <details>, <details open>, <summary> and
+// their closing tags.
+var foldTag = regexp.MustCompile(`(?i)<(/?)(details|summary)(\s+open)?\s*>`)
 
-// RenderPost turns a post's Markdown into HTML that is safe to show: raw HTML
-// is dropped (goldmark omits it), except <details>/<summary>, which this
-// renderer rebuilds itself with the summary escaped; links with dangerous
-// schemes are blanked; images become this board's own <img> or <video> for
-// attachments, and links for anything remote, so a page never fetches from
-// elsewhere.
+// RenderPost turns a post's Markdown into HTML that is safe to show. Folds
+// are found where Markdown itself finds raw HTML, so a fold quoted in code
+// stays code. There, <details>/<summary> are rebuilt balanced, and any other
+// tag shows as text. Links with dangerous schemes are blanked; images become
+// this board's own <img> or <video> for attachments, and links for anything
+// remote, so a page never fetches from elsewhere.
 func RenderPost(body string, attachments []board.Attachment) template.HTML {
 	byRef := map[string]board.Attachment{}
 	for _, a := range attachments {
 		byRef[a.Ref] = a
 	}
-	var out bytes.Buffer
-	last := 0
-	for _, loc := range detailsBlock.FindAllStringSubmatchIndex(body, -1) {
-		out.WriteString(markdown(body[last:loc[0]], byRef))
-		open := loc[2] >= 0
-		summary := "Details"
-		if loc[4] >= 0 {
-			summary = strings.TrimSpace(body[loc[4]:loc[5]])
-		}
-		inner := body[loc[6]:loc[7]]
-		if open {
-			out.WriteString("<details open>")
-		} else {
-			out.WriteString("<details>")
-		}
-		out.WriteString("<summary>" + html.EscapeString(summary) + "</summary>")
-		out.WriteString(markdown(inner, byRef))
-		out.WriteString("</details>")
-		last = loc[1]
+	if strings.TrimSpace(body) == "" {
+		return ""
 	}
-	out.WriteString(markdown(body[last:], byRef))
+	folds := &foldRenderer{}
+	md := goldmark.New(
+		goldmark.WithExtensions(extension.Table, extension.Strikethrough, extension.TaskList),
+		goldmark.WithRendererOptions(ghtml.WithHardWraps(), renderer.WithNodeRenderers(
+			util.Prioritized(&imageRenderer{byRef: byRef}, 100),
+			util.Prioritized(folds, 100),
+		)),
+	)
+	var out bytes.Buffer
+	if err := md.Convert([]byte(body), &out); err != nil {
+		return template.HTML("<p>" + html.EscapeString(body) + "</p>")
+	}
+	folds.closeAll(&out)
 	return template.HTML(out.String())
 }
 
-func markdown(source string, byRef map[string]board.Attachment) string {
-	if strings.TrimSpace(source) == "" {
-		return ""
+// foldRenderer draws raw HTML, block and inline: fold tags pass, rebuilt
+// and kept balanced across the post; everything else is escaped as text.
+type foldRenderer struct {
+	open      int
+	inSummary bool
+}
+
+func (r *foldRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
+	reg.Register(ast.KindHTMLBlock, r.block)
+	reg.Register(ast.KindRawHTML, r.inline)
+}
+
+func (r *foldRenderer) block(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkContinue, nil
 	}
-	md := goldmark.New(
-		goldmark.WithExtensions(extension.Table, extension.Strikethrough, extension.TaskList),
-		goldmark.WithRendererOptions(ghtml.WithHardWraps(), renderer.WithNodeRenderers(util.Prioritized(&imageRenderer{byRef: byRef}, 100))),
-	)
-	var out bytes.Buffer
-	if err := md.Convert([]byte(source), &out); err != nil {
-		return "<p>" + html.EscapeString(source) + "</p>"
+	n := node.(*ast.HTMLBlock)
+	var text bytes.Buffer
+	for i := 0; i < n.Lines().Len(); i++ {
+		line := n.Lines().At(i)
+		text.Write(line.Value(source))
 	}
-	return out.String()
+	if n.HasClosure() {
+		text.Write(n.ClosureLine.Value(source))
+	}
+	r.write(w, text.String())
+	return ast.WalkSkipChildren, nil
+}
+
+func (r *foldRenderer) inline(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkContinue, nil
+	}
+	n := node.(*ast.RawHTML)
+	var text bytes.Buffer
+	for i := 0; i < n.Segments.Len(); i++ {
+		segment := n.Segments.At(i)
+		text.Write(segment.Value(source))
+	}
+	r.write(w, text.String())
+	return ast.WalkSkipChildren, nil
+}
+
+func (r *foldRenderer) write(w io.Writer, text string) {
+	last := 0
+	for _, loc := range foldTag.FindAllStringSubmatchIndex(text, -1) {
+		_, _ = io.WriteString(w, html.EscapeString(text[last:loc[0]]))
+		last = loc[1]
+		closing, name, open := loc[2] < loc[3], strings.ToLower(text[loc[4]:loc[5]]), loc[6] >= 0
+		switch {
+		case name == "details" && !closing:
+			r.endSummary(w)
+			r.open++
+			if open {
+				_, _ = io.WriteString(w, "<details open>")
+			} else {
+				_, _ = io.WriteString(w, "<details>")
+			}
+		case name == "details" && r.open > 0:
+			r.endSummary(w)
+			r.open--
+			_, _ = io.WriteString(w, "</details>")
+		case name == "summary" && !closing && r.open > 0 && !r.inSummary:
+			r.inSummary = true
+			_, _ = io.WriteString(w, "<summary>")
+		case name == "summary" && closing:
+			r.endSummary(w)
+		}
+	}
+	_, _ = io.WriteString(w, html.EscapeString(text[last:]))
+}
+
+func (r *foldRenderer) endSummary(w io.Writer) {
+	if r.inSummary {
+		r.inSummary = false
+		_, _ = io.WriteString(w, "</summary>")
+	}
+}
+
+// closeAll closes what the post left open.
+func (r *foldRenderer) closeAll(w io.Writer) {
+	r.endSummary(w)
+	for ; r.open > 0; r.open-- {
+		_, _ = io.WriteString(w, "</details>")
+	}
 }
 
 // imageRenderer draws Markdown images: an attachment by its blob reference,
