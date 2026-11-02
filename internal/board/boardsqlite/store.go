@@ -25,7 +25,10 @@ var migration002 string
 //go:embed migrations/003_attachments.sql
 var migration003 string
 
-var migrations = []string{migration001, migration002, migration003}
+//go:embed migrations/004_curation.sql
+var migration004 string
+
+var migrations = []string{migration001, migration002, migration003, migration004}
 
 // Store is crew-board's records in one SQLite file.
 type Store struct {
@@ -140,7 +143,13 @@ func apply(ctx context.Context, tx *sql.Tx, c board.Change) error {
 		_, err = tx.ExecContext(ctx, `INSERT INTO threads (id, board, title, state, opening_post_id, created_at, created_by, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, t.ID, t.Board, t.Title, t.State, t.OpeningPostID, stamp(t.CreatedAt), encode(t.CreatedBy), stamp(t.LastActivityAt))
 	case c.Post != nil:
 		p := c.Post
-		_, err = tx.ExecContext(ctx, `INSERT INTO posts (id, thread_id, parent_id, author, site, state, revision, note, urgent, created_at) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?)`, p.ID, p.ThreadID, p.ParentID, encode(p.Author), p.Site, p.State, p.Revision, p.Note, p.Urgent, stamp(p.CreatedAt))
+		_, err = tx.ExecContext(ctx, `INSERT INTO posts (id, thread_id, parent_id, author, site, state, revision, note, urgent, kind, created_at) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?)`, p.ID, p.ThreadID, p.ParentID, encode(p.Author), p.Site, p.State, p.Revision, p.Note, p.Urgent, p.Kind, stamp(p.CreatedAt))
+	case c.ThreadUpdate != nil:
+		t := c.ThreadUpdate
+		_, err = tx.ExecContext(ctx, `UPDATE threads SET state = ?, title = ?, links = ?, aliases = ?, redirect_to = ? WHERE id = ?`, t.State, t.Title, encode(nonNilLinks(t.Links)), encode(nonNilStrings(t.Aliases)), t.RedirectTo, t.ID)
+	case c.Ack != nil:
+		a := c.Ack
+		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO acks (post_id, participant_kind, participant_address, participant_site, acked_by, created_at) VALUES (?, ?, ?, ?, ?, ?)`, a.PostID, a.For.Kind, a.For.Address, a.For.Site, encode(a.By), stamp(a.At))
 	case c.Notice != nil:
 		n := c.Notice
 		// One notice per post and participant: a later reason for the same post
@@ -198,6 +207,20 @@ func scrub(ctx context.Context, tx *sql.Tx, whereRevision, wherePost, arg string
 	return nil
 }
 
+func nonNilLinks(l []board.Link) []board.Link {
+	if l == nil {
+		return []board.Link{}
+	}
+	return l
+}
+
+func nonNilStrings(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
 func nonNil(m []board.Mention) []board.Mention {
 	if m == nil {
 		return []board.Mention{}
@@ -243,16 +266,27 @@ func (s *Store) ListBoards(ctx context.Context) ([]board.Board, error) {
 	return out, rows.Err()
 }
 
-const threadColumns = `t.id, t.board, t.title, t.state, t.opening_post_id, t.created_at, t.created_by, t.last_activity_at, (SELECT COUNT(*) FROM posts p WHERE p.thread_id = t.id AND p.state != 'purged')`
+const threadColumns = `t.id, t.board, t.title, t.state, t.opening_post_id, t.created_at, t.created_by, t.last_activity_at, (SELECT COUNT(*) FROM posts p WHERE p.thread_id = t.id AND p.state != 'purged'), t.links, t.aliases, t.redirect_to`
 
 func scanThread(row interface{ Scan(...any) error }) (board.Thread, error) {
 	var t board.Thread
-	var created, by, active string
-	if err := row.Scan(&t.ID, &t.Board, &t.Title, &t.State, &t.OpeningPostID, &created, &by, &active, &t.Posts); err != nil {
+	var created, by, active, links, aliases string
+	if err := row.Scan(&t.ID, &t.Board, &t.Title, &t.State, &t.OpeningPostID, &created, &by, &active, &t.Posts, &links, &aliases, &t.RedirectTo); err != nil {
 		return board.Thread{}, err
 	}
 	t.CreatedAt, t.LastActivityAt = parseStamp(created), parseStamp(active)
 	_ = json.Unmarshal([]byte(by), &t.CreatedBy)
+	_ = json.Unmarshal([]byte(links), &t.Links)
+	_ = json.Unmarshal([]byte(aliases), &t.Aliases)
+	if len(t.Links) == 0 {
+		t.Links = nil
+	}
+	if len(t.Aliases) == 0 {
+		t.Aliases = nil
+	}
+	// The site is the thread ID's prefix.
+	site, _, _ := strings.Cut(t.ID, "-")
+	t.Ref = "board:" + site + "/" + t.ID
 	return t, nil
 }
 
@@ -264,9 +298,19 @@ func (s *Store) GetThread(ctx context.Context, id string) (board.Thread, error) 
 	return t, err
 }
 
-func (s *Store) ListThreads(ctx context.Context, name string, after board.ThreadCursor, limit int) ([]board.Thread, error) {
+func (s *Store) ListThreads(ctx context.Context, name string, after board.ThreadCursor, limit int, filter board.ThreadFilter) ([]board.Thread, error) {
 	query := `SELECT ` + threadColumns + ` FROM threads t WHERE t.board = ? AND t.purged = 0`
 	args := []any{name}
+	if len(filter.States) > 0 {
+		query += ` AND t.state IN (` + strings.TrimSuffix(strings.Repeat("?, ", len(filter.States)), ", ") + `)`
+		for _, state := range filter.States {
+			args = append(args, state)
+		}
+	}
+	if !filter.ActiveSince.IsZero() {
+		query += ` AND t.last_activity_at >= ?`
+		args = append(args, stamp(filter.ActiveSince))
+	}
 	if after.ID != "" {
 		at := stamp(after.LastActivityAt)
 		query += ` AND (t.last_activity_at < ? OR (t.last_activity_at = ? AND t.id < ?))`
@@ -289,14 +333,14 @@ func (s *Store) ListThreads(ctx context.Context, name string, after board.Thread
 	return out, rows.Err()
 }
 
-const postColumns = `p.id, p.thread_id, COALESCE(p.parent_id, ''), p.author, p.site, p.state, p.revision, p.note, p.urgent, p.created_at, COALESCE(p.edited_at, ''), r.body, r.mentions`
+const postColumns = `p.id, p.thread_id, COALESCE(p.parent_id, ''), p.author, p.site, p.state, p.revision, p.note, p.urgent, p.kind, p.created_at, COALESCE(p.edited_at, ''), r.body, r.mentions`
 
 const postFrom = ` FROM posts p JOIN revisions r ON r.post_id = p.id AND r.revision = p.revision`
 
 func scanPost(row interface{ Scan(...any) error }) (board.Post, error) {
 	var p board.Post
 	var author, created, edited, mentions string
-	if err := row.Scan(&p.ID, &p.ThreadID, &p.ParentID, &author, &p.Site, &p.State, &p.Revision, &p.Note, &p.Urgent, &created, &edited, &p.Body, &mentions); err != nil {
+	if err := row.Scan(&p.ID, &p.ThreadID, &p.ParentID, &author, &p.Site, &p.State, &p.Revision, &p.Note, &p.Urgent, &p.Kind, &created, &edited, &p.Body, &mentions); err != nil {
 		return board.Post{}, err
 	}
 	p.CreatedAt = parseStamp(created)
@@ -366,8 +410,8 @@ func (s *Store) ListRevisions(ctx context.Context, postID string) ([]board.Revis
 func (s *Store) Search(ctx context.Context, name, query string, limit int) ([]board.Post, error) {
 	pattern := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(query) + "%"
 	rows, err := s.db.QueryContext(ctx, `SELECT `+postColumns+postFrom+` JOIN threads t ON t.id = p.thread_id
-		WHERE t.board = ? AND t.purged = 0 AND p.state = 'visible' AND (r.body LIKE ? ESCAPE '\' OR t.title LIKE ? ESCAPE '\')
-		ORDER BY p.id DESC LIMIT ?`, name, pattern, pattern, limit)
+		WHERE t.board = ? AND t.purged = 0 AND p.state = 'visible' AND (r.body LIKE ? ESCAPE '\' OR t.title LIKE ? ESCAPE '\' OR t.aliases LIKE ? ESCAPE '\')
+		ORDER BY p.id DESC LIMIT ?`, name, pattern, pattern, pattern, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -606,6 +650,48 @@ func (s *Store) ListAttachments(ctx context.Context, state string) ([]board.Atta
 			return nil, err
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// KindPosts lists a board's visible posts of one kind, newest first ("" board
+// for every board).
+func (s *Store) KindPosts(ctx context.Context, name, kind string, limit int) ([]board.Post, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+postColumns+postFrom+` JOIN threads t ON t.id = p.thread_id
+		WHERE (? = '' OR t.board = ?) AND t.purged = 0 AND p.state = 'visible' AND p.kind = ? ORDER BY p.id DESC LIMIT ?`, name, name, kind, limit)
+	if err != nil {
+		return nil, err
+	}
+	return collectPosts(rows)
+}
+
+// OpenQuestions lists a board's visible questions that no visible answer
+// replies to, newest first.
+func (s *Store) OpenQuestions(ctx context.Context, name string, limit int) ([]board.Post, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+postColumns+postFrom+` JOIN threads t ON t.id = p.thread_id
+		WHERE t.board = ? AND t.purged = 0 AND p.state = 'visible' AND p.kind = 'question'
+		AND NOT EXISTS (SELECT 1 FROM posts a WHERE a.parent_id = p.id AND a.kind = 'answer' AND a.state = 'visible')
+		ORDER BY p.id DESC LIMIT ?`, name, limit)
+	if err != nil {
+		return nil, err
+	}
+	return collectPosts(rows)
+}
+
+// Acks lists who acknowledged a post.
+func (s *Store) Acks(ctx context.Context, postID string) ([]board.Participant, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT participant_kind, participant_address, participant_site FROM acks WHERE post_id = ? ORDER BY created_at`, postID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []board.Participant{}
+	for rows.Next() {
+		var p board.Participant
+		if err := rows.Scan(&p.Kind, &p.Address, &p.Site); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }

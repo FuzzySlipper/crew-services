@@ -24,7 +24,10 @@ type Store interface {
 	GetThread(ctx context.Context, id string) (Thread, error)
 	// ListThreads lists a board's threads, most recently active first,
 	// starting after the cursor position (zero for the first page).
-	ListThreads(ctx context.Context, board string, after ThreadCursor, limit int) ([]Thread, error)
+	ListThreads(ctx context.Context, board string, after ThreadCursor, limit int, filter ThreadFilter) ([]Thread, error)
+	KindPosts(ctx context.Context, board, kind string, limit int) ([]Post, error)
+	OpenQuestions(ctx context.Context, board string, limit int) ([]Post, error)
+	Acks(ctx context.Context, postID string) ([]Participant, error)
 	GetPost(ctx context.Context, id string) (Post, error)
 	// ListPosts lists a thread's posts in order, after the post afterID ("" for
 	// the first page).
@@ -63,17 +66,42 @@ type ThreadCursor struct {
 	ID             string
 }
 
+// ThreadFilter narrows a thread listing: by state, and to threads active
+// since a time (zero for all).
+type ThreadFilter struct {
+	States      []string
+	ActiveSince time.Time
+}
+
+// ThreadUpdate sets a thread's state, title, links, old titles and redirect.
+type ThreadUpdate struct {
+	ID, State, Title, RedirectTo string
+	Links                        []Link
+	Aliases                      []string
+}
+
+// AckChange records that For acknowledged a decision; By is who did it (for a
+// seat, the session holding it).
+type AckChange struct {
+	PostID string
+	For    Participant
+	By     Author
+	At     time.Time
+}
+
 // Change is one row a write adds or updates. Exactly one field is set.
 type Change struct {
-	Notice    *Notice
-	Subscribe *Subscription
-	Board     *Board
-	Thread    *Thread
-	Post      *Post
-	Revision  *Revision
-	Event     *Event
-	Touch     *Touch
-	PostState *PostState
+	ThreadUpdate *ThreadUpdate
+	Ack          *AckChange
+	Notice       *Notice
+	Subscribe    *Subscription
+	Board        *Board
+	Thread       *Thread
+	Post         *Post
+	Revision     *Revision
+	Event        *Event
+	Touch        *Touch
+	PostState    *PostState
 	// ScrubPost removes a post's text from every revision and its author.
 	ScrubPost string
 	// ScrubThread does that for every post of a thread and its title.
@@ -115,6 +143,9 @@ type Config struct {
 	// NoticeRetry is how long a notice is retried while the fabric cannot be
 	// reached before it is marked failed.
 	NoticeRetry time.Duration
+	// ArchiveAfter is how long a thread may go without activity before it
+	// drops out of the default listing. It is never purged for that.
+	ArchiveAfter time.Duration
 }
 
 const (
@@ -153,6 +184,9 @@ func New(store Store, dir Directory, now func() time.Time, cfg Config) (*Service
 	}
 	if cfg.NoticeRetry <= 0 {
 		cfg.NoticeRetry = time.Hour
+	}
+	if cfg.ArchiveAfter <= 0 {
+		cfg.ArchiveAfter = 30 * 24 * time.Hour
 	}
 	return &Service{store: store, dir: dir, now: now, cfg: cfg, poke: func() {}}, nil
 }
@@ -349,6 +383,7 @@ type OpenThreadRequest struct {
 	Title       string `json:"title"`
 	Body        string `json:"body"`
 	Urgent      bool   `json:"urgent,omitempty"`
+	Kind        string `json:"kind,omitempty"`
 	// NoSubscribe opts out of following the thread just opened.
 	NoSubscribe bool `json:"no_subscribe,omitempty"`
 }
@@ -376,7 +411,7 @@ func (s *Service) OpenThread(ctx context.Context, request OpenThreadRequest) (Po
 		}
 		mentions, warnings := s.resolveMentions(ctx, request.Body)
 		thread := Thread{ID: NewID(s.cfg.Site, now), Board: request.Board, Title: title, State: ThreadOpen, CreatedAt: now, CreatedBy: author, LastActivityAt: now, Posts: 1}
-		post := Post{ID: NewID(s.cfg.Site, now), ThreadID: thread.ID, Author: author, Site: s.cfg.Site, State: PostVisible, Revision: 1, Body: request.Body, Mentions: mentions, Urgent: request.Urgent, CreatedAt: now}
+		post := Post{ID: NewID(s.cfg.Site, now), ThreadID: thread.ID, Author: author, Site: s.cfg.Site, State: PostVisible, Revision: 1, Body: request.Body, Mentions: mentions, Urgent: request.Urgent, Kind: normalKind(request.Kind), CreatedAt: now}
 		thread.OpeningPostID = post.ID
 		revision := Revision{PostID: post.ID, Revision: 1, Body: request.Body, Mentions: mentions, CreatedAt: now}
 		changes := []Change{{Thread: &thread}, {Post: &post}, {Revision: &revision}}
@@ -401,6 +436,7 @@ type ReplyRequest struct {
 	Parent      string `json:"parent,omitempty"`
 	Body        string `json:"body"`
 	Urgent      bool   `json:"urgent,omitempty"`
+	Kind        string `json:"kind,omitempty"`
 }
 
 func (s *Service) Reply(ctx context.Context, request ReplyRequest) (PostResult, bool, error) {
@@ -439,7 +475,7 @@ func (s *Service) Reply(ctx context.Context, request ReplyRequest) (PostResult, 
 			return PostResult{}, nil, err
 		}
 		mentions, warnings := s.resolveMentions(ctx, request.Body)
-		post := Post{ID: NewID(s.cfg.Site, now), ThreadID: thread.ID, ParentID: parent, Author: author, Site: s.cfg.Site, State: PostVisible, Revision: 1, Body: request.Body, Mentions: mentions, Urgent: request.Urgent, CreatedAt: now}
+		post := Post{ID: NewID(s.cfg.Site, now), ThreadID: thread.ID, ParentID: parent, Author: author, Site: s.cfg.Site, State: PostVisible, Revision: 1, Body: request.Body, Mentions: mentions, Urgent: request.Urgent, Kind: normalKind(request.Kind), CreatedAt: now}
 		revision := Revision{PostID: post.ID, Revision: 1, Body: request.Body, Mentions: mentions, CreatedAt: now}
 		thread.LastActivityAt, thread.Posts = now, thread.Posts+1
 		changes := []Change{{Post: &post}, {Revision: &revision}, {Touch: &Touch{ThreadID: thread.ID, At: now}}}
@@ -674,8 +710,10 @@ type ThreadPage struct {
 	Next    string   `json:"next,omitempty"`
 }
 
-// ListThreads lists a board's threads, most recently active first.
-func (s *Service) ListThreads(ctx context.Context, board, after string, limit int) (ThreadPage, error) {
+// ListThreads lists a board's threads, most recently active first. Without
+// archived, threads quiet for longer than ArchiveAfter are left out; states
+// narrows it to some thread states (none for all).
+func (s *Service) ListThreads(ctx context.Context, board, after string, limit int, states []string, archived bool) (ThreadPage, error) {
 	if _, err := s.GetBoard(ctx, board); err != nil {
 		return ThreadPage{}, err
 	}
@@ -684,7 +722,11 @@ func (s *Service) ListThreads(ctx context.Context, board, after string, limit in
 		return ThreadPage{}, err
 	}
 	limit = pageSize(limit)
-	threads, err := s.store.ListThreads(ctx, board, cursor, limit+1)
+	filter := ThreadFilter{States: states}
+	if !archived {
+		filter.ActiveSince = s.now().UTC().Add(-s.cfg.ArchiveAfter)
+	}
+	threads, err := s.store.ListThreads(ctx, board, cursor, limit+1, filter)
 	if err != nil {
 		return ThreadPage{}, err
 	}

@@ -24,10 +24,10 @@ import (
 const boardUsage = `usage: board COMMAND
   board boards
   board new-board NAME [--note DESCRIPTION]
-  board threads BOARD [--after CURSOR] [--limit N]
-  board new BOARD TITLE [--as SEAT] [--urgent] [--no-subscribe] [--attach FILE|URL]... [TEXT... | -]
+  board threads BOARD [--state open|settled|closed|all] [--archived] [--after CURSOR] [--limit N]
+  board new BOARD TITLE [--as SEAT] [--kind KIND] [--urgent] [--no-subscribe] [--attach FILE|URL]... [TEXT... | -]
   board read THREAD|POST [--after POST] [--limit N] [--unfold] [--peek] [--as SEAT]
-  board reply THREAD|POST [--as SEAT] [--urgent] [--attach FILE|URL]... [TEXT... | -]
+  board reply THREAD|POST [--as SEAT] [--kind KIND] [--urgent] [--attach FILE|URL]... [TEXT... | -]
   board upload FILE|URL                    upload an image or short clip; prints the Markdown that shows it
   board blob REF [--out FILE]              an attachment's details, or its bytes
   board held                               attachments a check held
@@ -36,6 +36,12 @@ const boardUsage = `usage: board COMMAND
   board retract POST [--as SEAT] [--note TEXT]
   board revisions POST
   board search BOARD TEXT...
+  board settle THREAD --into wiki:SLUG|den:PROJECT/TASK|url:URL [--note TEXT]
+  board rename THREAD TITLE...             earlier titles stay as aliases
+  board close THREAD [--redirect OTHER]    posting there stays allowed
+  board digest BOARD                       open questions, decisions, warnings, settled threads
+  board ack POST [--as SEAT]               acknowledge a decision that names you
+  board acks [BOARD]                       decisions still waiting on someone
   board unread [--as SEAT]                threads with posts you were told about and have not read
   board subscribe THREAD|BOARD [--as SEAT] (and: board unsubscribe …)
   board subscriptions [--as SEAT]
@@ -43,7 +49,8 @@ const boardUsage = `usage: board COMMAND
   board hide POST [--note TEXT]            (a person on this site)
   board purge POST [--note TEXT]           (a person on this site)
 Reads take --json for crew-board's own records. Text from stdin when none is
-given, or with -. Outside a session, say who you are with --person NAME (or
+given, or with -. Kinds are note, question, answer, decision and warning.
+Outside a session, say who you are with --person NAME (or
 CREW_BOARD_PERSON). Reading moves your read cursor; --peek reads without it.`
 
 // BoardURL is crew-board's loopback API, CREW_BOARD_URL when set.
@@ -55,12 +62,12 @@ func BoardURL() string {
 }
 
 type boardArgs struct {
-	words                                   []string
-	as, person, note, after, op, state, out string
-	attach                                  []string
-	limit                                   int
-	unfold, json, urgent, noSubscribe       bool
-	peek                                    bool
+	words                                                         []string
+	as, person, note, after, op, state, out, kind, into, redirect string
+	attach                                                        []string
+	limit                                                         int
+	unfold, json, urgent, noSubscribe                             bool
+	peek, archived                                                bool
 }
 
 func parseBoardArgs(args []string) (boardArgs, error) {
@@ -68,7 +75,7 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
-		case "--as", "--person", "--note", "--after", "--operation-id", "--limit", "--state", "--attach", "--out":
+		case "--as", "--person", "--note", "--after", "--operation-id", "--limit", "--state", "--attach", "--out", "--kind", "--into", "--redirect":
 			if i+1 >= len(args) {
 				return out, fmt.Errorf("%s needs a value", a)
 			}
@@ -90,6 +97,12 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 				out.attach = append(out.attach, args[i])
 			case "--out":
 				out.out = args[i]
+			case "--kind":
+				out.kind = args[i]
+			case "--into":
+				out.into = args[i]
+			case "--redirect":
+				out.redirect = args[i]
 			case "--limit":
 				n, err := strconv.Atoi(args[i])
 				if err != nil || n <= 0 {
@@ -107,6 +120,10 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 			out.peek = true
 		case "--failed":
 			out.state = "failed"
+		case "--archived":
+			out.archived = true
+		case "--open":
+			// acks lists only open decisions; the flag is accepted for clarity.
 		case "--json":
 			out.json = true
 		default:
@@ -175,6 +192,14 @@ func BoardMain(ctx context.Context, args []string, self string, stdin io.Reader,
 		return b.held()
 	case "release", "drop":
 		return b.release(command)
+	case "settle", "rename", "close":
+		return b.threadChange(command)
+	case "ack":
+		return b.ack()
+	case "acks":
+		return b.acks()
+	case "digest":
+		return b.digest()
 	}
 	fmt.Fprintf(stderr, "board: unknown command %q\n%s\n", command, boardUsage)
 	return 2
@@ -329,6 +354,12 @@ func (b boardCLI) threads() int {
 	if b.args.limit > 0 {
 		query.Set("limit", strconv.Itoa(b.args.limit))
 	}
+	if b.args.state != "" {
+		query.Set("state", b.args.state)
+	}
+	if b.args.archived {
+		query.Set("archived", "true")
+	}
 	var page board.ThreadPage
 	if err := b.get("/v1/boards/"+url.PathEscape(b.args.words[0])+"/threads?"+query.Encode(), &page); err != nil {
 		return b.fail(err)
@@ -365,7 +396,7 @@ func (b boardCLI) open() int {
 		return b.fail(err)
 	}
 	var out board.PostResult
-	if err := b.post("/v1/boards/"+url.PathEscape(b.args.words[0])+"/threads", board.OpenThreadRequest{Actor: actor, OperationID: b.args.op, Title: b.args.words[1], Body: body, Urgent: b.args.urgent, NoSubscribe: b.args.noSubscribe}, &out); err != nil {
+	if err := b.post("/v1/boards/"+url.PathEscape(b.args.words[0])+"/threads", board.OpenThreadRequest{Actor: actor, OperationID: b.args.op, Title: b.args.words[1], Body: body, Urgent: b.args.urgent, Kind: b.args.kind, NoSubscribe: b.args.noSubscribe}, &out); err != nil {
 		return b.fail(err)
 	}
 	b.warn(out.Warnings)
@@ -394,7 +425,7 @@ func (b boardCLI) reply() int {
 	if err != nil {
 		return b.fail(err)
 	}
-	request := board.ReplyRequest{Actor: actor, OperationID: b.args.op, Thread: b.args.words[0], Body: body, Urgent: b.args.urgent}
+	request := board.ReplyRequest{Actor: actor, OperationID: b.args.op, Thread: b.args.words[0], Body: body, Urgent: b.args.urgent, Kind: b.args.kind}
 	if post, ok := b.resolvePost(b.args.words[0]); ok {
 		request.Thread, request.Parent = post.ThreadID, post.ID
 	}
@@ -489,6 +520,9 @@ func (b boardCLI) read() int {
 	}
 	t := read.Thread
 	fmt.Fprintf(b.stdout, "%s\n%s · board %s · %s · %d %s\n", t.Title, t.ID, t.Board, t.State, t.Posts, plural(t.Posts, "post", "posts"))
+	if text := banner(t); text != "" {
+		fmt.Fprintln(b.stdout, text)
+	}
 	for _, p := range read.Posts {
 		fmt.Fprintln(b.stdout)
 		b.printPost(p)
@@ -663,6 +697,9 @@ func (b boardCLI) printPost(p board.Post) {
 	header = append(header, p.CreatedAt.UTC().Format("2006-01-02 15:04Z"))
 	if !p.EditedAt.IsZero() {
 		header = append(header, fmt.Sprintf("edited, revision %d", p.Revision))
+	}
+	if p.Kind != "" {
+		header = append(header, p.Kind)
 	}
 	if p.Urgent {
 		header = append(header, "urgent")
@@ -962,4 +999,161 @@ func (b boardCLI) release(op string) int {
 		fmt.Fprintf(b.stdout, "still held: %s\n", a.Reason)
 	}
 	return 0
+}
+
+func (b boardCLI) threadChange(op string) int {
+	need := map[string]string{"settle": "a thread (and --into REF)", "rename": "a thread and its new title", "close": "a thread"}[op]
+	if !b.need(map[string]int{"settle": 1, "rename": 2, "close": 1}[op], need) {
+		return 2
+	}
+	actor, err := b.actor()
+	if err != nil {
+		return b.fail(err)
+	}
+	request := board.ThreadRequest{Actor: actor, OperationID: b.args.op, Into: b.args.into, Redirect: b.args.redirect, Note: b.args.note}
+	if op == "rename" {
+		request.Title = strings.Join(b.args.words[1:], " ")
+	}
+	var t board.Thread
+	if err := b.post("/v1/threads/"+url.PathEscape(b.args.words[0])+"/"+op, request, &t); err != nil {
+		return b.fail(err)
+	}
+	switch op {
+	case "settle":
+		var refs []string
+		for _, l := range t.Links {
+			refs = append(refs, l.Ref)
+		}
+		fmt.Fprintf(b.stdout, "settled %q into %s. Link back to it as %s.\n", t.Title, strings.Join(refs, ", "), t.Ref)
+	case "rename":
+		fmt.Fprintf(b.stdout, "renamed to %q; earlier titles stay as aliases.\n", t.Title)
+	case "close":
+		if t.RedirectTo != "" {
+			fmt.Fprintf(b.stdout, "closed %q; readers are pointed at %s.\n", t.Title, t.RedirectTo)
+		} else {
+			fmt.Fprintf(b.stdout, "closed %q.\n", t.Title)
+		}
+	}
+	return 0
+}
+
+func (b boardCLI) ack() int {
+	if !b.need(1, "a decision post") {
+		return 2
+	}
+	actor, err := b.actor()
+	if err != nil {
+		return b.fail(err)
+	}
+	var d board.Decision
+	if err := b.post("/v1/posts/"+url.PathEscape(b.args.words[0])+"/ack", board.AckRequest{Actor: actor}, &d); err != nil {
+		return b.fail(err)
+	}
+	fmt.Fprintf(b.stdout, "acknowledged %s; %s.\n", d.Post.ID, ackState(d))
+	return 0
+}
+
+func ackState(d board.Decision) string {
+	if len(d.Waiting) == 0 {
+		return fmt.Sprintf("all %d addressees have acknowledged", len(d.Addressees))
+	}
+	var waiting []string
+	for _, p := range d.Waiting {
+		waiting = append(waiting, p.Address)
+	}
+	return fmt.Sprintf("%d of %d acknowledged, waiting on %s", len(d.Acked), len(d.Addressees), strings.Join(waiting, ", "))
+}
+
+func (b boardCLI) acks() int {
+	q := url.Values{}
+	if len(b.args.words) > 0 {
+		q.Set("board", b.args.words[0])
+	}
+	if b.args.limit > 0 {
+		q.Set("limit", strconv.Itoa(b.args.limit))
+	}
+	var out struct {
+		Decisions []board.Decision `json:"decisions"`
+	}
+	if err := b.get("/v1/acks?"+q.Encode(), &out); err != nil {
+		return b.fail(err)
+	}
+	if b.args.json {
+		return printJSON(b.stdout, out)
+	}
+	if len(out.Decisions) == 0 {
+		fmt.Fprintln(b.stdout, "No decision is waiting on anyone.")
+		return 0
+	}
+	for _, d := range out.Decisions {
+		fmt.Fprintf(b.stdout, "%s in %q (%s): %s\n  %s\n", d.Post.ID, d.Thread.Title, d.Thread.Board, ackState(d), firstLine(board.RenderForAgent(d.Post.Body, false)))
+	}
+	return 0
+}
+
+func (b boardCLI) digest() int {
+	if !b.need(1, "a board") {
+		return 2
+	}
+	var d board.Digest
+	if err := b.get("/v1/boards/"+url.PathEscape(b.args.words[0])+"/digest", &d); err != nil {
+		return b.fail(err)
+	}
+	if b.args.json {
+		return printJSON(b.stdout, d)
+	}
+	line := func(p board.Post) string {
+		return fmt.Sprintf("  %s %s: %s", p.ID, AuthorName(p.Author), firstLine(board.RenderForAgent(p.Body, false)))
+	}
+	fmt.Fprintf(b.stdout, "Digest of %s\n\nOpen questions (no answer yet):\n", d.Board)
+	if len(d.OpenQuestions) == 0 {
+		fmt.Fprintln(b.stdout, "  none")
+	}
+	for _, p := range d.OpenQuestions {
+		fmt.Fprintln(b.stdout, line(p))
+	}
+	fmt.Fprintln(b.stdout, "\nRecent decisions:")
+	if len(d.Decisions) == 0 {
+		fmt.Fprintln(b.stdout, "  none")
+	}
+	for _, dec := range d.Decisions {
+		fmt.Fprintf(b.stdout, "%s\n    %s\n", line(dec.Post), ackState(dec))
+	}
+	fmt.Fprintln(b.stdout, "\nRecent warnings:")
+	if len(d.Warnings) == 0 {
+		fmt.Fprintln(b.stdout, "  none")
+	}
+	for _, p := range d.Warnings {
+		fmt.Fprintln(b.stdout, line(p))
+	}
+	fmt.Fprintln(b.stdout, "\nSettled threads:")
+	if len(d.Settled) == 0 {
+		fmt.Fprintln(b.stdout, "  none")
+	}
+	for _, t := range d.Settled {
+		var refs []string
+		for _, l := range t.Links {
+			refs = append(refs, l.Ref)
+		}
+		fmt.Fprintf(b.stdout, "  %s %q → %s\n", t.ID, t.Title, strings.Join(refs, ", "))
+	}
+	return 0
+}
+
+// banner says what a thread's state means for a reader.
+func banner(t board.Thread) string {
+	switch t.State {
+	case board.ThreadSettled:
+		var refs []string
+		for _, l := range t.Links {
+			refs = append(refs, l.Ref)
+		}
+		return "Settled into " + strings.Join(refs, ", ") + ". New posts are still welcome."
+	case board.ThreadClosed:
+		if t.RedirectTo != "" {
+			return "Closed; the conversation continues in " + t.RedirectTo + "."
+		}
+		return "Closed."
+	}
+	return ""
 }

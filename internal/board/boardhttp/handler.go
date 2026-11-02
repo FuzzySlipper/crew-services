@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"crew-services/internal/board"
 )
@@ -34,7 +35,14 @@ func NewHandler(svc *board.Service) http.Handler {
 		reply(w, value, err)
 	})
 	mux.HandleFunc("GET /v1/boards/{board}/threads", func(w http.ResponseWriter, r *http.Request) {
-		page, err := svc.ListThreads(r.Context(), r.PathValue("board"), r.URL.Query().Get("after"), limit(r))
+		q := r.URL.Query()
+		var states []string
+		for _, state := range strings.Split(q.Get("state"), ",") {
+			if state = strings.TrimSpace(state); state != "" && state != "all" {
+				states = append(states, state)
+			}
+		}
+		page, err := svc.ListThreads(r.Context(), r.PathValue("board"), q.Get("after"), limit(r), states, q.Get("archived") == "true")
 		reply(w, page, err)
 	})
 	mux.HandleFunc("POST /v1/boards/{board}/threads", write(func(ctx context.Context, request board.OpenThreadRequest, r *http.Request) (any, bool, error) {
@@ -131,6 +139,30 @@ func NewHandler(svc *board.Service) http.Handler {
 			reply(w, a, err)
 		})
 	}
+	for name, op := range map[string]func(context.Context, board.ThreadRequest) (board.Thread, bool, error){"settle": svc.Settle, "rename": svc.Rename, "close": svc.Close} {
+		mux.HandleFunc("POST /v1/threads/{thread}/"+name, write(func(ctx context.Context, request board.ThreadRequest, r *http.Request) (any, bool, error) {
+			request.Thread = r.PathValue("thread")
+			return op(ctx, request)
+		}))
+	}
+	mux.HandleFunc("POST /v1/posts/{post}/ack", func(w http.ResponseWriter, r *http.Request) {
+		var request board.AckRequest
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"code": string(board.CodeInvalid), "error": "invalid JSON"})
+			return
+		}
+		request.Post = r.PathValue("post")
+		d, err := svc.Ack(r.Context(), request)
+		reply(w, d, err)
+	})
+	mux.HandleFunc("GET /v1/acks", func(w http.ResponseWriter, r *http.Request) {
+		decisions, err := svc.OpenAcks(r.Context(), r.URL.Query().Get("board"), limit(r))
+		reply(w, map[string]any{"decisions": decisions}, err)
+	})
+	mux.HandleFunc("GET /v1/boards/{board}/digest", func(w http.ResponseWriter, r *http.Request) {
+		d, err := svc.Digest(r.Context(), r.PathValue("board"))
+		reply(w, d, err)
+	})
 	return mux
 }
 

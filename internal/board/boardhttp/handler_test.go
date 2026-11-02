@@ -147,4 +147,19 @@ func TestBoardCommandsEndToEnd(t *testing.T) {
 	if code, _, errOut := run("native-a", "", "hide", opening); code != 1 || !strings.Contains(errOut, "person_only") {
 		t.Fatalf("hide from a session = %d %q", code, errOut)
 	}
+	if code, out, _ := run("", "", "reply", thread, "--person", "patch", "--kind", "decision", "Per-material index. @lore please acknowledge."); code != 0 || !strings.Contains(out, "posted") {
+		t.Fatalf("decision = %d %q", code, out)
+	}
+	if code, out, _ := run("", "", "settle", thread, "--person", "patch", "--into", "wiki:shader-cache", "--note", "agreed"); code != 0 || !strings.Contains(out, "settled \"Shader cache\" into wiki:shader-cache") || !strings.Contains(out, "board:den/"+thread) {
+		t.Fatalf("settle = %d %q", code, out)
+	}
+	if _, out, _ := run("", "", "read", thread); !strings.Contains(out, "Settled into wiki:shader-cache. New posts are still welcome.") || !strings.Contains(out, "· decision") {
+		t.Fatalf("read after settling:\n%s", out)
+	}
+	if code, out, _ := run("", "", "digest", "rusty-engine"); code != 0 || !strings.Contains(out, "0 of 1 acknowledged, waiting on lore") || !strings.Contains(out, "→ wiki:shader-cache") {
+		t.Fatalf("digest = %d\n%s", code, out)
+	}
+	if code, out, _ := run("", "", "acks"); code != 0 || !strings.Contains(out, "waiting on lore") {
+		t.Fatalf("acks = %d %q", code, out)
+	}
 }

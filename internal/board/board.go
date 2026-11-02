@@ -38,7 +38,34 @@ type Thread struct {
 	CreatedBy      Author    `json:"created_by"`
 	LastActivityAt time.Time `json:"last_activity_at"`
 	Posts          int       `json:"posts"`
+	// Ref is the stable reference an artifact links back with:
+	// board:<site>/<thread>.
+	Ref string `json:"ref"`
+	// Links are what the thread settled into, in the order they were added.
+	Links []Link `json:"links,omitempty"`
+	// Aliases are the thread's earlier titles.
+	Aliases []string `json:"aliases,omitempty"`
+	// RedirectTo is the thread a closed one points readers at.
+	RedirectTo string `json:"redirect_to,omitempty"`
 }
+
+// Link is one artifact a thread settled into: wiki:SLUG, den:PROJECT/TASK or
+// url:URL.
+type Link struct {
+	Ref  string    `json:"ref"`
+	Note string    `json:"note,omitempty"`
+	By   Author    `json:"by"`
+	At   time.Time `json:"at"`
+}
+
+// Post kinds. A post has at most one; none means a note.
+const (
+	KindNote     = "note"
+	KindQuestion = "question"
+	KindAnswer   = "answer"
+	KindDecision = "decision"
+	KindWarning  = "warning"
+)
 
 // Post states. A retracted post was withdrawn by its author, a hidden one by
 // a person on this site, and a purged one has had its content scrubbed.
@@ -62,6 +89,9 @@ type Post struct {
 	Body     string    `json:"body,omitempty"`
 	Mentions []Mention `json:"mentions,omitempty"`
 	Note     string    `json:"note,omitempty"`
+	// Kind is note (or empty), question, answer, decision or warning; any
+	// other kind is kept as written and ignored by the digest.
+	Kind string `json:"kind,omitempty"`
 	// Urgent is the author's label; for now it changes only how notices read.
 	Urgent bool `json:"urgent,omitempty"`
 	// Attachments are what the post's blob: references name, filled in on

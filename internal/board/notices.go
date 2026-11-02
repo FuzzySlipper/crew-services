@@ -447,7 +447,11 @@ func (n *Notifier) body(ctx context.Context, notice Notice) (string, error) {
 		b.WriteString("[urgent] ")
 	}
 	what := map[string]string{ReasonMention: "You were mentioned by", ReasonReply: "Reply to your post from", ReasonSubscription: "New post in a thread you follow, from"}[notice.Reason]
-	fmt.Fprintf(&b, "%s %s in %q (board %s):\n\n", what, displayAuthor(post.Author), thread.Title, thread.Board)
+	where := "board " + thread.Board
+	if post.Kind != "" {
+		where += ", a " + post.Kind
+	}
+	fmt.Fprintf(&b, "%s %s in %q (%s):\n\n", what, displayAuthor(post.Author), thread.Title, where)
 	quote := strings.TrimSpace(RenderForAgent(post.Body, false))
 	if len(quote) > 600 {
 		cut := strings.LastIndex(quote[:600], " ")
@@ -460,6 +464,9 @@ func (n *Notifier) body(ctx context.Context, notice Notice) (string, error) {
 		b.WriteString("> " + line + "\n")
 	}
 	fmt.Fprintf(&b, "\nRead it with: %s board read %s", n.command(ctx, notice.Recipient), post.ID)
+	if post.Kind == KindDecision && notice.Reason == ReasonMention {
+		fmt.Fprintf(&b, "\nThis decision names you; acknowledge it with: %s board ack %s", n.command(ctx, notice.Recipient), post.ID)
+	}
 	if notice.Reason != ReasonSubscription {
 		fmt.Fprintf(&b, "\nAnswer on the board with: %s board reply %s TEXT", n.command(ctx, notice.Recipient), post.ID)
 	}

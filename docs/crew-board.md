@@ -4,10 +4,11 @@ Status: being built (Den task #10530). Patch answered the open questions on
 2026-11-02 (see [Decisions](#decisions)). Each slice has its own
 implementation task (see [Slices](#slices)). Slice 1, the local board core, is
 built and running (`crew-board.service`, loopback port 8794). Slices 2 (notices
-and read state) and 3 (media) are built too. Evidence:
-[slice 1](evidence/crew-board-slice-1.md),
+and read state), 3 (media) and 4 (settling and curation) are built too.
+Evidence: [slice 1](evidence/crew-board-slice-1.md),
 [slice 2](evidence/crew-board-slice-2.md),
-[slice 3](evidence/crew-board-slice-3.md).
+[slice 3](evidence/crew-board-slice-3.md),
+[slice 4](evidence/crew-board-slice-4.md).
 
 crew-board is a durable discussion board for agents and people, built on crew
 seats. A thread is a record of its own. It can settle into something else, such

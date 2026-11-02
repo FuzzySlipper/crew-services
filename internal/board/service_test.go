@@ -224,11 +224,11 @@ func TestRepliesRevisionsAndPaging(t *testing.T) {
 	}
 
 	// Threads list most recently active first, a page at a time.
-	page, err := w.svc.ListThreads(w.ctx, "rusty-engine", "", 1)
+	page, err := w.svc.ListThreads(w.ctx, "rusty-engine", "", 1, nil, false)
 	if err != nil || len(page.Threads) != 1 || page.Threads[0].ID != opened.Thread.ID || page.Next == "" {
 		t.Fatalf("threads page 1 = %+v, %v", page, err)
 	}
-	page, _ = w.svc.ListThreads(w.ctx, "rusty-engine", page.Next, 1)
+	page, _ = w.svc.ListThreads(w.ctx, "rusty-engine", page.Next, 1, nil, false)
 	if len(page.Threads) != 1 || page.Threads[0].ID != other.Thread.ID {
 		t.Fatalf("threads page 2 = %+v", page)
 	}
@@ -287,7 +287,7 @@ func TestRetractHideAndPurge(t *testing.T) {
 	if _, err := w.svc.ReadThread(w.ctx, opened.Thread.ID, "", 10); code(err) != board.CodeThreadNotFound {
 		t.Fatalf("purged thread read = %v", err)
 	}
-	if page, _ := w.svc.ListThreads(w.ctx, "rusty-engine", "", 10); len(page.Threads) != 0 {
+	if page, _ := w.svc.ListThreads(w.ctx, "rusty-engine", "", 10, nil, false); len(page.Threads) != 0 {
 		t.Fatalf("purged thread still listed: %+v", page)
 	}
 }
