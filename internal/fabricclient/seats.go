@@ -3,6 +3,7 @@ package fabricclient
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -162,6 +163,57 @@ func HeldSeats(ctx context.Context, seats interface {
 		if h := s.Holding; h != nil && !h.Stale && h.HolderAdapterID == adapterID {
 			out[h.HolderAddress] = append(out[h.HolderAddress], SeatRoute{Seat: s.Address, Generation: s.Generation, Holder: h.HolderAddress})
 		}
+	}
+	return out, nil
+}
+
+// HoldingHolder returns the session that held seat under holdingID, which
+// is where seat mail claimed under that holding went. A dispatch is reconciled
+// against that session even after the seat has changed hands.
+func HoldingHolder(ctx context.Context, seats interface {
+	ListSeatHoldings(context.Context, string) ([]Holding, error)
+}, seat string, holdingID int64) (string, error) {
+	holdings, err := seats.ListSeatHoldings(ctx, seat)
+	if err != nil {
+		return "", err
+	}
+	for _, h := range holdings {
+		if h.HoldingID == holdingID {
+			return h.HolderAddress, nil
+		}
+	}
+	return "", fmt.Errorf("seat %s has no holding %d", seat, holdingID)
+}
+
+// SeatDispatch is seat mail an adapter began dispatching, and the session it
+// went to.
+type SeatDispatch struct {
+	Delivery Delivery
+	Holder   string
+}
+
+// SeatDispatches lists the seat mail adapterID has in flight, each with the
+// session it was claimed for, whoever holds the seat now. A driver settles
+// these each pass: after a change of holder no claim of its own reaches them,
+// and until they settle they block the seat's queue.
+func SeatDispatches(ctx context.Context, fabric interface {
+	ListDispatching(context.Context, string) ([]Delivery, error)
+	ListSeatHoldings(context.Context, string) ([]Holding, error)
+}, adapterID string) ([]SeatDispatch, error) {
+	deliveries, err := fabric.ListDispatching(ctx, adapterID)
+	if err != nil {
+		return nil, err
+	}
+	var out []SeatDispatch
+	for _, delivery := range deliveries {
+		if delivery.ClaimHoldingID == 0 {
+			continue
+		}
+		holder, err := HoldingHolder(ctx, fabric, delivery.RecipientAddress, delivery.ClaimHoldingID)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, SeatDispatch{Delivery: delivery, Holder: holder})
 	}
 	return out, nil
 }

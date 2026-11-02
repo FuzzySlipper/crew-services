@@ -503,6 +503,10 @@ func (s *Store) GetDelivery(ctx context.Context, deliveryID string) (store.Deliv
 func (s *Store) ListDeliveries(ctx context.Context) ([]store.Delivery, error) {
 	return s.listDeliveries(ctx, deliveryProjection+` FROM deliveries ORDER BY accepted_sequence ASC`)
 }
+func (s *Store) ListDispatching(ctx context.Context, adapterID string, limit int) ([]store.Delivery, error) {
+	return s.listDeliveries(ctx, deliveryProjection+` FROM deliveries WHERE state = 'dispatching' AND claim_owner_adapter_id = ? ORDER BY accepted_sequence ASC LIMIT ?`, adapterID, limit)
+}
+
 func (s *Store) Mailbox(ctx context.Context, address string) ([]store.Delivery, error) {
 	return s.listDeliveries(ctx, deliveryProjection+` FROM deliveries WHERE recipient_address = ? ORDER BY accepted_sequence ASC`, address)
 }

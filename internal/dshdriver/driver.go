@@ -48,6 +48,8 @@ type Fabric interface {
 	NotInserted(ctx context.Context, deliveryID string, request fabricclient.NotInsertedRequest) (fabricclient.Delivery, error)
 	Submit(ctx context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error)
 	ListSeats(ctx context.Context, filter fabricclient.SeatFilter) ([]fabricclient.Seat, error)
+	ListSeatHoldings(ctx context.Context, seat string) ([]fabricclient.Holding, error)
+	ListDispatching(ctx context.Context, adapterID string) ([]fabricclient.Delivery, error)
 	SeatWrite(ctx context.Context, write, seat string, request fabricclient.SeatWriteRequest) (json.RawMessage, error)
 }
 
@@ -225,6 +227,7 @@ func (d *Driver) Pump(ctx context.Context) error {
 	}
 	d.refresh(ctx, sessions)
 	d.refreshSeats(ctx)
+	d.settleSeatDispatches(ctx)
 	for _, t := range d.snapshot() {
 		if t.State == "not loaded" && pass%coldEvery != 1 {
 			continue
@@ -644,8 +647,36 @@ func (d *Driver) holds(ctx context.Context, sessionID, requestID string) (bool, 
 	return HasRequest(SessionState{}, events, requestID), nil
 }
 
+// settleSeatDispatches settles this driver's seat mail that a crash left in
+// flight. After the seat changes hands no claim from this driver reaches it
+// (the seat is another session's route, perhaps on another driver), and until
+// it settles it blocks the seat's queue.
+func (d *Driver) settleSeatDispatches(ctx context.Context) {
+	dispatches, err := fabricclient.SeatDispatches(ctx, d.fabric, d.cfg.AdapterID)
+	if err != nil {
+		d.log.Warn("list seat dispatches", "error", err)
+	}
+	for _, sd := range dispatches {
+		if err := d.reconcileStuck(ctx, target{}, sd.Delivery); err != nil {
+			d.log.Warn("settle seat dispatch", "seat", sd.Delivery.RecipientAddress, "delivery", sd.Delivery.DeliveryID, "error", err)
+		}
+	}
+}
+
+// sessionAt returns the DSH session behind one of this driver's addresses.
+func (d *Driver) sessionAt(address string) (string, bool) {
+	for _, t := range d.snapshot() {
+		if t.Address == address {
+			return t.SessionID, true
+		}
+	}
+	return "", false
+}
+
 // reconcileStuck settles this driver's own dispatch that a crash left in
-// flight, from what the session holds. It is never sent again.
+// flight, from what the session holds. It is never sent again. Seat mail is
+// checked in the session it went to, which need not be t's: the seat may have
+// changed hands.
 func (d *Driver) reconcileStuck(ctx context.Context, t target, head fabricclient.Delivery) error {
 	if head.ClaimOwnerAdapterID != "" && head.ClaimOwnerAdapterID != d.cfg.AdapterID {
 		return nil
@@ -653,13 +684,27 @@ func (d *Driver) reconcileStuck(ctx context.Context, t target, head fabricclient
 	if !strings.HasPrefix(head.NativeAttemptRef, attemptPrefix) {
 		return nil
 	}
-	if err := d.sleep(ctx, d.cfg.ReconcileWait); err != nil {
-		return err
+	sessionID, known := t.SessionID, true
+	if head.ClaimHoldingID != 0 {
+		holder, err := fabricclient.HoldingHolder(ctx, d.fabric, head.RecipientAddress, head.ClaimHoldingID)
+		if err != nil {
+			return fmt.Errorf("find the holder of %s: %w", head.DeliveryID, err)
+		}
+		sessionID, known = d.sessionAt(holder)
 	}
-	has, err := d.holds(ctx, t.SessionID, RequestID(head.DeliveryID))
-	if err != nil {
-		return fmt.Errorf("reconcile %s: %w", head.DeliveryID, err)
+	// A session this driver no longer knows cannot be checked, so the outcome
+	// is unknown, as for any insertion that cannot be proven.
+	has := false
+	if known {
+		if err := d.sleep(ctx, d.cfg.ReconcileWait); err != nil {
+			return err
+		}
+		var err error
+		if has, err = d.holds(ctx, sessionID, RequestID(head.DeliveryID)); err != nil {
+			return fmt.Errorf("reconcile %s: %w", head.DeliveryID, err)
+		}
 	}
+	var err error
 	request := fabricclient.ReconcileRequest{AdapterID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), NativeAttemptRef: head.NativeAttemptRef}
 	if has {
 		request.OperationID = opID("ack", head.DeliveryID)
@@ -669,7 +714,7 @@ func (d *Driver) reconcileStuck(ctx context.Context, t target, head fabricclient
 		_, err = d.fabric.Unknown(ctx, head.DeliveryID, request)
 	}
 	if err == nil {
-		d.log.Info("reconciled in-flight delivery", "session", t.SessionID, "delivery", head.DeliveryID, "accepted", has)
+		d.log.Info("reconciled in-flight delivery", "session", sessionID, "delivery", head.DeliveryID, "accepted", has)
 	}
 	return err
 }

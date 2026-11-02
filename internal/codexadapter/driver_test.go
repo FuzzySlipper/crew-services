@@ -150,6 +150,9 @@ type fakeFabric struct {
 	submitted  []fabricclient.MessageRequest
 	seats      []fabricclient.Seat
 	seatWrites []string
+	// dispatching is what ListDispatching reports, less what was settled since.
+	dispatching []fabricclient.Delivery
+	holdings    map[string][]fabricclient.Holding
 }
 
 func newFakeFabric() *fakeFabric {
@@ -248,6 +251,32 @@ func (f *fakeFabric) ListSeats(_ context.Context, _ fabricclient.SeatFilter) ([]
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.seats, nil
+}
+func (f *fakeFabric) ListSeatHoldings(_ context.Context, seat string) ([]fabricclient.Holding, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.holdings[seat], nil
+}
+func (f *fakeFabric) ListDispatching(_ context.Context, adapterID string) ([]fabricclient.Delivery, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []fabricclient.Delivery
+	for _, d := range f.dispatching {
+		if d.ClaimOwnerAdapterID == adapterID && !slices.Contains(f.acked, d.DeliveryID) && !slices.Contains(f.unknown, d.DeliveryID) {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+// holding records that holder held seat under holdingID.
+func (f *fakeFabric) holding(seat string, holdingID int64, holder string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.holdings == nil {
+		f.holdings = map[string][]fabricclient.Holding{}
+	}
+	f.holdings[seat] = append(f.holdings[seat], fabricclient.Holding{SeatAddress: seat, HoldingID: holdingID, HolderAddress: holder})
 }
 func (f *fakeFabric) SeatWrite(_ context.Context, write, seat string, r fabricclient.SeatWriteRequest) (json.RawMessage, error) {
 	f.mu.Lock()
@@ -918,5 +947,66 @@ func TestSeatMailForAnotherHolderIsReleased(t *testing.T) {
 	}
 	if len(native.callsWith("queue ")) != 0 || !slices.Equal(fabric.released, []string{"d1"}) || len(fabric.begun) != 0 {
 		t.Fatalf("queue %v released %v begun %v", native.callsWith("queue "), fabric.released, fabric.begun)
+	}
+}
+
+// seatHead is seat mail this driver left dispatching under holding.
+func seatHead(seat, deliveryID string, holding int64) fabricclient.Delivery {
+	return fabricclient.Delivery{DeliveryID: deliveryID, RecipientAddress: seat, State: "dispatching", NativeAttemptRef: "codex:" + deliveryID, ClaimOwnerAdapterID: "crew-codex", ClaimHoldingID: holding}
+}
+
+// After the seat passed to another thread of this driver, seat mail left in
+// flight is looked for in the thread it went to, not in the new holder's,
+// and the seat's queue then moves on into the new holder.
+func TestSeatDispatchIsReconciledInTheOldHoldersThread(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	oldHolder := loadedThread(t, d, native, "thread-1", "idle")
+	newHolder := loadedThread(t, d, native, "thread-2", "idle")
+	seat := "crew.reviewer"
+	fabric.holding(seat, 1, oldHolder)
+	fabric.holding(seat, 2, newHolder)
+	fabric.holdSeat(seat, 1, newHolder, d.cfg.AdapterID)
+	native.queued["thread-1"] = []QueuedSubmission{{ID: "q-1", ClientUserMessageID: ClientMessageID("d1")}}
+	head := seatHead(seat, "d1", 1)
+	next := claimFor(seat, "d2", "deliver_at_idle")
+	next.HolderAddress = newHolder
+	fabric.claims[seat] = []fabricclient.Claim{{Reason: "head_dispatching", Head: &head}, next}
+	for i := 0; i < 2; i++ {
+		if err := d.Pump(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(fabric.unknown) != 0 || !slices.Equal(fabric.acked, []string{"d1", "d2"}) {
+		t.Fatalf("acked %v unknown %v; want d1 settled from thread-1, then d2", fabric.acked, fabric.unknown)
+	}
+	if got := native.callsWith("queue "); !slices.Equal(got, []string{"queue thread-2 crew-delivery:d2"}) {
+		t.Fatalf("queue calls = %v", got)
+	}
+}
+
+// After the seat passed to another driver's session, no claim of this driver
+// reaches its seat mail in flight, so each pass settles it from the fabric's
+// list of its own dispatches.
+func TestSeatDispatchIsSettledAfterAHandoverToAnotherDriver(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	oldHolder := loadedThread(t, d, native, "thread-1", "idle")
+	seat := "crew.reviewer"
+	fabric.holding(seat, 1, oldHolder)
+	fabric.holding(seat, 2, "s/elsewhere")
+	fabric.holdSeat(seat, 1, "s/elsewhere", "crew-claude")
+	native.queued["thread-1"] = []QueuedSubmission{{ID: "q-1", ClientUserMessageID: ClientMessageID("d1")}}
+	fabric.dispatching = []fabricclient.Delivery{seatHead(seat, "d1", 1)}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(fabric.acked, []string{"d1"}) || len(fabric.unknown) != 0 {
+		t.Fatalf("acked %v unknown %v", fabric.acked, fabric.unknown)
+	}
+	for _, r := range fabric.claimReqs {
+		if r.RecipientAddress == seat {
+			t.Fatalf("claimed the seat it no longer holds: %+v", r)
+		}
 	}
 }

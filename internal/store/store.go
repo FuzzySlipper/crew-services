@@ -239,6 +239,9 @@ type Store interface {
 	ListMessages(context.Context) ([]Message, error)
 	GetDelivery(context.Context, string) (Delivery, error)
 	ListDeliveries(context.Context) ([]Delivery, error)
+	// ListDispatching returns the deliveries an adapter has begun dispatching
+	// and not yet settled, oldest first, at most limit of them.
+	ListDispatching(ctx context.Context, adapterID string, limit int) ([]Delivery, error)
 	Mailbox(context.Context, string) ([]Delivery, error)
 	HeadDelivery(context.Context, string, int64) (*Delivery, error)
 	CancelDelivery(context.Context, time.Time, string) (Delivery, error)

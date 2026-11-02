@@ -39,6 +39,8 @@ type Fabric interface {
 	Unknown(ctx context.Context, deliveryID string, request fabricclient.ReconcileRequest) (fabricclient.Delivery, error)
 	Submit(ctx context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error)
 	ListSeats(ctx context.Context, filter fabricclient.SeatFilter) ([]fabricclient.Seat, error)
+	ListSeatHoldings(ctx context.Context, seat string) ([]fabricclient.Holding, error)
+	ListDispatching(ctx context.Context, adapterID string) ([]fabricclient.Delivery, error)
 	SeatWrite(ctx context.Context, write, seat string, request fabricclient.SeatWriteRequest) (json.RawMessage, error)
 }
 
@@ -391,6 +393,7 @@ func (d *Driver) Pump(ctx context.Context) {
 	d.pumpMu.Lock()
 	defer d.pumpMu.Unlock()
 	d.refreshSeats(ctx)
+	d.settleSeatDispatches(ctx)
 	for _, s := range d.snapshot() {
 		for _, r := range d.routes(s) {
 			for i := 0; i < 20; i++ {
@@ -467,7 +470,7 @@ func (d *Driver) deliverOne(ctx context.Context, sessionID string, r route) (boo
 	if !claim.Claimed || claim.Delivery == nil || claim.Message == nil {
 		if claim.Reason == "head_dispatching" && claim.Head != nil {
 			// Settling the head lets the next message through in this pass.
-			return d.reconcile(ctx, s, *claim.Head)
+			return d.reconcileHead(ctx, s, *claim.Head)
 		}
 		return false, nil
 	}
@@ -579,6 +582,69 @@ func normalizePolicy(policy string) (string, bool) {
 // queued it and then lost it (the process exited) or kept it past
 // QueuedTimeout. It never posts again, and reports whether it settled the
 // delivery.
+// settleSeatDispatches settles this driver's seat mail still in flight,
+// against the session each went to. After a seat changes hands, no claim from
+// this driver reaches that mail any more (the seat is another session's
+// route, perhaps on another driver), and until it settles it blocks the
+// seat's queue.
+func (d *Driver) settleSeatDispatches(ctx context.Context) {
+	dispatches, err := fabricclient.SeatDispatches(ctx, d.fabric, d.cfg.AdapterID)
+	if err != nil {
+		d.log.Warn("list seat dispatches", "error", err)
+	}
+	for _, sd := range dispatches {
+		if _, err := d.reconcile(ctx, d.sessionAt(sd.Holder, sd.Delivery.DeliveryID), sd.Delivery); err != nil {
+			d.log.Warn("settle seat dispatch", "seat", sd.Delivery.RecipientAddress, "delivery", sd.Delivery.DeliveryID, "error", err)
+		}
+	}
+}
+
+// reconcileHead settles a head this driver left dispatching. Seat mail is
+// settled against the session it went to, which need not be the session whose
+// route found it: the seat may have changed hands since.
+func (d *Driver) reconcileHead(ctx context.Context, s Session, head fabricclient.Delivery) (bool, error) {
+	if head.ClaimHoldingID == 0 || (head.ClaimOwnerAdapterID != "" && head.ClaimOwnerAdapterID != d.cfg.AdapterID) {
+		return d.reconcile(ctx, s, head)
+	}
+	holder := ""
+	d.mu.Lock()
+	_, recorded := d.dispatches[head.DeliveryID]
+	d.mu.Unlock()
+	if !recorded {
+		var err error
+		if holder, err = fabricclient.HoldingHolder(ctx, d.fabric, head.RecipientAddress, head.ClaimHoldingID); err != nil {
+			return false, fmt.Errorf("find the holder of %s: %w", head.DeliveryID, err)
+		}
+	}
+	return d.reconcile(ctx, d.sessionAt(holder, head.DeliveryID), head)
+}
+
+// sessionAt is the session a seat dispatch went to: the one its record names,
+// else the one bound to holder. A session the driver no longer has comes back
+// with what the record kept, or empty, and settles as gone.
+func (d *Driver) sessionAt(holder, deliveryID string) Session {
+	d.mu.Lock()
+	p, recorded := d.dispatches[deliveryID]
+	var kept Session
+	if recorded {
+		kept = Session{SessionID: p.SessionID, Socket: p.Socket, Transcript: p.Transcript}
+	}
+	d.mu.Unlock()
+	if recorded {
+		if s, ok := d.session(kept.SessionID); ok {
+			return s
+		}
+		return kept
+	}
+	for _, s := range d.snapshot() {
+		if s.Address == holder {
+			out, _ := d.session(s.SessionID)
+			return out
+		}
+	}
+	return Session{}
+}
+
 func (d *Driver) reconcile(ctx context.Context, s Session, head fabricclient.Delivery) (bool, error) {
 	if head.ClaimOwnerAdapterID != "" && head.ClaimOwnerAdapterID != d.cfg.AdapterID {
 		return false, nil
@@ -752,7 +818,7 @@ func (d *Driver) turnOne(ctx context.Context, sessionID string, r route) (string
 	}
 	if !claim.Claimed || claim.Delivery == nil || claim.Message == nil {
 		if claim.Reason == "head_dispatching" && claim.Head != nil {
-			settled, err := d.reconcile(ctx, s, *claim.Head)
+			settled, err := d.reconcileHead(ctx, s, *claim.Head)
 			return "", settled, err
 		}
 		return "", false, nil

@@ -60,6 +60,8 @@ type Fabric interface {
 	NotInserted(ctx context.Context, deliveryID string, request fabricclient.NotInsertedRequest) (fabricclient.Delivery, error)
 	Submit(ctx context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error)
 	ListSeats(ctx context.Context, filter fabricclient.SeatFilter) ([]fabricclient.Seat, error)
+	ListSeatHoldings(ctx context.Context, seat string) ([]fabricclient.Holding, error)
+	ListDispatching(ctx context.Context, adapterID string) ([]fabricclient.Delivery, error)
 	SeatWrite(ctx context.Context, write, seat string, request fabricclient.SeatWriteRequest) (json.RawMessage, error)
 }
 
@@ -535,6 +537,7 @@ func (d *Driver) Pump(ctx context.Context) error {
 	}
 	d.discover(ctx, native, loadedIDs)
 	d.refreshSeats(ctx)
+	d.settleSeatDispatches(ctx, native)
 	statuses := map[string]string{}
 	for _, t := range d.snapshot() {
 		if !loaded[t.ThreadID] && pass%notLoadedEvery != 1 {
@@ -850,8 +853,35 @@ func (d *Driver) wakeQueued(ctx context.Context, native Native, t target) (bool,
 	return true, thread
 }
 
+// settleSeatDispatches settles this driver's seat mail that a crash or lost
+// response left in flight. After the seat changes hands no claim from this
+// driver reaches it (the seat is another thread's route, perhaps on another
+// driver), and until it settles it blocks the seat's queue.
+func (d *Driver) settleSeatDispatches(ctx context.Context, native Native) {
+	dispatches, err := fabricclient.SeatDispatches(ctx, d.fabric, d.cfg.AdapterID)
+	if err != nil {
+		d.log.Warn("list seat dispatches", "error", err)
+	}
+	for _, sd := range dispatches {
+		if err := d.reconcileStuck(ctx, native, target{}, sd.Delivery); err != nil {
+			d.log.Warn("settle seat dispatch", "seat", sd.Delivery.RecipientAddress, "delivery", sd.Delivery.DeliveryID, "error", err)
+		}
+	}
+}
+
+// threadAt returns the thread behind one of this driver's session addresses.
+func (d *Driver) threadAt(address string) (string, bool) {
+	for _, t := range d.snapshot() {
+		if t.Address == address {
+			return t.ThreadID, true
+		}
+	}
+	return "", false
+}
+
 // reconcileStuck settles this driver's own dispatch that a crash or lost
-// response left in flight, from what Codex holds.
+// response left in flight, from what Codex holds. Seat mail is checked in the
+// thread it went to, which need not be t's: the seat may have changed hands.
 func (d *Driver) reconcileStuck(ctx context.Context, native Native, t target, head fabricclient.Delivery) error {
 	if head.ClaimOwnerAdapterID != "" && head.ClaimOwnerAdapterID != d.cfg.AdapterID {
 		return nil
@@ -859,11 +889,24 @@ func (d *Driver) reconcileStuck(ctx context.Context, native Native, t target, he
 	if head.NativeAttemptRef == "" || !(strings.HasPrefix(head.NativeAttemptRef, attemptPrefix) || strings.HasPrefix(head.NativeAttemptRef, "codex-queue:")) {
 		return nil
 	}
-	clientID := ClientMessageID(head.DeliveryID)
-	accepted, err := nativeHas(ctx, native, t.ThreadID, clientID)
-	if err != nil {
-		return fmt.Errorf("reconcile %s: %w", head.DeliveryID, err)
+	threadID, known := t.ThreadID, true
+	if head.ClaimHoldingID != 0 {
+		holder, err := fabricclient.HoldingHolder(ctx, d.fabric, head.RecipientAddress, head.ClaimHoldingID)
+		if err != nil {
+			return fmt.Errorf("find the holder of %s: %w", head.DeliveryID, err)
+		}
+		threadID, known = d.threadAt(holder)
 	}
+	accepted := false
+	if known {
+		var err error
+		if accepted, err = nativeHas(ctx, native, threadID, ClientMessageID(head.DeliveryID)); err != nil {
+			return fmt.Errorf("reconcile %s: %w", head.DeliveryID, err)
+		}
+	}
+	// A thread this driver no longer knows cannot be checked, so the outcome
+	// is unknown, as for any insertion that cannot be proven.
+	var err error
 	request := fabricclient.ReconcileRequest{AdapterID: d.cfg.AdapterID, LeaseToken: d.leaseToken(), NativeAttemptRef: head.NativeAttemptRef}
 	if accepted {
 		request.OperationID = opID("ack", head.DeliveryID)
@@ -873,7 +916,7 @@ func (d *Driver) reconcileStuck(ctx context.Context, native Native, t target, he
 		_, err = d.fabric.Unknown(ctx, head.DeliveryID, request)
 	}
 	if err == nil {
-		d.log.Info("reconciled in-flight delivery", "thread", t.ThreadID, "delivery", head.DeliveryID, "accepted", accepted)
+		d.log.Info("reconciled in-flight delivery", "thread", threadID, "delivery", head.DeliveryID, "accepted", accepted)
 	}
 	return err
 }

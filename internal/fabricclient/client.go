@@ -92,6 +92,9 @@ type Delivery struct {
 	NativeAttemptRef    string `json:"native_attempt_ref"`
 	ClaimOwnerAdapterID string `json:"claim_owner_adapter_id,omitempty"`
 	AttemptCount        int    `json:"attempt_count,omitempty"`
+	// ClaimHoldingID is set on seat mail: the holding it was claimed under,
+	// whose holder is the session it went to.
+	ClaimHoldingID int64 `json:"claim_holding_id,omitempty"`
 }
 
 type Claim struct {
@@ -205,6 +208,16 @@ func (c *Client) Claim(ctx context.Context, request ClaimRequest) (Claim, error)
 	var claim Claim
 	err := c.call(ctx, http.MethodPost, "/v1/deliveries/claim", request, &claim)
 	return claim, err
+}
+
+// ListDispatching is a read of the deliveries adapterID has begun dispatching
+// and not settled.
+func (c *Client) ListDispatching(ctx context.Context, adapterID string) ([]Delivery, error) {
+	var out struct {
+		Deliveries []Delivery `json:"deliveries"`
+	}
+	err := c.call(ctx, http.MethodGet, "/v1/deliveries?"+url.Values{"state": {"dispatching"}, "claim_owner": {adapterID}}.Encode(), nil, &out)
+	return out.Deliveries, err
 }
 
 func (c *Client) Begin(ctx context.Context, deliveryID string, request DispatchRequest) (Delivery, error) {

@@ -310,6 +310,7 @@ exact replay.
 | `GET /v1/seats/{seat}/charter/versions`, `.../handoff/versions` | version metadata, newest first |
 | `GET /v1/seats/{seat}/holdings` | holdings, newest first |
 | `POST /v1/messages` with `as_seat` | send as a seat |
+| `GET /v1/deliveries?state=dispatching&claim_owner=ADAPTER` | read: an adapter's own dispatches, with `claim_holding_id` on seat mail |
 
 Errors return `{"code": …}` and, for `seat_held` and `version_conflict`, a
 `detail` with the holding in the way or the current version.
@@ -351,6 +352,16 @@ that session holds, at the seat's generation. A claim names the holder it
 resolved. If that holder is another session (the seat changed hands since the
 listing), the driver releases the claim, and the pass for that session takes
 it. A stale holding is not in the listing, so its mail waits for relief.
+
+Seat mail already dispatching when the seat changes hands is settled against
+the session it went to, never the new holder's. That session is the holder of
+the delivery's `claim_holding_id`. After the change no claim from the old
+holder's driver reaches that mail, because the seat is now another session's
+route, perhaps on another driver. So on each pass every driver reads its own
+dispatches (`GET /v1/deliveries?state=dispatching&claim_owner=ADAPTER`) and
+settles its seat mail among them. A seat head found through a claim is
+settled the same way. Until it settles, that mail blocks the seat's queue, as
+any dispatching head does.
 
 Seat mail is rendered as "Crew message to your seat SEAT from …", and its reply
 line is `send --as SEAT --to SENDER`. A message sent as a seat names the seat

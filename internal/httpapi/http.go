@@ -280,9 +280,23 @@ func getDelivery(svc *service.Service) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, value)
 	}
 }
+// errDeliveryFilter: the delivery listing filters only state=dispatching by
+// claim_owner.
+var errDeliveryFilter = errors.New("deliveries can be filtered only as state=dispatching&claim_owner=ADAPTER")
+
 func listDeliveries(svc *service.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		values, err := svc.ListDeliveries(r.Context())
+		query := r.URL.Query()
+		var values []service.Delivery
+		var err error
+		switch {
+		case query.Get("state") == "" && query.Get("claim_owner") == "":
+			values, err = svc.ListDeliveries(r.Context())
+		case query.Get("state") == "dispatching":
+			values, err = svc.ListDispatching(r.Context(), query.Get("claim_owner"))
+		default:
+			err = &service.Error{Code: service.CodeInvalid, Err: errDeliveryFilter}
+		}
 		if err != nil {
 			writeError(w, err)
 			return

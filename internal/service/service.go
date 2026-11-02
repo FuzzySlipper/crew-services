@@ -328,6 +328,21 @@ func (s *Service) ListDeliveries(ctx context.Context) ([]Delivery, error) {
 	values, err := s.store.ListDeliveries(ctx)
 	return values, mapStoreError(err)
 }
+// ListDispatching is a read: the deliveries adapterID has begun dispatching
+// and not settled. A driver uses it to find its own seat-mail dispatches after
+// the seat changed hands, since no claim on the seat reaches them then.
+func (s *Service) ListDispatching(ctx context.Context, adapterID string) ([]Delivery, error) {
+	if err := required("claim_owner", adapterID); err != nil {
+		return nil, err
+	}
+	values, err := s.store.ListDispatching(ctx, strings.TrimSpace(adapterID), maxDispatchingList)
+	return values, mapStoreError(err)
+}
+
+// maxDispatchingList bounds ListDispatching; an adapter has at most a few
+// dispatches in flight.
+const maxDispatchingList = 200
+
 func (s *Service) Mailbox(ctx context.Context, address string) ([]Delivery, error) {
 	if err := required("recipient_address", address); err != nil {
 		return nil, err

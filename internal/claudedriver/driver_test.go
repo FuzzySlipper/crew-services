@@ -937,6 +937,105 @@ func TestSeatMailFollowsTheHolder(t *testing.T) {
 	}
 }
 
+// Seat mail still in flight when the seat changes hands is settled against the
+// session it went to, and the seat's queue moves on for the new holder. Here
+// the new holder is another session of the same driver: the old holder's
+// queued post must not be judged by the new holder's socket.
+func TestSeatDispatchIsSettledInTheOldHolderAfterAHandover(t *testing.T) {
+	h := newHarness(t)
+	sockA, sockB := h.socket(t, "a"), h.socket(t, "b")
+	h.register(t, h.driver, "session-a", sockA)
+	h.register(t, h.driver, "session-b", sockB)
+	seat := "crew.reviewer"
+	if _, err := h.driver.SeatWrite(h.ctx, crewcli.SeatRequest{From: "session-a", Write: "take", Seat: seat, OperationID: "take-a"}); err != nil {
+		t.Fatal(err)
+	}
+	h.inbox.mu.Lock()
+	h.inbox.behaviour[sockA] = queues
+	h.inbox.mu.Unlock()
+	h.send(t, "to-seat-1", seat, "first", "next_turn")
+	h.driver.Pump(h.ctx)
+	if got := h.states(t, seat); len(got) != 1 || got[0] != "dispatching" {
+		t.Fatalf("seat deliveries after the post = %v", got)
+	}
+	if _, err := h.driver.SeatWrite(h.ctx, crewcli.SeatRequest{From: "session-b", Write: "relieve", Seat: seat, OperationID: "relieve-b"}); err != nil {
+		t.Fatal(err)
+	}
+	h.send(t, "to-seat-2", seat, "second", "next_turn")
+	h.driver.Pump(h.ctx)
+	if got := h.states(t, seat); len(got) != 2 || got[0] != "dispatching" || got[1] != "queued" {
+		t.Fatalf("seat deliveries before the old holder's transcript settles = %v", got)
+	}
+	first := h.inbox.sent()[0]
+	appendTranscript(h.transcript("session-a"), insertedLine(first.msgID, first.text))
+	h.driver.Pump(h.ctx)
+	h.driver.Pump(h.ctx)
+	if got := h.states(t, seat); len(got) != 2 || got[0] != "delivered" || got[1] != "delivered" {
+		t.Fatalf("seat deliveries = %v", got)
+	}
+	var toB []posted
+	for _, p := range h.inbox.sent() {
+		if p.socket == sockB && strings.Contains(p.text, "second") {
+			toB = append(toB, p)
+		}
+	}
+	if len(toB) != 1 {
+		t.Fatalf("posts to the new holder = %+v", h.inbox.sent())
+	}
+}
+
+// The same, when another driver's session relieves the holder: this driver
+// still settles its own dispatch, though the seat is no longer one of its
+// routes, and the new holder's driver can then claim what follows.
+func TestSeatDispatchIsSettledAfterAHandoverToAnotherDriver(t *testing.T) {
+	h := newHarness(t)
+	sockA := h.socket(t, "a")
+	h.register(t, h.driver, "session-a", sockA)
+	seat := "crew.reviewer"
+	if _, err := h.driver.SeatWrite(h.ctx, crewcli.SeatRequest{From: "session-a", Write: "take", Seat: seat, OperationID: "take-a"}); err != nil {
+		t.Fatal(err)
+	}
+	h.inbox.mu.Lock()
+	h.inbox.behaviour[sockA] = queues
+	h.inbox.mu.Unlock()
+	h.send(t, "to-seat-1", seat, "first", "next_turn")
+	h.driver.Pump(h.ctx)
+
+	other, err := h.fabric.Register(h.ctx, "other-driver", "o-1", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := h.fabric.RegisterSessionAddress(h.ctx, fabricclient.SessionAddressRequest{AdapterID: "other-driver", LeaseToken: other.LeaseToken, NativeKey: "thread-x", Capabilities: []string{"deliver_when_idle"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.fabric.SeatWrite(h.ctx, "relieve", seat, fabricclient.SeatWriteRequest{AdapterID: "other-driver", LeaseToken: other.LeaseToken, OperationID: "relieve-x", SessionAddress: binding.Address}); err != nil {
+		t.Fatal(err)
+	}
+	h.send(t, "to-seat-2", seat, "second", "next_turn")
+	claim := func(op string) fabricclient.Claim {
+		t.Helper()
+		got, err := h.fabric.Claim(h.ctx, fabricclient.ClaimRequest{AdapterID: "other-driver", LeaseToken: other.LeaseToken, OperationID: op, RecipientAddress: seat, RecipientGeneration: 1, Availability: "idle", ClaimDuration: "1m"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := claim("claim-1"); got.Claimed || got.Reason != "head_dispatching" {
+		t.Fatalf("new holder's claim behind the old dispatch = %+v", got)
+	}
+	first := h.inbox.sent()[0]
+	appendTranscript(h.transcript("session-a"), insertedLine(first.msgID, first.text))
+	h.driver.Pump(h.ctx)
+	if got := h.states(t, seat); len(got) != 2 || got[0] != "delivered" {
+		t.Fatalf("seat deliveries after this driver's pass = %v", got)
+	}
+	got := claim("claim-2")
+	if !got.Claimed || got.Message == nil || got.Message.Body != "second" || got.HolderAddress != binding.Address {
+		t.Fatalf("new holder's claim after the handover settled = %+v", got)
+	}
+}
+
 // The seat commands every driver's CLI shares, run against a real fabric and
 // this driver's loopback API.
 func TestSeatCommands(t *testing.T) {

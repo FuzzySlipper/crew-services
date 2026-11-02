@@ -81,4 +81,11 @@ func TestSeatRoutesTakeRefuseAndList(t *testing.T) {
 	if status, body := do(http.MethodGet, "/v1/seats/rusty-engine.nobody", nil); status != http.StatusNotFound || body["code"] != "seat_not_found" {
 		t.Fatalf("missing seat = %d %v", status, body)
 	}
+	// A driver finds its own seat mail in flight through this read.
+	if status, body := do(http.MethodGet, "/v1/deliveries?state=dispatching&claim_owner=crew-codex", nil); status != http.StatusOK || len(body["deliveries"].([]any)) != 0 {
+		t.Fatalf("dispatching list = %d %v", status, body)
+	}
+	if status, body := do(http.MethodGet, "/v1/deliveries?state=queued", nil); status != http.StatusBadRequest || body["code"] != "invalid_request" {
+		t.Fatalf("unsupported delivery filter = %d %v", status, body)
+	}
 }
