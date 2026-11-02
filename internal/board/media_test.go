@@ -2,6 +2,8 @@ package board_test
 
 import (
 	"bytes"
+	"crypto/md5"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -98,6 +100,14 @@ func TestMovingImagesBecomeOneKindAndKeepAudio(t *testing.T) {
 	if err != nil || g.Kind != board.MediaMotion || g.Type != "video/mp4" || g.DurationMS < 500 || g.Width != 160 {
 		t.Fatalf("gif = %+v, %v", g, err)
 	}
+	// Animated WebP, which ffmpeg cannot decode, goes through anim_dump.
+	if _, err := exec.LookPath("anim_dump"); err == nil {
+		animated := fixture(t, "x.webp", "-f", "lavfi", "-i", "testsrc=size=48x32:rate=5", "-t", "1", "-c:v", "libwebp_anim", "-loop", "0")
+		aw, err := w.svc.Upload(w.ctx, "spin.webp", animated)
+		if err != nil || aw.Kind != board.MediaMotion || aw.Type != "video/mp4" || aw.Width != 48 || aw.Height != 32 || aw.DurationMS < 900 || aw.DurationMS > 1300 {
+			t.Fatalf("animated webp = %+v, %v", aw, err)
+		}
+	}
 	// APNG carries no container duration; its length comes from its frames.
 	apng := fixture(t, "spin.apng", "-f", "lavfi", "-i", "testsrc=size=32x32:rate=5", "-t", "2", "-plays", "0", "-f", "apng")
 	ap, err := w.svc.Upload(w.ctx, "spin.png", apng)
@@ -122,7 +132,6 @@ func TestMovingImagesBecomeOneKindAndKeepAudio(t *testing.T) {
 func TestWhatIsNotMediaIsRefused(t *testing.T) {
 	w, _ := mediaWorld(t, nil)
 	png := fixture(t, "x.png", "-f", "lavfi", "-i", "color=red:size=16x16", "-frames:v", "1")
-	animated := fixture(t, "x.webp", "-f", "lavfi", "-i", "testsrc=size=32x32:rate=5", "-t", "1", "-c:v", "libwebp_anim", "-loop", "0")
 	cases := []struct {
 		name string
 		data []byte
@@ -132,7 +141,6 @@ func TestWhatIsNotMediaIsRefused(t *testing.T) {
 		{"notes.pdf", []byte("%PDF-1.7\n1 0 obj\n"), board.CodeMediaTypeRefused, "convert documents to Markdown"},
 		{"plan.docx", append([]byte("PK\x03\x04"), []byte("....[Content_Types].xml....word/document.xml")...), board.CodeMediaTypeRefused, "Office document"},
 		{"tool", []byte("\x7fELF\x02\x01\x01"), board.CodeMediaTypeRefused, "a program"},
-		{"spin.webp", animated, board.CodeMediaTypeRefused, "animated WebP"},
 		{"x.jpg", png, board.CodeMediaTypeMismatch, "the name says JPEG but the bytes are PNG"},
 		{"x.png", append(append([]byte{}, png...), []byte("PK\x05\x06\x00\x00")...), board.CodeMediaTypeRefused, "ZIP archive"},
 	}
@@ -223,5 +231,69 @@ func TestAFailedCheckHoldsTheAttachmentNotThePost(t *testing.T) {
 	gone, _ := w2.svc.Attachment(w2.ctx, slow.Ref)
 	if text := board.RenderForAgentWith("![x](blob:sha256-"+slow.Ref+")", false, []board.Attachment{gone}); text != "[attachment removed]" {
 		t.Fatalf("dropped render = %q", text)
+	}
+}
+
+// clamWorld is a media world scanning with the real ClamAV, plus extra
+// signatures (MD5:size:name lines) to trigger a detection on purpose.
+func clamWorld(t *testing.T, signatures ...string) *world {
+	t.Helper()
+	if _, err := exec.LookPath("clamscan"); err != nil {
+		t.Skip("ClamAV is not installed")
+	}
+	if _, err := os.Stat("/var/lib/clamav/main.cvd"); err != nil {
+		t.Skip("ClamAV has no signature database yet")
+	}
+	scanner := []string{"clamscan", "--no-summary", "-d", "/var/lib/clamav"}
+	if len(signatures) > 0 {
+		// ClamAV refuses an empty signature file, so one is added only when needed.
+		extra := filepath.Join(t.TempDir(), "test.hdb")
+		if err := os.WriteFile(extra, []byte(strings.Join(append(signatures, ""), "\n")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		scanner = append(scanner, "-d", extra)
+	}
+	w, _ := mediaWorld(t, func(c *board.MediaConfig) { c.Scanner = scanner })
+	return w
+}
+
+func md5Signature(data []byte, name string) string {
+	return fmt.Sprintf("%x:%d:%s", md5.Sum(data), len(data), name)
+}
+
+// The real ClamAV scans both the original and the re-encoded result: a clean
+// upload says so, a hit on either holds the attachment, and a person's
+// release lets it through the scan only.
+func TestClamAVScansTheOriginalAndTheResult(t *testing.T) {
+	png := fixture(t, "x.png", "-f", "lavfi", "-i", "testsrc=size=40x30", "-frames:v", "1")
+
+	clean := clamWorld(t)
+	a, err := clean.svc.Upload(clean.ctx, "x.png", png)
+	if err != nil || a.State != board.AttachmentReady || !strings.Contains(strings.Join(a.Checks, ";"), "signature-scanned clean") {
+		t.Fatalf("clean upload = %+v, %v", a, err)
+	}
+	_, path, err := clean.svc.BlobPath(clean.ctx, a.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	original := clamWorld(t, md5Signature(png, "Crew.Board.Original"))
+	held, err := original.svc.Upload(original.ctx, "x.png", png)
+	if err != nil || held.State != board.AttachmentHeld || !strings.Contains(held.Reason, "flagged the original: Crew.Board.Original") {
+		t.Fatalf("original hit = %+v, %v", held, err)
+	}
+	released, err := original.svc.Release(original.ctx, board.HeldRequest{Actor: board.Actor{Person: "patch"}, Ref: held.Ref})
+	if err != nil || released.State != board.AttachmentReady || !strings.Contains(strings.Join(released.Checks, ";"), "skipped by a person's release") {
+		t.Fatalf("release = %+v, %v", released, err)
+	}
+
+	result := clamWorld(t, md5Signature(output, "Crew.Board.Result"))
+	held, err = result.svc.Upload(result.ctx, "x.png", png)
+	if err != nil || held.State != board.AttachmentHeld || !strings.Contains(held.Reason, "flagged the re-encoded result: Crew.Board.Result") {
+		t.Fatalf("result hit = %+v, %v", held, err)
 	}
 }

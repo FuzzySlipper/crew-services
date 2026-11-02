@@ -227,8 +227,6 @@ func (in *Ingester) Ingest(ctx context.Context, name string, data []byte, skip S
 	switch kind {
 	case "pdf", "office", "archive", "executable", "unknown":
 		return Attachment{}, refuse(CodeMediaTypeRefused, "this is %s; %s", describeType(kind), convertHint)
-	case "webp-animated":
-		return Attachment{}, refuse(CodeMediaTypeRefused, "animated WebP cannot be decoded on this site yet; send it as a GIF or an MP4")
 	}
 	if claimed, ok := extensionType[strings.ToLower(filepath.Ext(name))]; ok && !compatible(claimed, kind) {
 		return Attachment{}, refuse(CodeMediaTypeMismatch, "the name says %s but the bytes are %s", describeType(claimed), describeType(kind))
@@ -367,6 +365,9 @@ func (in *Ingester) transform(ctx context.Context, scratch, kind string, a *Atta
 	timeout := in.cfg.Timeout
 	if skip.Decoder {
 		timeout *= 4
+	}
+	if kind == "webp-animated" {
+		return in.animatedWebP(ctx, scratch, timeout, a)
 	}
 	input := []string{"-i", "{work}/in"}
 	if kind == "svg" {
@@ -525,22 +526,99 @@ func (in *Ingester) scan(ctx context.Context, original, output string, a *Attach
 		a.Checks = append(a.Checks, "re-encoded; signature scan skipped by a person's release")
 		return nil
 	}
-	for _, path := range []string{original, output} {
-		ctx, cancel := context.WithTimeout(ctx, in.cfg.Timeout)
-		cmd := exec.CommandContext(ctx, in.cfg.Scanner[0], append(append([]string{}, in.cfg.Scanner[1:]...), path)...)
-		var out bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &out
-		err := cmd.Run()
-		cancel()
-		var exit *exec.ExitError
-		switch {
-		case err == nil:
-		case errors.As(err, &exit) && exit.ExitCode() == 1:
-			return &mediaError{check: "signature scan", reason: "flagged it: " + firstLineOf(out.String(), "a match")}
-		default:
-			return &mediaError{check: "signature scan", reason: "could not run: " + firstLineOf(out.String(), err.Error())}
+	// One run scans both, so the scanner loads its signatures once.
+	ctx, cancel := context.WithTimeout(ctx, in.cfg.Timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, in.cfg.Scanner[0], append(append([]string{}, in.cfg.Scanner[1:]...), original, output)...)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		for _, line := range strings.Split(out.String(), "\n") {
+			if !strings.Contains(line, "FOUND") {
+				continue
+			}
+			which := "the original"
+			if strings.HasPrefix(line, output) {
+				which = "the re-encoded result"
+			}
+			_, found, _ := strings.Cut(line, ": ")
+			return &mediaError{check: "signature scan", reason: "flagged " + which + ": " + strings.TrimSpace(found)}
 		}
+		return &mediaError{check: "signature scan", reason: "flagged it: " + firstLineOf(out.String(), "a match")}
+	default:
+		return &mediaError{check: "signature scan", reason: "could not run: " + firstLineOf(out.String(), err.Error())}
 	}
 	a.Checks = append(a.Checks, "re-encoded; signature-scanned clean")
 	return nil
+}
+
+// maxAnimatedFrames bounds how many frames an animated WebP may dump.
+const maxAnimatedFrames = 3600
+
+// animatedWebP decodes an animated WebP, which ffmpeg cannot: webpmux reads
+// the canvas and each frame's duration, anim_dump writes the composited
+// frames, and ffmpeg encodes them in order with those durations. All three
+// run in the sandbox.
+func (in *Ingester) animatedWebP(ctx context.Context, scratch string, timeout time.Duration, a *Attachment) (string, error) {
+	info, err := in.run(ctx, scratch, timeout, "webpmux", "-info", "{work}/in")
+	if err != nil {
+		return "", err
+	}
+	width, height := 0, 0
+	var durations []float64
+	for _, line := range strings.Split(string(info), "\n") {
+		line = strings.TrimSpace(line)
+		if size, ok := strings.CutPrefix(line, "Canvas size:"); ok {
+			fmt.Sscanf(strings.TrimSpace(size), "%d x %d", &width, &height)
+			continue
+		}
+		// Frame rows: "N:  width height alpha x y duration dispose blend size compression".
+		fields := strings.Fields(line)
+		if len(fields) >= 7 && strings.HasSuffix(fields[0], ":") {
+			if _, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":")); err == nil {
+				ms, err := strconv.Atoi(fields[6])
+				if err != nil {
+					return "", &mediaError{check: "decoder", reason: "unreadable frame timing"}
+				}
+				durations = append(durations, float64(max(ms, 10))/1000)
+			}
+		}
+	}
+	if width == 0 || height == 0 || len(durations) == 0 {
+		return "", &mediaError{check: "decoder", reason: "no frames in it"}
+	}
+	if pixels := int64(width) * int64(height); in.cfg.StillPixels > 0 && pixels > in.cfg.StillPixels {
+		return "", refuse(CodeMediaTooLarge, "the animation is %d×%d, over %d megapixels; scale it down first", width, height, in.cfg.StillPixels/1_000_000)
+	}
+	if len(durations) > maxAnimatedFrames {
+		return "", refuse(CodeMediaTooLarge, "the animation has %d frames; at most %d", len(durations), maxAnimatedFrames)
+	}
+	total := 0.0
+	for _, d := range durations {
+		total += d
+	}
+	if in.cfg.MotionSeconds > 0 && total > in.cfg.MotionSeconds+0.5 {
+		return "", refuse(CodeMediaTooLarge, "the clip runs %.0f s; moving images are at most %.0f s", total, in.cfg.MotionSeconds)
+	}
+	if err := os.MkdirAll(filepath.Join(scratch, "frames"), 0o700); err != nil {
+		return "", err
+	}
+	if _, err := in.run(ctx, scratch, timeout, "anim_dump", "-folder", "{work}/frames", "-prefix", "f_", "{work}/in"); err != nil {
+		return "", err
+	}
+	// The concat demuxer takes each frame's duration; the last frame is named
+	// twice so that its duration counts.
+	var list strings.Builder
+	for i, d := range durations {
+		fmt.Fprintf(&list, "file 'frames/f_%04d.png'\nduration %.3f\n", i, d)
+	}
+	fmt.Fprintf(&list, "file 'frames/f_%04d.png'\n", len(durations)-1)
+	if err := os.WriteFile(filepath.Join(scratch, "frames.txt"), []byte(list.String()), 0o600); err != nil {
+		return "", err
+	}
+	return in.motion(ctx, scratch, []string{"-f", "concat", "-safe", "0", "-i", "{work}/frames.txt"}, timeout, a)
 }

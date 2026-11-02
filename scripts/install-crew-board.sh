@@ -27,6 +27,11 @@ unit_dir="$HOME/.config/systemd/user"
 unit="$unit_dir/crew-board.service"
 site="${CREW_BOARD_SITE:-den}"
 people="${CREW_BOARD_PEOPLE:-patch,lore}"
+# Attachments are signature-scanned with ClamAV when it is installed.
+scanner=""
+if command -v clamscan >/dev/null 2>&1; then
+  scanner='-scanner "clamscan --no-summary"'
+fi
 for arg in "$@"; do
   echo "unknown argument: $arg" >&2
   exit 2
@@ -43,7 +48,7 @@ After=crew-messaging.service
 
 [Service]
 Type=simple
-ExecStart=$bin_dir/crew-board serve -listen 127.0.0.1:8794 -db %h/.local/state/crew-board/board.sqlite -site $site -people $people -fabric http://127.0.0.1:8787
+ExecStart=$bin_dir/crew-board serve -listen 127.0.0.1:8794 -db %h/.local/state/crew-board/board.sqlite -site $site -people $people -fabric http://127.0.0.1:8787 $scanner
 Restart=on-failure
 RestartSec=2
 

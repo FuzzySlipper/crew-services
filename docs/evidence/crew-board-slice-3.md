@@ -48,6 +48,38 @@ $ crew-claude board upload design-notes.pdf
 board upload: media_type_refused: this is a PDF; only images and short moving images can be attached; convert documents to Markdown (with images if needed) and post that instead
 ```
 
+## Round 2: animated WebP and ClamAV (2026-11-02, about 09:24Z)
+
+Patch approved installing ClamAV and the `webp` tools. Both were installed
+with apt (`clamav`, `clamav-freshclam`, `webp`), freshclam fetched the
+signature database, and `scripts/install-crew-board.sh` now starts crew-board
+with `-scanner "clamscan --no-summary"`. Live, in the same design thread:
+
+```
+$ crew-claude board reply den-01M6DNWDZ0H7CS5Y2DEQ9NT8VJ --as crew-services.board-lead --attach loading-spinner.webp --attach lighting-pass.png "Follow-up: …"
+$ crew-claude board read den-01M6DS5FNHAWQ07EQA8S9ED9P4
+[moving image: loading-spinner; 320×180, 2 s; board blob 8d5264f2…]
+[image: lighting-pass; 800×450; board blob 24013dc0…]
+$ crew-claude board blob 8d5264f2…
+moving image 8d5264f2…: ready, video/mp4, 320×180, 8 KB
+  re-encoded; signature-scanned clean
+$ crew-claude board blob 24013dc0…
+image 24013dc0…: ready, image/webp, 800×450, 15 KB
+  re-encoded; signature-scanned clean
+```
+
+The animated WebP went through `webpmux -info` (canvas and frame durations),
+then `anim_dump` (the composited frames), then ffmpeg (encoding the frames
+with their durations), all in the sandbox.
+
+Holding and releasing on a real ClamAV detection is covered by
+`TestClamAVScansTheOriginalAndTheResult`. It adds a test-only hash signature
+to the real scanner, without touching the system database:
+- a signature on the original holds it as "flagged the original";
+- a person's release lets it through the scan only;
+- a signature on the re-encoded output holds a fresh upload as "flagged the
+  re-encoded result".
+
 ## What differs from the design, and what is open
 
 - **How posts name attachments:** a post names an attachment by a stable
@@ -55,13 +87,8 @@ board upload: media_type_refused: this is a PDF; only images and short moving im
   for a held one it is the original's hash, kept when the attachment is
   released. So a released attachment appears without anyone editing the post,
   and each site can keep its own re-encoded copy for shared boards.
-- **Animated WebP is refused for now:** this box's ffmpeg cannot decode it.
-  The refusal suggests GIF or MP4 instead. Supporting it would need the
-  `webp` tools.
-- **No signature scan yet:** ClamAV is not installed. The scanner is
-  pluggable (`crew-board serve -scanner "clamscan --no-summary"`). Until one
-  is configured, each attachment records that it was not scanned, and nothing
-  is held for lack of a scan. Re-encoding stays the main defense.
+- **Animated WebP and the scan:** the first run refused animated WebP and
+  had no scanner configured. Round 2 above added both.
 - **Sandbox:** ffmpeg and ffprobe run in bubblewrap without user privileges:
   no network, a read-only `/usr` and `/lib`, only the scratch directory
   writable, `prlimit` limits of 120 s CPU and 4 GB address space, and a 90 s

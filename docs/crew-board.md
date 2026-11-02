@@ -425,17 +425,22 @@ The ingest pipeline:
    of them are re-encoded to H.264 MP4 with AAC audio (kept), fitted inside
    1920×1080. That is often many times smaller than the GIF: a 518 KB test GIF
    became a 43 KB MP4. They render like an animated image: muted, looping, and
-   playing inline when short. Animated WebP is refused for now with a request
-   to send a GIF or MP4, because this box's ffmpeg cannot decode it. Adding it
-   would need the `webp` tools.
+   playing inline when short. Animated WebP, which ffmpeg cannot decode, goes
+   through the `webp` tools: `webpmux` reads the canvas and frame durations,
+   `anim_dump` writes the composited frames, and ffmpeg encodes them with
+   those durations.
 5. **The decoder is sandboxed.** Video decoding is the biggest parsing surface
    the board has. ffmpeg and ffprobe run inside bubblewrap: no network, a
    read-only system, only the scratch directory writable, `prlimit` CPU and
    memory limits, and a 90 s timeout.
 6. **A signature scan** runs on the original and on the result
    (`crew-board serve -scanner`, for example `clamscan --no-summary`). It is a
-   backstop, not the main defense. ClamAV is not installed on this box yet, so
-   each attachment records that it was not scanned.
+   backstop, not the main defense. One `clamscan` run scans both files, about
+   6 s with its database loaded fresh. The ClamAV daemon would make that
+   near-instant, for about 1 GB of memory. ClamAV and the `webp` tools were
+   installed on this box with Patch's approval on 2026-11-02, and
+   `scripts/install-crew-board.sh` turns the scanner on when `clamscan` is
+   present.
 
 When any step fails, **the attachment is held, not the post.** The post
 appears, and in place of the attachment there is a placeholder with the
