@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,10 +29,10 @@ const boardUsage = `usage: board COMMAND
   board reindex NETWORK                    (a person on this site) read a network's repo again
   board threads BOARD [--state open|settled|closed|all] [--archived] [--after CURSOR] [--limit N]
   board new BOARD TITLE [--as SEAT] [--kind KIND] [--urgent] [--no-subscribe] [--attach FILE|URL]... [TEXT... | -]
-  board read THREAD|POST [--after POST] [--limit N] [--unfold] [--peek] [--as SEAT]
+  board read THREAD|POST [--after POST] [--limit N] [--unfold] [--peek] [--attachments DIR] [--as SEAT]
   board reply THREAD|POST [--as SEAT] [--kind KIND] [--urgent] [--attach FILE|URL]... [TEXT... | -]
   board upload FILE|URL                    upload an image or short clip; prints the Markdown that shows it
-  board blob REF [--out FILE]              an attachment's details, or its bytes
+  board blob REF [--out FILE|DIR]          an attachment's details, or its bytes
   board held                               attachments a check held
   board release REF | board drop REF       (a person on this site)
   board edit POST [--as SEAT] [TEXT... | -]
@@ -52,8 +53,11 @@ const boardUsage = `usage: board COMMAND
   board purge POST [--note TEXT]           (a person on this site)
 Reads take --json for crew-board's own records. Text from stdin when none is
 given, or with -. Kinds are note, question, answer, decision and warning.
-Outside a session, say who you are with --person NAME (or
-CREW_BOARD_PERSON). Reading moves your read cursor; --peek reads without it.`
+Agents use their driver (crew-claude board, crew-codex board, crew-dsh board),
+which writes as their session, or as a seat it holds with --as SEAT. A person
+at a terminal uses crew-board with --person NAME (or CREW_BOARD_PERSON); an
+agent never writes as a person. Reading moves your read cursor; --peek reads
+without it, and read --attachments DIR saves the thread's attachments.`
 
 // BoardURL is crew-board's loopback API, CREW_BOARD_URL when set.
 func BoardURL() string {
@@ -66,6 +70,7 @@ func BoardURL() string {
 type boardArgs struct {
 	words                                                                 []string
 	as, person, note, after, op, state, out, kind, into, redirect, shared string
+	attachmentsDir                                                        string
 	attach                                                                []string
 	limit                                                                 int
 	unfold, json, urgent, noSubscribe                                     bool
@@ -77,7 +82,7 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
-		case "--as", "--person", "--note", "--after", "--operation-id", "--limit", "--state", "--attach", "--out", "--kind", "--into", "--redirect", "--shared":
+		case "--as", "--person", "--note", "--after", "--operation-id", "--limit", "--state", "--attach", "--out", "--kind", "--into", "--redirect", "--shared", "--attachments":
 			if i+1 >= len(args) {
 				return out, fmt.Errorf("%s needs a value", a)
 			}
@@ -99,6 +104,8 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 				out.attach = append(out.attach, args[i])
 			case "--out":
 				out.out = args[i]
+			case "--attachments":
+				out.attachmentsDir = args[i]
 			case "--kind":
 				out.kind = args[i]
 			case "--into":
@@ -159,6 +166,13 @@ func BoardMain(ctx context.Context, args []string, self string, stdin io.Reader,
 		return 2
 	}
 	b := boardCLI{ctx: ctx, base: BoardURL(), self: self, args: parsed, stdin: stdin, stdout: stdout, stderr: stderr, command: command}
+	// Plain crew-board inside an agent session has no session to write as.
+	// Naming a person there would sign an agent's words as that person, so
+	// it is refused, and the agent is pointed at its driver.
+	if driver, harness := agentDriver(); self == "" && driver != "" && (parsed.person != "" || parsed.as != "") {
+		fmt.Fprintf(stderr, "board %s: this is a %s session, so it cannot write or read as a person. Use `%s board %s ...`, which writes as this session (or as a seat it holds, with --as SEAT).\n", command, harness, driver, command)
+		return 2
+	}
 	switch command {
 	case "boards":
 		return b.boards()
@@ -247,11 +261,14 @@ func (b boardCLI) post(path string, body, target any) error {
 // --as), or the person named by --person outside a session.
 func (b boardCLI) actor() (board.Actor, error) {
 	if b.self == "" {
-		if b.args.person == "" {
-			return board.Actor{}, errors.New("outside a session, say who you are with --person NAME" + b.peopleHint())
+		if driver, harness := agentDriver(); driver != "" {
+			return board.Actor{}, fmt.Errorf("this is a %s session: use `%s board %s ...`, which writes as this session (or as a seat it holds, with --as SEAT)", harness, driver, b.command)
 		}
 		if b.args.as != "" {
-			return board.Actor{}, errors.New("--as needs a session that holds the seat; a person writes as themself")
+			return board.Actor{}, errors.New("--as names a seat, and only a session holding it writes as it, through its driver (for example `crew-claude board ... --as SEAT`); a person writes as themself with --person NAME")
+		}
+		if b.args.person == "" {
+			return board.Actor{}, errors.New("say which person is writing with --person NAME" + b.peopleHint() + "; agents use their driver instead (crew-claude board, crew-codex board, crew-dsh board)")
 		}
 		return board.Actor{Person: b.args.person}, nil
 	}
@@ -260,6 +277,32 @@ func (b boardCLI) actor() (board.Actor, error) {
 		return board.Actor{}, errors.New("this session has no crew address yet")
 	}
 	return board.Actor{SessionAddress: address, AsSeat: b.args.as}, nil
+}
+
+// agentDrivers are the session variables each harness sets and its driver
+// reads, so a board command run inside an agent session without its driver
+// is still recognized.
+var agentDrivers = []struct{ env, command, harness string }{
+	{"CLAUDE_CODE_SESSION_ID", "crew-claude", "Claude Code"},
+	{"CODEX_THREAD_ID", "crew-codex", "Codex"},
+	{"DSH_SESSION_ID", "crew-dsh", "DSH"},
+}
+
+// agentDriver is the driver command and harness of the agent session this
+// process runs in, or "" outside one.
+func agentDriver() (command, harness string) {
+	for _, d := range agentDrivers {
+		if os.Getenv(d.env) != "" {
+			return d.command, d.harness
+		}
+	}
+	return "", ""
+}
+
+// BoardContext is the session-start line telling an agent how to use the
+// board through its driver.
+func BoardContext(command string) string {
+	return fmt.Sprintf(" crew-board, the crew discussion board, is used through `%s board` (it lists the commands): posts and replies are written as this session, or as a seat it holds with --as SEAT. The Den MCP board tools are a different board, and --person is only for people at a terminal.", command)
 }
 
 func (b boardCLI) peopleHint() string {
@@ -527,7 +570,7 @@ func (b boardCLI) read() int {
 		fmt.Fprintf(b.stdout, "In %q (thread %s):\n\n", thread.Thread.Title, post.ThreadID)
 		b.printPost(post)
 		b.markRead(post.ThreadID, post.ID)
-		return 0
+		return b.saveAttachments([]board.Post{post})
 	}
 	if b.args.json {
 		code := printJSON(b.stdout, read)
@@ -551,7 +594,48 @@ func (b boardCLI) read() int {
 	if len(read.Posts) > 0 {
 		b.markRead(t.ID, read.Posts[len(read.Posts)-1].ID)
 	}
+	return b.saveAttachments(read.Posts)
+}
+
+// saveAttachments saves the ready attachments of posts into --attachments
+// DIR, each named by its reference with the extension of its type.
+func (b boardCLI) saveAttachments(posts []board.Post) int {
+	if b.args.attachmentsDir == "" {
+		return 0
+	}
+	if err := os.MkdirAll(b.args.attachmentsDir, 0o755); err != nil {
+		return b.fail(err)
+	}
+	saved := map[string]bool{}
+	for _, p := range posts {
+		for _, a := range p.Attachments {
+			if a.State != board.AttachmentReady || saved[a.Ref] {
+				continue
+			}
+			saved[a.Ref] = true
+			path := filepath.Join(b.args.attachmentsDir, blobFileName(a))
+			if err := b.download(a.Ref, path); err != nil {
+				return b.fail(err)
+			}
+			fmt.Fprintf(b.stdout, "saved %s %s to %s\n", a.Kind, a.Ref[:12], path)
+		}
+	}
+	if len(saved) == 0 {
+		fmt.Fprintln(b.stdout, "no attachments to save.")
+	}
 	return 0
+}
+
+// blobFileName names an attachment's file by the start of its reference and
+// the extension its type calls for.
+func blobFileName(a board.Attachment) string {
+	ext := map[string]string{"image/webp": ".webp", "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "video/mp4": ".mp4", "video/webm": ".webm"}[a.Type]
+	if ext == "" {
+		if exts, _ := mime.ExtensionsByType(a.Type); len(exts) > 0 {
+			ext = exts[0]
+		}
+	}
+	return a.Ref[:16] + ext
 }
 
 // markRead moves the reader's cursor to the last post shown. A read with
@@ -814,12 +898,33 @@ func (b boardCLI) search() int {
 		fmt.Fprintln(b.stdout, "Nothing found.")
 		return 0
 	}
-	tw := tabwriter.NewWriter(b.stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "POST\tTHREAD\tWHEN\tAUTHOR\tFIRST LINE")
+	// Matches are grouped by thread, threads in the order of their best
+	// match, so a thread found through several posts shows once.
+	var order []string
+	byThread := map[string][]board.Post{}
 	for _, p := range out.Posts {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.ID, p.ThreadID, age(p.CreatedAt), p.Author.Address, firstLine(p.Body))
+		if _, seen := byThread[p.ThreadID]; !seen {
+			order = append(order, p.ThreadID)
+		}
+		byThread[p.ThreadID] = append(byThread[p.ThreadID], p)
 	}
-	_ = tw.Flush()
+	for i, id := range order {
+		var thread board.ThreadRead
+		title := id
+		if b.get("/v1/threads/"+url.PathEscape(id)+"?limit=1", &thread) == nil {
+			title = fmt.Sprintf("%q", thread.Thread.Title)
+		}
+		if i > 0 {
+			fmt.Fprintln(b.stdout)
+		}
+		posts := byThread[id]
+		fmt.Fprintf(b.stdout, "%s · thread %s · %d matching %s (board read %s)\n", title, id, len(posts), plural(len(posts), "post", "posts"), id)
+		tw := tabwriter.NewWriter(b.stdout, 0, 2, 2, ' ', 0)
+		for _, p := range posts {
+			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", p.ID, age(p.CreatedAt), p.Author.Address, firstLine(p.Body))
+		}
+		_ = tw.Flush()
+	}
 	return 0
 }
 
@@ -951,31 +1056,40 @@ func (b boardCLI) blob() int {
 		}
 		return 0
 	}
+	path := b.args.out
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		path = filepath.Join(path, blobFileName(a))
+	}
+	if err := b.download(ref, path); err != nil {
+		return b.fail(err)
+	}
+	fmt.Fprintf(b.stdout, "saved %s (%s) to %s.\n", a.Kind, a.Type, path)
+	return 0
+}
+
+// download saves one attachment's bytes to path.
+func (b boardCLI) download(ref, path string) error {
 	ctx, cancel := context.WithTimeout(b.ctx, 5*time.Minute)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, b.base+"/v1/blobs/"+url.PathEscape(ref), nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return b.fail(err)
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return b.fail(errors.New(describeRefusal(body)))
+		return errors.New(describeRefusal(body))
 	}
-	f, err := os.Create(b.args.out)
+	f, err := os.Create(path)
 	if err != nil {
-		return b.fail(err)
+		return err
 	}
 	if _, err := io.Copy(f, resp.Body); err != nil {
 		f.Close()
-		return b.fail(err)
+		return err
 	}
-	if err := f.Close(); err != nil {
-		return b.fail(err)
-	}
-	fmt.Fprintf(b.stdout, "saved %s to %s.\n", a.Kind, b.args.out)
-	return 0
+	return f.Close()
 }
 
 func (b boardCLI) held() int {

@@ -24,6 +24,11 @@ import (
 // on a real fabric: as a person outside any session, and as a session (its
 // address found through a stand-in driver, as `who` finds it).
 func TestBoardCommandsEndToEnd(t *testing.T) {
+	// Person-less and person commands run as from a terminal, so clear the
+	// harness session variables this test may inherit from an agent.
+	for _, env := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "DSH_SESSION_ID"} {
+		t.Setenv(env, "")
+	}
 	ctx := context.Background()
 	dir := t.TempDir()
 	persistence, err := sqlite.Open(ctx, filepath.Join(dir, "fabric.db"))

@@ -743,7 +743,7 @@ board digest BOARD [--json]
 board ack POST [--as SEAT]                     (and: board acks --open [BOARD])
 board settle THREAD --into REF [--note TEXT]
 board rename THREAD TITLE                      (and: board close THREAD [--redirect OTHER])
-board blob HASH [--out FILE]
+board blob HASH [--out FILE|DIR]
 board held                                     (person only: board release BLOB, board drop BLOB)
 board notices [--failed]                       recent notices and their outcomes
 ```
@@ -753,6 +753,15 @@ board's own records. Outside a session, `--person NAME` (or
 `CREW_BOARD_PERSON`) says which person is writing. The `crew-board` binary
 itself takes the same commands for people at a plain terminal
 (`crew-board read THREAD`), and `crew-board serve` runs the service.
+
+Run inside an agent session (Claude Code, Codex or DSH sets its session
+variable), the plain binary refuses `--person`, an inherited
+`CREW_BOARD_PERSON` and `--as`, and names the driver to use instead, so an
+agent following an error message can never end up signing as a person. The
+drivers' session-start context names `<driver> board` and says the Den MCP
+board tools are a different board. `read --attachments DIR` saves a thread's
+ready attachments, named by reference with the extension of their type, and
+`search` groups its matches by thread.
 
 **HTTP**, on crew-board's loopback port:
 
