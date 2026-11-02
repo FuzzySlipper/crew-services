@@ -31,7 +31,10 @@ var migration004 string
 //go:embed migrations/005_review_fixes.sql
 var migration005 string
 
-var migrations = []string{migration001, migration002, migration003, migration004, migration005}
+//go:embed migrations/006_purge_notices.sql
+var migration006 string
+
+var migrations = []string{migration001, migration002, migration003, migration004, migration005, migration006}
 
 // Store is crew-board's records in one SQLite file.
 type Store struct {
@@ -188,7 +191,12 @@ func apply(ctx context.Context, tx *sql.Tx, c board.Change) error {
 			err = scrub(ctx, tx, `post_id IN (SELECT id FROM posts WHERE thread_id = ?)`, `thread_id = ?`, c.ScrubThread)
 		}
 		if err == nil {
-			_, err = tx.ExecContext(ctx, `UPDATE threads SET purged = 1, title = '', created_by = '{}' WHERE id = ?`, c.ScrubThread)
+			// Thread-level events (renames, settles, closes) carry titles and
+			// notes but no post; they go with the thread.
+			_, err = tx.ExecContext(ctx, `UPDATE events SET note = '', data = '{}', actor = CASE WHEN type = 'purge' THEN actor ELSE '{}' END WHERE thread_id = ?`, c.ScrubThread)
+		}
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `UPDATE threads SET purged = 1, title = '', created_by = '{}', links = '[]', aliases = '[]', redirect_to = '' WHERE id = ?`, c.ScrubThread)
 		}
 	default:
 		err = errors.New("empty change")
@@ -233,8 +241,11 @@ func scrub(ctx context.Context, tx *sql.Tx, whereRevision, wherePost, arg string
 	for _, stmt := range []string{
 		`UPDATE revisions SET body = '', mentions = '[]' WHERE ` + whereRevision,
 		`UPDATE posts SET state = 'purged', author = '{}', note = '' WHERE ` + wherePost,
-		`UPDATE events SET note = '', actor = '{}' WHERE type != 'purge' AND ` + whereRevision,
-		`UPDATE notices SET state = 'failed', last_error = 'post purged before the notice went out' WHERE state = 'pending' AND ` + whereRevision,
+		`UPDATE events SET note = '', data = '{}', actor = '{}' WHERE type != 'purge' AND ` + whereRevision,
+		// Every notice about the post loses its cached text, whatever its
+		// state; one not yet sent never will be.
+		`UPDATE notices SET body = '', purged = 1, state = CASE WHEN state = 'pending' THEN 'failed' ELSE state END,
+			last_error = CASE WHEN state = 'pending' THEN 'post purged before the notice went out' ELSE last_error END WHERE ` + whereRevision,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt, arg); err != nil {
 			return err
@@ -629,7 +640,7 @@ func (s *Store) UpdateNotice(ctx context.Context, n board.Notice) error {
 	if !n.SentAt.IsZero() {
 		sent = sql.NullString{String: stamp(n.SentAt), Valid: true}
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE notices SET state = ?, attempts = ?, next_attempt_at = ?, last_error = ?, message_id = ?, sent_at = ?, body = ?, give_up_at = ? WHERE id = ?`, n.State, n.Attempts, stamp(n.NextAttemptAt), n.LastError, n.MessageID, sent, n.Body, stamp(n.GiveUpAt), n.ID)
+	_, err := s.db.ExecContext(ctx, `UPDATE notices SET state = ?, attempts = ?, next_attempt_at = ?, last_error = ?, message_id = ?, sent_at = ?, body = ?, give_up_at = ? WHERE id = ? AND purged = 0`, n.State, n.Attempts, stamp(n.NextAttemptAt), n.LastError, n.MessageID, sent, n.Body, stamp(n.GiveUpAt), n.ID)
 	return err
 }
 

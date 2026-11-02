@@ -2,7 +2,9 @@ package board_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -339,5 +341,91 @@ func TestANoticeThatOutlivesItsTTLIsReportedExpired(t *testing.T) {
 	}
 	if expired, _ := w.svc.Notices(w.ctx, board.NoticeExpired, 10); len(expired) != 1 {
 		t.Fatalf("expired notices = %+v", expired)
+	}
+}
+
+// storeMentions lists where text appears anywhere in crew-board's database,
+// as table.column, across every table and column.
+func (w *world) storeMentions(text string) []string {
+	w.t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(w.dir, "board.db"))
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		_ = rows.Scan(&name)
+		tables = append(tables, name)
+	}
+	rows.Close()
+	var found []string
+	for _, table := range tables {
+		cols, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+		if err != nil {
+			w.t.Fatal(err)
+		}
+		var names []string
+		for cols.Next() {
+			var name string
+			_ = cols.Scan(&name)
+			names = append(names, name)
+		}
+		cols.Close()
+		for _, col := range names {
+			var n int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM "`+table+`" WHERE CAST("`+col+`" AS TEXT) LIKE ?`, "%"+text+"%").Scan(&n); err != nil {
+				w.t.Fatal(err)
+			}
+			if n > 0 {
+				found = append(found, table+"."+col)
+			}
+		}
+	}
+	return found
+}
+
+// A purge leaves no copy of the purged text anywhere in crew-board's store:
+// not in notice texts in any state, not in a renamed or settled thread's old
+// titles, links and events, and a later pass of the sender cannot bring a
+// notice's text back. (Messages the fabric already delivered are not
+// recalled.)
+func TestPurgeLeavesNoCopyOfTheText(t *testing.T) {
+	w := newWorld(t)
+	w.newBoard("rusty-engine")
+	sent := w.notifier(nil)
+	down := w.notifier(&flakyFabric{NoticeFabric: w.fabric, failures: 1 << 30})
+	opened := w.thread(board.Actor{Person: "patch"}, "Codename Falcon", "falcon-opening for @"+w.x)
+	reply := w.reply(board.Actor{Person: "lore"}, opened.Thread.ID, "", "falcon-reply for @"+w.x)
+	sent.Pass(w.ctx)
+	w.reply(board.Actor{Person: "lore"}, opened.Thread.ID, "", "falcon-pending for @"+w.x)
+	down.Pass(w.ctx)
+	if len(w.storeMentions("falcon-pending")) == 0 || len(w.storeMentions("falcon-reply")) < 2 {
+		t.Fatalf("the test expects cached notice texts: %v %v", w.storeMentions("falcon-pending"), w.storeMentions("falcon-reply"))
+	}
+	w.threadChange(w.svc.Rename, board.ThreadRequest{Actor: board.Actor{Person: "patch"}, Thread: opened.Thread.ID, Title: "Codename Hawk"})
+	w.threadChange(w.svc.Settle, board.ThreadRequest{Actor: board.Actor{Person: "patch"}, Thread: opened.Thread.ID, Into: "wiki:falcon-page", Note: "falcon-settle-note"})
+
+	if _, _, err := w.svc.Purge(w.ctx, board.ModerateRequest{Actor: board.Actor{Person: "patch"}, OperationID: w.op(), Post: reply.Post.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if found := w.storeMentions("falcon-reply"); len(found) != 0 {
+		t.Fatalf("a purged reply's text is still in %v", found)
+	}
+	if _, _, err := w.svc.Purge(w.ctx, board.ModerateRequest{Actor: board.Actor{Person: "patch"}, OperationID: w.op(), Post: opened.Post.ID}); err != nil {
+		t.Fatal(err)
+	}
+	w.now = w.now.Add(time.Hour)
+	down.Pass(w.ctx)
+	sent.Pass(w.ctx)
+	for _, text := range []string{"alcon", "Hawk", "falcon-settle-note"} {
+		if found := w.storeMentions(text); len(found) != 0 {
+			t.Fatalf("after purging the thread, %q is still in %v", text, found)
+		}
 	}
 }
