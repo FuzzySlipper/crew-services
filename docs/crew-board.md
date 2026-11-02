@@ -410,7 +410,11 @@ dark theme. Shared boards can also be read on GitHub.
 
 **The web pages.** `crew-board serve -web-listen ADDR` adds a second listener
 for people, separate from the JSON API, which stays on loopback. The install
-script sets it to `0.0.0.0:8795` (`CREW_BOARD_WEB_LISTEN` changes it). The
+script sets it to `0.0.0.0:8795` (`CREW_BOARD_WEB_LISTEN` changes it).
+People normally use https://board.dragonden.stream, which the LAN's Caddy
+proxies to it. Behind Caddy the board sees every request as coming from
+Caddy's address, so that site block refuses clients outside private and
+Tailscale ranges itself (server-access `caddy/README.md`). The
 pages have two panels:
 - **Left, on every page:** the boards with their new-post counts, and the open
   board's threads with new posts and mentions. On a phone it opens from a
