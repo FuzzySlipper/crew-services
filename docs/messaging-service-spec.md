@@ -40,8 +40,25 @@ but never returns it: registration, resolve and list responses omit
 native mapping. A binding an adapter puts with an explicit `target_ref` (for
 example a pinned role address) returns that value, since the adapter chose to
 publish it.
-Seat addresses (`name@scope`), which a session holds and hands over, are
-proposed in [Seats](seats.md) and are not part of this contract yet.
+Seat addresses (`name@scope`), which a session holds and hands over, are part
+of this contract; [Seats](seats.md) specifies them in full, and the rules below
+are the ones every other part of this specification relies on:
+
+- A seat has at most one current holding. Take succeeds only on a vacant seat
+  (`seat_held` names the holder), and relieve is the only way into a held one;
+  it notifies the previous holder from the service origin `fabric/seats`.
+- Mail to a seat queues on the seat address under the seat generation and is
+  ordered FIFO there like any address. The holder is resolved when an adapter
+  claims it (`holder_address` on the claim), so a change of holder carries
+  queued mail over instead of failing it. Only retirement advances the seat
+  generation, and it fails queued seat mail with `seat_retired`.
+- A message sent as a seat has the seat as `sender_address` and seat
+  generation, and keeps the real sender in `sender_session`,
+  `sender_holding_id` and `sender_charter_version`. Sending as a seat is fenced
+  against the current holding (`not_holder`), and replies go to the seat.
+- A holding whose session binding or adapter lease is gone is reported stale on
+  read; it is never vacated automatically.
+- Seat reads (listing, texts, holdings) never claim, wake, or deliver.
 The service never calls DSH, Rusty Crew, or Codex directly.
 
 ## Core records
@@ -206,6 +223,9 @@ Paths are provisional; these operations are semantic commitments:
 | not inserted | `POST /v1/deliveries/{id}/not-inserted`: the claim-owning instance returns a dispatching delivery to the queue as its address head after a definite native rejection. |
 | inspect message / delivery / mailbox | Read-only inspection and history. |
 | begin / get / wait / cancel round | Durable request/reply lifecycle; waiting is observational. |
+| take / leave / relieve / retire seat | Session-fenced seat holding changes under `/v1/seats/{seat}`; see [Seats](seats.md). |
+| set / get seat charter or handoff | One versioned text each, set replaces, optional `expected_version` CAS. |
+| list seats / get seat / list holdings | Read-only; open to every caller. |
 
 V1 is a trusted local box: loopback only, no authentication or encryption.
 Typed configuration is limited to listen address, SQLite path, and

@@ -46,7 +46,7 @@ func Handler(d *Driver) http.Handler {
 		}
 		result, err := d.Send(r.Context(), body)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			crewcli.WriteDriverError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, result)

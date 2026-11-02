@@ -56,20 +56,27 @@ func ServeSeatWrite(write SeatWriter) http.HandlerFunc {
 			return
 		}
 		result, err := write(r.Context(), body)
-		var refused interface{ StatusBody() (int, string) }
-		switch {
-		case errors.As(err, &refused):
-			status, text := refused.StatusBody()
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(status)
-			_, _ = io.WriteString(w, text)
-		case err != nil:
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		default:
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(result)
+		if err != nil {
+			WriteDriverError(w, err)
+			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(result)
 	}
+}
+
+// WriteDriverError answers a driver API request that failed. A fabric refusal
+// passes through with its own status and body; anything else is a 502.
+func WriteDriverError(w http.ResponseWriter, err error) {
+	var refused interface{ StatusBody() (int, string) }
+	if errors.As(err, &refused) {
+		status, text := refused.StatusBody()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, text)
+		return
+	}
+	writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -515,6 +522,8 @@ func describeRefusal(body []byte) string {
 			text += ", stale: " + h.StaleReason
 		}
 		text += "; `seat relieve` takes it over and tells them"
+	case e.Code == "not_holder":
+		text += ": this session does not hold that seat now; `seat show` names its holder"
 	case e.Detail.CurrentVersion != nil:
 		text += fmt.Sprintf(": the current version is %d; read it, then set again with --expect %d", *e.Detail.CurrentVersion, *e.Detail.CurrentVersion)
 	}

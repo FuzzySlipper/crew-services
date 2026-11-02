@@ -5,10 +5,10 @@ migration 10, the store and service operations, the HTTP routes under
 `/v1/seats`, and the proving-slice tests in `internal/sqlite/seat_test.go`. The
 drivers (crew-claude, crew-codex, crew-dsh) claim seat mail and share the
 `seat` commands and `send --as`. A live Claude Code and Codex run is recorded
-in [Seats across harnesses](evidence/seats-cross-harness.md). The lasting
-contract rules still have to move into the
-[messaging service specification](messaging-service-spec.md), and this note
-keeps the decisions and the reasons behind them.
+in [Seats across harnesses](evidence/seats-cross-harness.md). This note is the
+seat part of the [messaging service specification](messaging-service-spec.md),
+which summarizes its core rules, and it keeps the decisions and the reasons
+behind them.
 
 ## Why
 

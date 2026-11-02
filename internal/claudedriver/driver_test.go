@@ -980,4 +980,7 @@ func TestSeatCommands(t *testing.T) {
 	if code, out, _ := run("", "seat", "charter", "reviewer@crew", "--version", "1"); code != 0 || !strings.Contains(out, "Be terse.") {
 		t.Fatalf("charter version 1 = %q", out)
 	}
+	if code, _, errOut := run("", "send", "--as", "reviewer@crew", "--to", "reviewer@crew", "after leaving"); code == 0 || !strings.Contains(errOut, "not_holder: this session does not hold that seat now") {
+		t.Fatalf("send as a seat left = %d %q", code, errOut)
+	}
 }

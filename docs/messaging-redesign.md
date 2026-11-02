@@ -101,8 +101,8 @@ native id, so the core stays runtime-neutral. A rebind to a different native
 session advances the generation as it does today.
 
 Named role addresses (for example `rusty-engine/implementer`) stay possible but
-are not needed for the first slice. They are now proposed as seats
-(`name@scope`) in [Seats](seats.md).
+are not needed for the first slice. They are now built as seats
+(`name@scope`), specified in [Seats](seats.md).
 
 The agent learns its own address from the SessionStart hook's context ("your
 crew address is …"). Tools that accept a notify address get it from there.

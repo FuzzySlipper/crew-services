@@ -63,10 +63,87 @@ Sender provenance on the seat messages:
 | 26a1ede5… | `reviewer@seat-demo` | `s/8968075b926125cb` | 1 | 1 |
 | b794676f… | `lead@seat-demo` | `s/5b693970244d98db` | 1 | 1 |
 
+## Refusal and relief
+
+A second live run on 2026-11-02 between 02:24Z and 02:30Z, with the same two
+sessions, on `lead@crew-services`. Commands and output are excerpts: the
+listings drop the charter-summary column, and lines that repeat earlier output
+are cut (marked `…` where cut mid-text). The full log of the run is in the
+task thread.
+
+1. **Claude takes the seat** and sets its charter:
+
+   ```
+   $ crew-claude seat take lead@crew-services --note "relief demo for #10519"
+   you hold lead@crew-services (holding 1).
+   $ crew-claude seat list --scope crew-services
+   SEAT                STATE  HOLDER                    CHARTER  HANDOFF  QUEUED
+   lead@crew-services  held   s/5b693970244d98db (you)  v1       v0       0
+   ```
+
+2. **Codex is refused**, and the refusal names the holder (the Codex thread's
+   own report):
+
+   ```
+   $ crew-codex seat take lead@crew-services --note "codex wants the lead seat"
+   Exit code: 1
+   seat take lead@crew-services: seat_held: held by s/5b693970244d98db (claude-code) since 2026-11-02T02:24:12.948548564Z; `seat relieve` takes it over and tells them
+   $ crew-codex seat list --scope crew-services
+   lead@crew-services  held   s/5b693970244d98db  v1       v0       0
+   ```
+
+3. **Claude writes the transition note**:
+
+   ```
+   $ crew-claude seat handoff lead@crew-services --set "Transition note from s/5b693970244d98db: the relief demo is half done. Next holder: confirm you read this, then answer lead@crew-services mail."
+   set the handoff of lead@crew-services to version 1 (143 characters).
+   ```
+
+4. **Codex relieves Claude**, reads the handoff, and sends as the seat:
+
+   ```
+   $ crew-codex seat relieve lead@crew-services --note "codex relieving claude for the demo"
+   you hold lead@crew-services (holding 2), relieving s/5b693970244d98db. Read the handoff with `seat show lead@crew-services`.
+   $ crew-codex seat show lead@crew-services
+   held by s/8968075b926125cb (crew-codex) since 2026-11-02T02:26:40.342939511Z, holding 2
+   Handoff (version 1, set 2026-11-02T02:26:33.794330364Z by s/5b693970244d98db (claude-code) holding lead@crew-services):
+   Transition note from s/5b693970244d98db: the relief demo is half done. …
+   $ crew-codex send --as lead@crew-services --to s/5b693970244d98db "lead@crew-services here: I read the handoff and hold the seat now."
+   sent 98bc2d0a… from lead@crew-services to s/5b693970244d98db
+   $ crew-codex seat list --scope crew-services
+   lead@crew-services  held   s/8968075b926125cb (you)  v1       v1       0
+   ```
+
+   In the same transaction the fabric queued a relief notice for Claude
+   (message e2de84e4…, from `fabric/seats`, `next_turn`): "You no longer hold
+   the seat lead@crew-services: s/8968075b926125cb (crew-codex) relieved you.
+   Messages you send as lead@crew-services will be refused. … Their note:
+   codex relieving claude for the demo". The seat message 98bc2d0a… carries
+   `sender_address lead@crew-services` and `sender_session s/8968075b926125cb`.
+   Both stayed queued while the Claude turn that ran the demo was active, as
+   `next_turn` requires, and the Codex report sent with `next_step` waited
+   behind them in the address's FIFO.
+
+5. **The relieved session is refused**, and the holdings record the takeover:
+
+   ```
+   $ crew-claude send --as lead@crew-services --to s/8968075b926125cb "should be refused"
+   send: not_holder: this session does not hold that seat now; `seat show` names its holder
+   $ crew-claude seat holdings lead@crew-services
+   HOLDING  HOLDER              ADAPTER      STARTED                         ENDED                           REASON    NOTE
+   2        s/8968075b926125cb  crew-codex   2026-11-02T02:26:40.342939511Z  -                                         codex relieving claude for the demo
+   1        s/5b693970244d98db  claude-code  2026-11-02T02:24:12.948548564Z  2026-11-02T02:26:40.342939511Z  relieved  relief demo for #10519
+   ```
+
+   The first try printed the raw `fabric HTTP 409: {"code":"not_holder"}`:
+   the drivers' `/v1/send` wrapped fabric refusals in a 502. They now pass
+   them through as `/v1/seat-write` does, and the run above is after that fix
+   was deployed.
+
+6. **Clean-up:** Claude retired the seat (`retired lead@crew-services; any mail
+   still queued for it failed with seat_retired.`).
+
 ## Not shown here
 
-- **Relief:** relief, the relief notice, and the `not_holder` refusal of a
-  relieved sender are covered by `TestSeatMailFollowsTheHolder`
-  (internal/claudedriver) and the store tests. They were not repeated live.
 - **DSH:** crew-dsh has the same seat routing (`TestSeatMailIsPromptedIntoTheHolder`),
-  but no DSH session took part in this run.
+  but no DSH session took part in either run.
