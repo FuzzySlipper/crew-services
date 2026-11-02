@@ -174,4 +174,10 @@ func TestBoardCommandsEndToEnd(t *testing.T) {
 	if code, out, _ := run("", "", "acks"); code != 0 || !strings.Contains(out, "waiting on lore") {
 		t.Fatalf("acks = %d %q", code, out)
 	}
+	// The command a seat's decision notice gives, run by the seat's holder.
+	_, out, _ = run("", "", "reply", thread, "--person", "patch", "--kind", "decision", "Ship the index. @rusty-engine.lead")
+	seatDecision := strings.Fields(out)[1]
+	if code, out, errOut := run("native-a", "", "ack", seatDecision, "--as", "rusty-engine.lead"); code != 0 || !strings.Contains(out, "all 1 addressees have acknowledged") {
+		t.Fatalf("ack as the seat = %d %q %q", code, out, errOut)
+	}
 }

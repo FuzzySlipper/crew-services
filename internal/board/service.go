@@ -25,7 +25,7 @@ type Store interface {
 	// ListThreads lists a board's threads, most recently active first,
 	// starting after the cursor position (zero for the first page).
 	ListThreads(ctx context.Context, board string, after ThreadCursor, limit int, filter ThreadFilter) ([]Thread, error)
-	KindPosts(ctx context.Context, board, kind string, limit int) ([]Post, error)
+	KindPosts(ctx context.Context, board, kind, beforeID string, limit int) ([]Post, error)
 	OpenQuestions(ctx context.Context, board string, limit int) ([]Post, error)
 	Acks(ctx context.Context, postID string) ([]Participant, error)
 	GetPost(ctx context.Context, id string) (Post, error)

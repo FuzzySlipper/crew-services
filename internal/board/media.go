@@ -392,7 +392,6 @@ func (in *Ingester) transform(ctx context.Context, scratch, kind string, a *Atta
 	if width == 0 && kind != "svg" {
 		return "", &mediaError{check: "decoder", reason: "no picture in it"}
 	}
-	duration, _ := strconv.ParseFloat(p.Format.Duration, 64)
 	motion := kind == "mp4" || kind == "webm" || (kind == "gif" || kind == "apng") && frames > 1
 	if !motion {
 		if pixels := int64(width) * int64(height); in.cfg.StillPixels > 0 && pixels > in.cfg.StillPixels {
@@ -400,11 +399,42 @@ func (in *Ingester) transform(ctx context.Context, scratch, kind string, a *Atta
 		}
 		return in.still(ctx, scratch, input, timeout, a)
 	}
+	duration, err := in.duration(ctx, scratch, input, timeout, p.Format.Duration)
+	if err != nil {
+		return "", err
+	}
 	if in.cfg.MotionSeconds > 0 && duration > in.cfg.MotionSeconds+0.5 {
 		return "", refuse(CodeMediaTooLarge, "the clip runs %.0f s; moving images are at most %.0f s", duration, in.cfg.MotionSeconds)
 	}
-	a.DurationMS = int(duration * 1000)
 	return in.motion(ctx, scratch, input, timeout, a)
+}
+
+// duration is how long a moving image runs: the container's duration, or,
+// when it gives none (APNG gives none), the end of its last frame.
+func (in *Ingester) duration(ctx context.Context, scratch string, input []string, timeout time.Duration, container string) (float64, error) {
+	if d, err := strconv.ParseFloat(container, 64); err == nil && d > 0 {
+		return d, nil
+	}
+	raw, err := in.run(ctx, scratch, timeout, append(append([]string{in.cfg.FFprobe, "-v", "error", "-select_streams", "v:0"}, inputOnly(input)...),
+		"-show_entries", "packet=pts_time,duration_time", "-of", "csv=p=0")...)
+	if err != nil {
+		return 0, err
+	}
+	end := 0.0
+	for _, line := range strings.Split(string(raw), "\n") {
+		pts, dur, _ := strings.Cut(strings.TrimSpace(line), ",")
+		start, err1 := strconv.ParseFloat(pts, 64)
+		length, _ := strconv.ParseFloat(dur, 64)
+		if err1 == nil && start+length > end {
+			end = start + length
+		}
+	}
+	if end <= 0 {
+		// Without a length the cap cannot be checked, and encoding could cut
+		// it short; a person decides.
+		return 0, &mediaError{check: "decoder", reason: "could not tell how long it runs"}
+	}
+	return end, nil
 }
 
 func inputOnly(input []string) []string {
@@ -465,15 +495,21 @@ func (in *Ingester) motion(ctx context.Context, scratch string, input []string, 
 	return "", refuse(CodeMediaTooLarge, "the clip stays over %d MB even re-encoded; send a shorter or smaller one", in.cfg.MotionBytes>>20)
 }
 
-// measure records the output's size in pixels.
+// measure records the output's size in pixels and, for a moving image, how
+// long the output actually runs.
 func (in *Ingester) measure(ctx context.Context, scratch, out string, timeout time.Duration, a *Attachment) error {
-	raw, err := in.run(ctx, scratch, timeout, in.cfg.FFprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json", "{work}/"+out)
+	raw, err := in.run(ctx, scratch, timeout, in.cfg.FFprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height:format=duration", "-of", "json", "{work}/"+out)
 	if err != nil {
 		return err
 	}
 	var p probe
 	if json.Unmarshal(raw, &p) == nil && len(p.Streams) > 0 {
 		a.Width, a.Height = p.Streams[0].Width, p.Streams[0].Height
+	}
+	if a.Kind == MediaMotion {
+		if d, err := strconv.ParseFloat(p.Format.Duration, 64); err == nil {
+			a.DurationMS = int(d * 1000)
+		}
 	}
 	return nil
 }

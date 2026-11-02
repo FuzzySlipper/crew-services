@@ -178,28 +178,37 @@ func (s *Service) OpenAcks(ctx context.Context, board string, limit int) ([]Deci
 			return nil, err
 		}
 	}
-	posts, err := s.store.KindPosts(ctx, board, KindDecision, maxPage)
-	if err != nil {
-		return nil, err
-	}
+	// Decisions are read a page at a time, newest first, until enough are
+	// still waiting or there are no more, so an old open decision is found
+	// however many settled ones came after it.
+	want, before := pageSize(limit), ""
 	out := []Decision{}
-	for _, p := range posts {
-		thread, err := s.thread(ctx, p.ThreadID)
-		if err != nil {
-			continue
-		}
-		d, err := s.decision(ctx, p, thread)
+	for {
+		posts, err := s.store.KindPosts(ctx, board, KindDecision, before, maxPage)
 		if err != nil {
 			return nil, err
 		}
-		if len(d.Waiting) > 0 {
-			out = append(out, d)
+		for _, p := range posts {
+			thread, err := s.thread(ctx, p.ThreadID)
+			if err != nil {
+				continue
+			}
+			d, err := s.decision(ctx, p, thread)
+			if err != nil {
+				return nil, err
+			}
+			if len(d.Waiting) > 0 {
+				out = append(out, d)
+				if len(out) == want {
+					return out, nil
+				}
+			}
 		}
-		if len(out) == pageSize(limit) {
-			break
+		if len(posts) < maxPage {
+			return out, nil
 		}
+		before = posts[len(posts)-1].ID
 	}
-	return out, nil
 }
 
 // Digest is a bounded, deterministic summary of one board; no model is
@@ -223,10 +232,10 @@ func (s *Service) Digest(ctx context.Context, board string) (Digest, error) {
 	if d.OpenQuestions, err = s.store.OpenQuestions(ctx, board, digestEach); err != nil {
 		return Digest{}, err
 	}
-	if d.Warnings, err = s.store.KindPosts(ctx, board, KindWarning, digestEach); err != nil {
+	if d.Warnings, err = s.store.KindPosts(ctx, board, KindWarning, "", digestEach); err != nil {
 		return Digest{}, err
 	}
-	decisions, err := s.store.KindPosts(ctx, board, KindDecision, digestEach)
+	decisions, err := s.store.KindPosts(ctx, board, KindDecision, "", digestEach)
 	if err != nil {
 		return Digest{}, err
 	}

@@ -541,12 +541,18 @@ func (n *Notifier) body(ctx context.Context, notice Notice) (string, error) {
 	for _, line := range strings.Split(quote, "\n") {
 		b.WriteString("> " + line + "\n")
 	}
-	fmt.Fprintf(&b, "\nRead it with: %s board read %s", n.command(ctx, notice.Recipient), post.ID)
+	// A seat's commands act as the seat, so the read moves the seat's cursor,
+	// the ack counts for the seat, and the answer comes from the seat.
+	command, as := n.command(ctx, notice.Recipient), ""
+	if notice.Recipient.Kind == AuthorSeat {
+		as = " --as " + notice.Recipient.Address
+	}
+	fmt.Fprintf(&b, "\nRead it with: %s board read %s%s", command, post.ID, as)
 	if post.Kind == KindDecision && notice.Reason == ReasonMention {
-		fmt.Fprintf(&b, "\nThis decision names you; acknowledge it with: %s board ack %s", n.command(ctx, notice.Recipient), post.ID)
+		fmt.Fprintf(&b, "\nThis decision names you; acknowledge it with: %s board ack %s%s", command, post.ID, as)
 	}
 	if notice.Reason != ReasonSubscription {
-		fmt.Fprintf(&b, "\nAnswer on the board with: %s board reply %s TEXT", n.command(ctx, notice.Recipient), post.ID)
+		fmt.Fprintf(&b, "\nAnswer on the board with: %s board reply %s%s TEXT", command, post.ID, as)
 	}
 	return b.String(), nil
 }

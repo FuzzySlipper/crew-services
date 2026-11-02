@@ -691,11 +691,11 @@ func (s *Store) ListAttachments(ctx context.Context, state string) ([]board.Atta
 	return out, rows.Err()
 }
 
-// KindPosts lists a board's visible posts of one kind, newest first ("" board
-// for every board).
-func (s *Store) KindPosts(ctx context.Context, name, kind string, limit int) ([]board.Post, error) {
+// KindPosts lists a board's visible posts of one kind, newest first, older
+// than beforeID when it is given ("" board for every board).
+func (s *Store) KindPosts(ctx context.Context, name, kind, beforeID string, limit int) ([]board.Post, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+postColumns+postFrom+` JOIN threads t ON t.id = p.thread_id
-		WHERE (? = '' OR t.board = ?) AND t.purged = 0 AND p.state = 'visible' AND p.kind = ? ORDER BY p.id DESC LIMIT ?`, name, name, kind, limit)
+		WHERE (? = '' OR t.board = ?) AND t.purged = 0 AND p.state = 'visible' AND p.kind = ? AND (? = '' OR p.id < ?) ORDER BY p.id DESC LIMIT ?`, name, name, kind, beforeID, beforeID, limit)
 	if err != nil {
 		return nil, err
 	}

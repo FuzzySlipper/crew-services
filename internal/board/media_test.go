@@ -98,6 +98,16 @@ func TestMovingImagesBecomeOneKindAndKeepAudio(t *testing.T) {
 	if err != nil || g.Kind != board.MediaMotion || g.Type != "video/mp4" || g.DurationMS < 500 || g.Width != 160 {
 		t.Fatalf("gif = %+v, %v", g, err)
 	}
+	// APNG carries no container duration; its length comes from its frames.
+	apng := fixture(t, "spin.apng", "-f", "lavfi", "-i", "testsrc=size=32x32:rate=5", "-t", "2", "-plays", "0", "-f", "apng")
+	ap, err := w.svc.Upload(w.ctx, "spin.png", apng)
+	if err != nil || ap.Kind != board.MediaMotion || ap.DurationMS < 1800 || ap.DurationMS > 2300 {
+		t.Fatalf("short apng = %+v, %v", ap, err)
+	}
+	long := fixture(t, "long.apng", "-f", "lavfi", "-i", "testsrc=size=16x16:rate=1", "-t", "65", "-plays", "0", "-f", "apng")
+	if _, err := w.svc.Upload(w.ctx, "long.png", long); board.CodeOf(err) != board.CodeMediaTooLarge || !strings.Contains(err.Error(), "runs 65 s") {
+		t.Fatalf("over-long apng = %v", err)
+	}
 	clip := fixture(t, "clip.mp4", "-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=24", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest")
 	c, err := w.svc.Upload(w.ctx, "clip.mp4", clip)
 	if err != nil || c.Kind != board.MediaMotion || c.Width != 1920 || c.Height != 1080 {

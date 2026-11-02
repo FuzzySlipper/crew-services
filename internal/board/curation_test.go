@@ -45,9 +45,9 @@ func TestRenameCloseAndArchive(t *testing.T) {
 	w := newWorld(t)
 	w.newBoard("rusty-engine")
 	first := w.thread(board.Actor{Person: "patch"}, "Shader cache", "start")
-	second := w.thread(board.Actor{Person: "patch"}, "Shader cache, again", "continue here")
-	renamed := w.threadChange(w.svc.Rename, board.ThreadRequest{Actor: board.Actor{Person: "lore"}, Thread: first.Thread.ID, Title: "Shader cache (round 1)"})
-	if renamed.Title != "Shader cache (round 1)" || len(renamed.Aliases) != 1 || renamed.Aliases[0] != "Shader cache" {
+	second := w.thread(board.Actor{Person: "patch"}, "Lighting pass", "continue here")
+	renamed := w.threadChange(w.svc.Rename, board.ThreadRequest{Actor: board.Actor{Person: "lore"}, Thread: first.Thread.ID, Title: "Material index"})
+	if renamed.Title != "Material index" || len(renamed.Aliases) != 1 || renamed.Aliases[0] != "Shader cache" {
 		t.Fatalf("renamed = %+v", renamed)
 	}
 	closed := w.threadChange(w.svc.Close, board.ThreadRequest{Actor: board.Actor{Person: "lore"}, Thread: first.Thread.ID, Redirect: second.Thread.ID})
@@ -75,9 +75,15 @@ func TestRenameCloseAndArchive(t *testing.T) {
 	if read, err := w.svc.ReadThread(w.ctx, first.Thread.ID, "", 10); err != nil || len(read.Posts) != 2 {
 		t.Fatalf("archived thread read = %+v, %v", read, err)
 	}
-	// The old title still finds the thread.
-	if found, _ := w.svc.Search(w.ctx, "rusty-engine", "Shader cache", 10); len(found) == 0 {
+	// Only the old title says "Shader cache", and it still finds the thread.
+	found, _ := w.svc.Search(w.ctx, "rusty-engine", "Shader cache", 10)
+	if len(found) == 0 {
 		t.Fatal("search by an old title found nothing")
+	}
+	for _, p := range found {
+		if p.ThreadID != first.Thread.ID {
+			t.Fatalf("search by the old title found another thread's post: %+v", p)
+		}
 	}
 }
 
@@ -198,4 +204,54 @@ func digestKey(d board.Digest) string {
 		parts = append(parts, t.ID)
 	}
 	return strings.Join(parts, ",")
+}
+
+// An open decision is listed however many settled decisions came after it.
+func TestOpenAcksFindsAnOldOpenDecision(t *testing.T) {
+	w := newWorld(t)
+	w.newBoard("rusty-engine")
+	opened := w.thread(board.Actor{Person: "patch"}, "Many decisions", "start")
+	decide := func(body string) string {
+		w.t.Helper()
+		w.tick()
+		out, _, err := w.svc.Reply(w.ctx, board.ReplyRequest{Actor: board.Actor{Person: "patch"}, OperationID: w.op(), Thread: opened.Thread.ID, Kind: "decision", Body: body})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.Post.ID
+	}
+	old := decide("The old one. @lore please acknowledge.")
+	for i := 0; i < 205; i++ {
+		decide("A decision that names nobody.")
+	}
+	waiting, err := w.svc.OpenAcks(w.ctx, "rusty-engine", 10)
+	if err != nil || len(waiting) != 1 || waiting[0].Post.ID != old {
+		t.Fatalf("open acks = %d, %v", len(waiting), err)
+	}
+}
+
+// A decision's notice to a seat gives the command that acknowledges it as the
+// seat, and that command works for whoever holds the seat.
+func TestASeatsDecisionNoticeCarriesAWorkingAckCommand(t *testing.T) {
+	w := newWorld(t)
+	w.newBoard("rusty-engine")
+	w.seat("take", "rusty-engine.reviewer", "crew-codex", w.x)
+	n := w.notifier(nil)
+	opened := w.thread(board.Actor{Person: "patch"}, "Policy", "start")
+	w.tick()
+	decision, _, err := w.svc.Reply(w.ctx, board.ReplyRequest{Actor: board.Actor{Person: "patch"}, OperationID: w.op(), Thread: opened.Thread.ID, Kind: "decision", Body: "Ship it. @rusty-engine.reviewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.Pass(w.ctx)
+	mail := w.mail("rusty-engine.reviewer")
+	command := "crew-codex board ack " + decision.Post.ID + " --as rusty-engine.reviewer"
+	if len(mail) != 1 || !strings.Contains(mail[0], command) || !strings.Contains(mail[0], "board read "+decision.Post.ID+" --as rusty-engine.reviewer") || !strings.Contains(mail[0], "board reply "+decision.Post.ID+" --as rusty-engine.reviewer TEXT") {
+		t.Fatalf("seat notice = %q", mail)
+	}
+	// What that command sends: the holder's session acting as the seat.
+	d, err := w.svc.Ack(w.ctx, board.AckRequest{Actor: board.Actor{SessionAddress: w.x, AsSeat: "rusty-engine.reviewer"}, Post: decision.Post.ID})
+	if err != nil || len(d.Waiting) != 0 {
+		t.Fatalf("ack as the generated command does = %+v, %v", d, err)
+	}
 }
