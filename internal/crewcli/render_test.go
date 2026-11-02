@@ -33,18 +33,18 @@ func TestRenderMessageFromServiceOriginHasNoReplyLine(t *testing.T) {
 }
 
 func TestRenderMailToASeatOffersAReplyAsTheSeat(t *testing.T) {
-	got := RenderMail(Mail{Sender: "s/abc", MessageID: "m4", Body: "review this", Recipient: "reviewer@crew"}, "crew-claude", nil)
-	if !strings.HasPrefix(got, "Crew message to your seat reviewer@crew from s/abc (crew message m4):") {
+	got := RenderMail(Mail{Sender: "s/abc", MessageID: "m4", Body: "review this", Recipient: "crew.reviewer"}, "crew-claude", nil)
+	if !strings.HasPrefix(got, "Crew message to your seat crew.reviewer from s/abc (crew message m4):") {
 		t.Fatalf("unexpected header: %q", got)
 	}
-	if !strings.HasSuffix(got, `To reply as the seat, run: crew-claude send --as reviewer@crew --to s/abc "your reply"`) {
+	if !strings.HasSuffix(got, `To reply as the seat, run: crew-claude send --as crew.reviewer --to s/abc "your reply"`) {
 		t.Fatalf("missing seat reply line: %q", got)
 	}
 }
 
 func TestRenderMailFromASeatNamesTheHolder(t *testing.T) {
-	got := RenderMail(Mail{Sender: "lead@crew", SenderSession: "s/xyz", MessageID: "m5", Body: "ship it"}, "crew-codex", &SessionInfo{Runtime: "claude-code", Cwd: "/w"})
-	if !strings.HasPrefix(got, "Crew message from the seat lead@crew, held by s/xyz, a Claude Code session in /w (crew message m5):") || !strings.HasSuffix(got, `crew-codex send --to lead@crew "your reply"`) {
+	got := RenderMail(Mail{Sender: "crew.lead", SenderSession: "s/xyz", MessageID: "m5", Body: "ship it"}, "crew-codex", &SessionInfo{Runtime: "claude-code", Cwd: "/w"})
+	if !strings.HasPrefix(got, "Crew message from the seat crew.lead, held by s/xyz, a Claude Code session in /w (crew message m5):") || !strings.HasSuffix(got, `crew-codex send --to crew.lead "your reply"`) {
 		t.Fatalf("unexpected text: %q", got)
 	}
 }
@@ -56,7 +56,7 @@ func TestSeatNoticeHasNoReplyLine(t *testing.T) {
 }
 
 func TestResolveTakesASeatAddressAsIs(t *testing.T) {
-	if got, err := Resolve("reviewer@crew", nil); err != nil || got != "reviewer@crew" {
+	if got, err := Resolve("crew.reviewer", nil); err != nil || got != "crew.reviewer" {
 		t.Fatalf("resolve = %q, %v", got, err)
 	}
 }

@@ -222,7 +222,7 @@ func seatMain(ctx context.Context, args []string, self, ownURL string, stdin io.
 	}
 	needSeat := func() bool {
 		if seat == "" {
-			fmt.Fprintf(stderr, "seat %s needs a seat address (name@scope)\n", command)
+			fmt.Fprintf(stderr, "seat %s needs a seat address (scope.name)\n", command)
 			return false
 		}
 		return true

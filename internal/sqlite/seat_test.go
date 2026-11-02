@@ -119,7 +119,7 @@ func detail(err error) any {
 
 func TestSeatTakeIsRefusedWhileHeldAndNamesTheHolder(t *testing.T) {
 	w := newSeatWorld(t)
-	request := w.req(w.claude, w.a, "lead@rusty-engine")
+	request := w.req(w.claude, w.a, "rusty-engine.lead")
 	taken, err := w.svc.TakeSeat(w.ctx, request)
 	if err != nil || taken.Holding == nil || taken.Holding.HolderAddress != w.a.Address || taken.Holding.HoldingID != 1 || taken.Seat.State != store.SeatHeld || taken.Seat.Generation != 1 {
 		t.Fatalf("take = %#v, %v", taken, err)
@@ -128,7 +128,7 @@ func TestSeatTakeIsRefusedWhileHeldAndNamesTheHolder(t *testing.T) {
 	if err != nil || !replayed.Replayed || replayed.Holding.HoldingID != 1 {
 		t.Fatalf("exact retry = %#v, %v", replayed, err)
 	}
-	_, err = w.take(w.codex, w.b, "lead@rusty-engine")
+	_, err = w.take(w.codex, w.b, "rusty-engine.lead")
 	if !hasCode(err, service.CodeSeatHeld) {
 		t.Fatalf("second take error = %v, want seat_held", err)
 	}
@@ -136,41 +136,48 @@ func TestSeatTakeIsRefusedWhileHeldAndNamesTheHolder(t *testing.T) {
 	if holder.HolderAddress != w.a.Address || holder.HolderAdapterID != "crew-claude" {
 		t.Fatalf("seat_held detail = %#v", detail(err))
 	}
-	if _, err := w.take(w.claude, w.a, "lead@rusty-engine"); !hasCode(err, service.CodeSeatHeld) {
+	if _, err := w.take(w.claude, w.a, "rusty-engine.lead"); !hasCode(err, service.CodeSeatHeld) {
 		t.Fatalf("holder taking again error = %v, want seat_held", err)
 	}
 	// One session may hold several seats.
-	if _, err := w.take(w.claude, w.a, "reviewer@rusty-engine"); err != nil {
+	if _, err := w.take(w.claude, w.a, "rusty-engine.reviewer"); err != nil {
 		t.Fatal(err)
 	}
 	mine, err := w.svc.ListSeats(w.ctx, store.SeatFilter{Holder: w.a.Address})
-	if err != nil || len(mine) != 2 || mine[0].Address != "lead@rusty-engine" || mine[1].Address != "reviewer@rusty-engine" {
+	if err != nil || len(mine) != 2 || mine[0].Address != "rusty-engine.lead" || mine[1].Address != "rusty-engine.reviewer" {
 		t.Fatalf("seats held by a = %#v, %v", mine, err)
 	}
-	if _, err := w.take(w.claude, w.a, "Lead@rusty"); !hasCode(err, service.CodeInvalidSeatAddress) {
-		t.Fatalf("malformed seat error = %v", err)
+	for _, malformed := range []string{"rusty.Lead", "lead@rusty-engine", "rusty.engine.lead", "lead"} {
+		if _, err := w.take(w.claude, w.a, malformed); !hasCode(err, service.CodeInvalidSeatAddress) {
+			t.Fatalf("malformed seat %q error = %v", malformed, err)
+		}
 	}
-	if _, err := w.svc.PutBinding(w.ctx, service.PutBindingRequest{Address: "lead@rusty-engine", ActorAdapterID: w.claude.AdapterID, LeaseToken: w.claude.LeaseToken, AdapterID: w.claude.AdapterID, TargetRef: "x"}); !hasCode(err, service.CodeInvalid) {
+	// A read looks up the exact address, so a seat in the retired name@scope
+	// form stays readable; one that never existed is seat_not_found.
+	if _, err := w.svc.GetSeat(w.ctx, "lead@rusty-engine"); !hasCode(err, service.CodeSeatNotFound) {
+		t.Fatalf("reading an unknown old-form seat error = %v", err)
+	}
+	if _, err := w.svc.PutBinding(w.ctx, service.PutBindingRequest{Address: "rusty-engine.lead", ActorAdapterID: w.claude.AdapterID, LeaseToken: w.claude.LeaseToken, AdapterID: w.claude.AdapterID, TargetRef: "x"}); !hasCode(err, service.CodeInvalid) {
 		t.Fatalf("binding a seat address error = %v", err)
 	}
 }
 
 func TestRelieveRecordsTakeoverNotifiesOldHolderAndFencesSendingAsSeat(t *testing.T) {
 	w := newSeatWorld(t)
-	if _, err := w.take(w.claude, w.a, "lead@rusty-engine"); err != nil {
+	if _, err := w.take(w.claude, w.a, "rusty-engine.lead"); err != nil {
 		t.Fatal(err)
 	}
-	sent, err := w.send(w.claude, w.a, w.b.Address, "lead@rusty-engine", "from the lead", "")
-	if err != nil || sent.Message.SenderAddress != "lead@rusty-engine" || sent.Message.SenderSession != w.a.Address || sent.Message.SenderHoldingID != 1 {
+	sent, err := w.send(w.claude, w.a, w.b.Address, "rusty-engine.lead", "from the lead", "")
+	if err != nil || sent.Message.SenderAddress != "rusty-engine.lead" || sent.Message.SenderSession != w.a.Address || sent.Message.SenderHoldingID != 1 {
 		t.Fatalf("send as seat = %#v, %v", sent.Message, err)
 	}
-	if _, err := w.send(w.codex, w.b, w.a.Address, "lead@rusty-engine", "not mine", ""); !hasCode(err, service.CodeNotHolder) {
+	if _, err := w.send(w.codex, w.b, w.a.Address, "rusty-engine.lead", "not mine", ""); !hasCode(err, service.CodeNotHolder) {
 		t.Fatalf("non-holder sending as seat error = %v, want not_holder", err)
 	}
-	if _, err := w.svc.RelieveSeat(w.ctx, w.req(w.codex, w.b, "reviewer@rusty-engine")); !hasCode(err, service.CodeSeatNotFound) {
+	if _, err := w.svc.RelieveSeat(w.ctx, w.req(w.codex, w.b, "rusty-engine.reviewer")); !hasCode(err, service.CodeSeatNotFound) {
 		t.Fatalf("relieve missing seat error = %v", err)
 	}
-	request := w.req(w.codex, w.b, "lead@rusty-engine")
+	request := w.req(w.codex, w.b, "rusty-engine.lead")
 	request.Note = "taking over for the evening"
 	relieved, err := w.svc.RelieveSeat(w.ctx, request)
 	if err != nil {
@@ -184,25 +191,25 @@ func TestRelieveRecordsTakeoverNotifiesOldHolderAndFencesSendingAsSeat(t *testin
 		t.Fatalf("relieved holding = %#v", old)
 	}
 	notice, err := w.svc.GetMessage(w.ctx, relieved.NoticeMessageID)
-	if err != nil || notice.SenderAddress != store.SeatNoticeSender || notice.RecipientAddress != w.a.Address || !contains(notice.Body, "You no longer hold the seat lead@rusty-engine") || !contains(notice.Body, "taking over for the evening") {
+	if err != nil || notice.SenderAddress != store.SeatNoticeSender || notice.RecipientAddress != w.a.Address || !contains(notice.Body, "You no longer hold the seat rusty-engine.lead") || !contains(notice.Body, "taking over for the evening") {
 		t.Fatalf("relief notice = %#v, %v", notice, err)
 	}
-	if _, err := w.send(w.claude, w.a, w.b.Address, "lead@rusty-engine", "still the lead?", ""); !hasCode(err, service.CodeNotHolder) {
+	if _, err := w.send(w.claude, w.a, w.b.Address, "rusty-engine.lead", "still the lead?", ""); !hasCode(err, service.CodeNotHolder) {
 		t.Fatalf("relieved session sending as seat error = %v, want not_holder", err)
 	}
-	if _, err := w.send(w.codex, w.b, w.a.Address, "lead@rusty-engine", "the new lead", ""); err != nil {
+	if _, err := w.send(w.codex, w.b, w.a.Address, "rusty-engine.lead", "the new lead", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.svc.RelieveSeat(w.ctx, w.req(w.codex, w.b, "lead@rusty-engine")); !hasCode(err, service.CodeSeatHeld) {
+	if _, err := w.svc.RelieveSeat(w.ctx, w.req(w.codex, w.b, "rusty-engine.lead")); !hasCode(err, service.CodeSeatHeld) {
 		t.Fatalf("relieving yourself error = %v", err)
 	}
-	if _, err := w.svc.LeaveSeat(w.ctx, w.req(w.codex, w.b, "lead@rusty-engine")); err != nil {
+	if _, err := w.svc.LeaveSeat(w.ctx, w.req(w.codex, w.b, "rusty-engine.lead")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.svc.RelieveSeat(w.ctx, w.req(w.claude, w.a, "lead@rusty-engine")); !hasCode(err, service.CodeSeatVacant) {
+	if _, err := w.svc.RelieveSeat(w.ctx, w.req(w.claude, w.a, "rusty-engine.lead")); !hasCode(err, service.CodeSeatVacant) {
 		t.Fatalf("relieve vacant seat error = %v, want seat_vacant", err)
 	}
-	holdings, err := w.svc.ListSeatHoldings(w.ctx, "lead@rusty-engine")
+	holdings, err := w.svc.ListSeatHoldings(w.ctx, "rusty-engine.lead")
 	if err != nil || len(holdings) != 2 || holdings[0].EndReason != store.HoldingLeftWithoutHandoff || holdings[1].EndReason != store.HoldingRelieved {
 		t.Fatalf("holdings = %#v, %v", holdings, err)
 	}
@@ -210,44 +217,44 @@ func TestRelieveRecordsTakeoverNotifiesOldHolderAndFencesSendingAsSeat(t *testin
 
 func TestSeatMailWaitsForTheNextHolderAndCarriesOverAHolderChange(t *testing.T) {
 	w := newSeatWorld(t)
-	if _, err := w.send(w.claude, w.c, "lead@rusty-engine", "", "too early", ""); !hasCode(err, service.CodeSeatNotFound) {
+	if _, err := w.send(w.claude, w.c, "rusty-engine.lead", "", "too early", ""); !hasCode(err, service.CodeSeatNotFound) {
 		t.Fatalf("mail to a seat that was never created error = %v, want seat_not_found", err)
 	}
-	if _, err := w.setText(w.claude, w.c, "lead@rusty-engine", store.SeatTextCharter, "Answer for the engine roadmap.", nil); err != nil {
+	if _, err := w.setText(w.claude, w.c, "rusty-engine.lead", store.SeatTextCharter, "Answer for the engine roadmap.", nil); err != nil {
 		t.Fatal(err)
 	}
-	first, err := w.send(w.claude, w.c, "lead@rusty-engine", "", "first", "")
+	first, err := w.send(w.claude, w.c, "rusty-engine.lead", "", "first", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := w.send(w.claude, w.c, "lead@rusty-engine", "", "second", "")
+	second, err := w.send(w.claude, w.c, "rusty-engine.lead", "", "second", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Delivery.RecipientAddress != "lead@rusty-engine" || first.Delivery.RecipientGeneration != 1 {
+	if first.Delivery.RecipientAddress != "rusty-engine.lead" || first.Delivery.RecipientGeneration != 1 {
 		t.Fatalf("seat mail delivery = %#v", first.Delivery)
 	}
-	vacant, err := w.claim(w.claude, "lead@rusty-engine", 1)
+	vacant, err := w.claim(w.claude, "rusty-engine.lead", 1)
 	if err != nil || vacant.Claimed || vacant.Reason != "seat_vacant" {
 		t.Fatalf("claim on vacant seat = %#v, %v", vacant, err)
 	}
 	if settled, err := w.svc.SettlePending(w.ctx); err != nil || len(settled) != 0 {
 		t.Fatalf("settling vacant seat mail = %#v, %v", settled, err)
 	}
-	taken, err := w.take(w.claude, w.a, "lead@rusty-engine")
+	taken, err := w.take(w.claude, w.a, "rusty-engine.lead")
 	if err != nil || taken.Seat.QueuedMail != 2 || taken.Seat.Charter == nil || taken.Seat.Charter.Body != "Answer for the engine roadmap." {
 		t.Fatalf("take = %#v, %v", taken.Seat, err)
 	}
-	if _, err := w.claim(w.codex, "lead@rusty-engine", 1); !hasCode(err, service.CodeAdapterMismatch) {
+	if _, err := w.claim(w.codex, "rusty-engine.lead", 1); !hasCode(err, service.CodeAdapterMismatch) {
 		t.Fatalf("claim by an adapter that does not drive the holder error = %v", err)
 	}
-	claim, err := w.claim(w.claude, "lead@rusty-engine", 1)
+	claim, err := w.claim(w.claude, "rusty-engine.lead", 1)
 	if err != nil || !claim.Claimed || claim.Delivery.DeliveryID != first.Delivery.DeliveryID || claim.HolderAddress != w.a.Address || claim.Delivery.ClaimHoldingID != 1 {
 		t.Fatalf("holder claim = %#v, %v", claim, err)
 	}
 	// The seat changes hands before dispatch: the claim goes back to the queue
 	// and the old holder's adapter can no longer dispatch it.
-	if _, err := w.svc.RelieveSeat(w.ctx, w.req(w.codex, w.b, "lead@rusty-engine")); err != nil {
+	if _, err := w.svc.RelieveSeat(w.ctx, w.req(w.codex, w.b, "rusty-engine.lead")); err != nil {
 		t.Fatal(err)
 	}
 	requeued, err := w.svc.GetDelivery(w.ctx, first.Delivery.DeliveryID)
@@ -258,7 +265,7 @@ func TestSeatMailWaitsForTheNextHolderAndCarriesOverAHolderChange(t *testing.T) 
 		t.Fatalf("old holder dispatch error = %v, want claim_fenced", err)
 	}
 	for i, want := range []service.SubmitMessageResult{first, second} {
-		next, err := w.claim(w.codex, "lead@rusty-engine", 1)
+		next, err := w.claim(w.codex, "rusty-engine.lead", 1)
 		if err != nil || !next.Claimed || next.Delivery.DeliveryID != want.Delivery.DeliveryID || next.HolderAddress != w.b.Address || next.Delivery.ClaimHoldingID != 2 {
 			t.Fatalf("new holder claim %d = %#v, %v", i, next, err)
 		}
@@ -270,21 +277,21 @@ func TestSeatMailWaitsForTheNextHolderAndCarriesOverAHolderChange(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	if seat := w.seat("lead@rusty-engine"); seat.QueuedMail != 0 {
+	if seat := w.seat("rusty-engine.lead"); seat.QueuedMail != 0 {
 		t.Fatalf("queued mail after delivery = %d", seat.QueuedMail)
 	}
 }
 
 func TestRetiringASeatFailsItsQueuedMailAndRecreatesWithANewGeneration(t *testing.T) {
 	w := newSeatWorld(t)
-	if _, err := w.take(w.claude, w.a, "skeptic@rt-12"); err != nil {
+	if _, err := w.take(w.claude, w.a, "rt-12.skeptic"); err != nil {
 		t.Fatal(err)
 	}
-	queued, err := w.send(w.codex, w.b, "skeptic@rt-12", "", "doubt this", "")
+	queued, err := w.send(w.codex, w.b, "rt-12.skeptic", "", "doubt this", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	retired, err := w.svc.RetireSeat(w.ctx, w.req(w.codex, w.b, "skeptic@rt-12"))
+	retired, err := w.svc.RetireSeat(w.ctx, w.req(w.codex, w.b, "rt-12.skeptic"))
 	if err != nil || retired.Seat.State != store.SeatRetired || retired.PreviousHolding == nil || retired.PreviousHolding.EndReason != store.HoldingRetired {
 		t.Fatalf("retire = %#v, %v", retired, err)
 	}
@@ -292,10 +299,10 @@ func TestRetiringASeatFailsItsQueuedMailAndRecreatesWithANewGeneration(t *testin
 	if err != nil || failed.State != "failed" || failed.TerminalReason != "seat_retired" {
 		t.Fatalf("queued mail after retire = %#v, %v", failed, err)
 	}
-	if _, err := w.send(w.codex, w.b, "skeptic@rt-12", "", "anyone?", ""); !hasCode(err, service.CodeSeatRetired) {
+	if _, err := w.send(w.codex, w.b, "rt-12.skeptic", "", "anyone?", ""); !hasCode(err, service.CodeSeatRetired) {
 		t.Fatalf("mail to retired seat error = %v, want seat_retired", err)
 	}
-	again, err := w.take(w.codex, w.b, "skeptic@rt-12")
+	again, err := w.take(w.codex, w.b, "rt-12.skeptic")
 	if err != nil || again.Seat.Generation != 2 || again.Holding.HoldingID != 2 || again.Seat.CharterVersion != 0 {
 		t.Fatalf("take after retire = %#v, %v", again, err)
 	}
@@ -303,10 +310,10 @@ func TestRetiringASeatFailsItsQueuedMailAndRecreatesWithANewGeneration(t *testin
 
 func TestAStaleHoldingStaysHeldKeepsItsMailAndIsRelievedNormally(t *testing.T) {
 	w := newSeatWorld(t)
-	if _, err := w.take(w.claude, w.a, "lead@rusty-engine"); err != nil {
+	if _, err := w.take(w.claude, w.a, "rusty-engine.lead"); err != nil {
 		t.Fatal(err)
 	}
-	mail, err := w.send(w.codex, w.b, "lead@rusty-engine", "", "are you there?", "")
+	mail, err := w.send(w.codex, w.b, "rusty-engine.lead", "", "are you there?", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,10 +333,10 @@ func TestAStaleHoldingStaysHeldKeepsItsMailAndIsRelievedNormally(t *testing.T) {
 	if delivery, err := w.svc.GetDelivery(w.ctx, mail.Delivery.DeliveryID); err != nil || delivery.State != "queued" {
 		t.Fatalf("mail to a stale seat = %#v, %v", delivery, err)
 	}
-	if _, err := w.take(w.codex, w.b, "lead@rusty-engine"); !hasCode(err, service.CodeSeatHeld) {
+	if _, err := w.take(w.codex, w.b, "rusty-engine.lead"); !hasCode(err, service.CodeSeatHeld) {
 		t.Fatalf("take of a stale seat error = %v, want seat_held", err)
 	}
-	relieved, err := w.svc.RelieveSeat(w.ctx, w.req(w.codex, w.b, "lead@rusty-engine"))
+	relieved, err := w.svc.RelieveSeat(w.ctx, w.req(w.codex, w.b, "rusty-engine.lead"))
 	if err != nil || relieved.Seat.State != store.SeatHeld || relieved.Seat.QueuedMail != 1 {
 		t.Fatalf("relieve stale = %#v, %v", relieved.Seat, err)
 	}
@@ -337,25 +344,25 @@ func TestAStaleHoldingStaysHeldKeepsItsMailAndIsRelievedNormally(t *testing.T) {
 
 func TestSeatTextsAreSetNotAppendedWithProvenancePruningAndNotices(t *testing.T) {
 	w := newSeatWorld(t, service.WithSeatTextVersions(3))
-	if _, err := w.take(w.claude, w.a, "lead@rusty-engine"); err != nil {
+	if _, err := w.take(w.claude, w.a, "rusty-engine.lead"); err != nil {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 5; i++ {
-		if _, err := w.setText(w.claude, w.a, "lead@rusty-engine", store.SeatTextCharter, fmt.Sprintf("charter v%d\nsecond line", i), nil); err != nil {
+		if _, err := w.setText(w.claude, w.a, "rusty-engine.lead", store.SeatTextCharter, fmt.Sprintf("charter v%d\nsecond line", i), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
-	current, err := w.svc.GetSeatText(w.ctx, "lead@rusty-engine", store.SeatTextCharter, 0)
-	if err != nil || current.Version != 5 || current.SetByAddress != w.a.Address || !reflect.DeepEqual(current.SetBySeats, []string{"lead@rusty-engine"}) || current.HoldingID != 1 {
+	current, err := w.svc.GetSeatText(w.ctx, "rusty-engine.lead", store.SeatTextCharter, 0)
+	if err != nil || current.Version != 5 || current.SetByAddress != w.a.Address || !reflect.DeepEqual(current.SetBySeats, []string{"rusty-engine.lead"}) || current.HoldingID != 1 {
 		t.Fatalf("current charter = %#v, %v", current, err)
 	}
-	if _, err := w.svc.GetSeatText(w.ctx, "lead@rusty-engine", store.SeatTextCharter, 2); !hasCode(err, service.CodeVersionPruned) {
+	if _, err := w.svc.GetSeatText(w.ctx, "rusty-engine.lead", store.SeatTextCharter, 2); !hasCode(err, service.CodeVersionPruned) {
 		t.Fatalf("pruned version error = %v, want version_pruned", err)
 	}
-	if _, err := w.svc.GetSeatText(w.ctx, "lead@rusty-engine", store.SeatTextCharter, 9); !hasCode(err, service.CodeVersionNotFound) {
+	if _, err := w.svc.GetSeatText(w.ctx, "rusty-engine.lead", store.SeatTextCharter, 9); !hasCode(err, service.CodeVersionNotFound) {
 		t.Fatalf("unissued version error = %v, want version_not_found", err)
 	}
-	versions, err := w.svc.ListSeatTexts(w.ctx, "lead@rusty-engine", store.SeatTextCharter)
+	versions, err := w.svc.ListSeatTexts(w.ctx, "rusty-engine.lead", store.SeatTextCharter)
 	if err != nil || len(versions) != 3 || versions[0].Version != 5 || versions[2].Version != 3 || versions[0].Body != "" || versions[0].Length == 0 {
 		t.Fatalf("versions = %#v, %v", versions, err)
 	}
@@ -363,12 +370,12 @@ func TestSeatTextsAreSetNotAppendedWithProvenancePruningAndNotices(t *testing.T)
 		t.Fatalf("listing = %#v, %v", seats, err)
 	}
 	stale := int64(4)
-	_, err = w.setText(w.claude, w.a, "lead@rusty-engine", store.SeatTextCharter, "lost update", &stale)
+	_, err = w.setText(w.claude, w.a, "rusty-engine.lead", store.SeatTextCharter, "lost update", &stale)
 	if !hasCode(err, service.CodeVersionConflict) || detail(err).(map[string]any)["current_version"] != int64(5) {
 		t.Fatalf("stale expected_version error = %v %#v", err, detail(err))
 	}
 	// Anyone may rewrite a charter; the holder is told.
-	rewritten, err := w.setText(w.codex, w.b, "lead@rusty-engine", store.SeatTextCharter, "dictator supreme", nil)
+	rewritten, err := w.setText(w.codex, w.b, "rusty-engine.lead", store.SeatTextCharter, "dictator supreme", nil)
 	if err != nil || rewritten.NoticeMessageID == "" || rewritten.Text.Version != 6 || rewritten.Text.SetByAdapterID != "crew-codex" {
 		t.Fatalf("rewrite by another session = %#v, %v", rewritten, err)
 	}
@@ -377,64 +384,64 @@ func TestSeatTextsAreSetNotAppendedWithProvenancePruningAndNotices(t *testing.T)
 		t.Fatalf("charter notice = %#v, %v", notice, err)
 	}
 	// Leaving records whether a handoff was written during the holding.
-	if _, err := w.svc.LeaveSeat(w.ctx, w.req(w.claude, w.c, "lead@rusty-engine")); !hasCode(err, service.CodeNotHolder) {
+	if _, err := w.svc.LeaveSeat(w.ctx, w.req(w.claude, w.c, "rusty-engine.lead")); !hasCode(err, service.CodeNotHolder) {
 		t.Fatalf("leave by non-holder error = %v", err)
 	}
-	if _, err := w.setText(w.claude, w.a, "lead@rusty-engine", store.SeatTextHandoff, "Open: the release branch.", nil); err != nil {
+	if _, err := w.setText(w.claude, w.a, "rusty-engine.lead", store.SeatTextHandoff, "Open: the release branch.", nil); err != nil {
 		t.Fatal(err)
 	}
-	left, err := w.svc.LeaveSeat(w.ctx, w.req(w.claude, w.a, "lead@rusty-engine"))
+	left, err := w.svc.LeaveSeat(w.ctx, w.req(w.claude, w.a, "rusty-engine.lead"))
 	if err != nil || left.PreviousHolding.EndReason != store.HoldingLeft || left.Seat.State != store.SeatVacant {
 		t.Fatalf("leave with handoff = %#v, %v", left, err)
 	}
-	next, err := w.take(w.codex, w.b, "lead@rusty-engine")
+	next, err := w.take(w.codex, w.b, "rusty-engine.lead")
 	if err != nil || next.Seat.Handoff == nil || next.Seat.Handoff.Body != "Open: the release branch." || next.PreviousHolding.HolderAddress != w.a.Address {
 		t.Fatalf("take after handoff = %#v, %v", next, err)
 	}
 	carried := next.Seat.Handoff.Body + "\nAlso: CI is red."
 	version := next.Seat.HandoffVersion
-	if _, err := w.setText(w.codex, w.b, "lead@rusty-engine", store.SeatTextHandoff, carried, &version); err != nil {
+	if _, err := w.setText(w.codex, w.b, "rusty-engine.lead", store.SeatTextHandoff, carried, &version); err != nil {
 		t.Fatal(err)
 	}
-	if text, err := w.svc.GetSeatText(w.ctx, "lead@rusty-engine", store.SeatTextHandoff, 0); err != nil || text.Body != carried || text.Version != 2 {
+	if text, err := w.svc.GetSeatText(w.ctx, "rusty-engine.lead", store.SeatTextHandoff, 0); err != nil || text.Body != carried || text.Version != 2 {
 		t.Fatalf("carried-forward handoff = %#v, %v", text, err)
 	}
 }
 
 func TestRepliesToASeatGoToTheSeat(t *testing.T) {
 	w := newSeatWorld(t)
-	if _, err := w.take(w.claude, w.a, "lead@rusty-engine"); err != nil {
+	if _, err := w.take(w.claude, w.a, "rusty-engine.lead"); err != nil {
 		t.Fatal(err)
 	}
-	question, err := w.send(w.claude, w.a, w.b.Address, "lead@rusty-engine", "status?", "")
+	question, err := w.send(w.claude, w.a, w.b.Address, "rusty-engine.lead", "status?", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := w.send(w.codex, w.b, w.a.Address, "", "to the session", question.Message.MessageID); !hasCode(err, service.CodeReplyRecipientMismatch) {
 		t.Fatalf("reply to the sending session error = %v, want reply_recipient_mismatch", err)
 	}
-	answer, err := w.send(w.codex, w.b, "lead@rusty-engine", "", "green", question.Message.MessageID)
-	if err != nil || answer.Message.RecipientAddress != "lead@rusty-engine" {
+	answer, err := w.send(w.codex, w.b, "rusty-engine.lead", "", "green", question.Message.MessageID)
+	if err != nil || answer.Message.RecipientAddress != "rusty-engine.lead" {
 		t.Fatalf("reply to the seat = %#v, %v", answer, err)
 	}
 	// The next holder answers mail addressed to the seat as the seat.
-	if _, err := w.svc.RelieveSeat(w.ctx, w.req(w.claude, w.c, "lead@rusty-engine")); err != nil {
+	if _, err := w.svc.RelieveSeat(w.ctx, w.req(w.claude, w.c, "rusty-engine.lead")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.send(w.claude, w.c, w.b.Address, "lead@rusty-engine", "thanks", answer.Message.MessageID); err != nil {
+	if _, err := w.send(w.claude, w.c, w.b.Address, "rusty-engine.lead", "thanks", answer.Message.MessageID); err != nil {
 		t.Fatalf("new holder replying as the seat: %v", err)
 	}
 }
 
 func TestSeatReadsNeverClaimWakeOrDeliver(t *testing.T) {
 	w := newSeatWorld(t)
-	if _, err := w.take(w.claude, w.a, "lead@rusty-engine"); err != nil {
+	if _, err := w.take(w.claude, w.a, "rusty-engine.lead"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.setText(w.claude, w.a, "lead@rusty-engine", store.SeatTextCharter, "charter", nil); err != nil {
+	if _, err := w.setText(w.claude, w.a, "rusty-engine.lead", store.SeatTextCharter, "charter", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.send(w.codex, w.b, "lead@rusty-engine", "", "queued", ""); err != nil {
+	if _, err := w.send(w.codex, w.b, "rusty-engine.lead", "", "queued", ""); err != nil {
 		t.Fatal(err)
 	}
 	before, err := w.svc.ListDeliveries(w.ctx)
@@ -445,14 +452,14 @@ func TestSeatReadsNeverClaimWakeOrDeliver(t *testing.T) {
 		if _, err := w.svc.ListSeats(w.ctx, store.SeatFilter{}); err != nil {
 			t.Fatal(err)
 		}
-		w.seat("lead@rusty-engine")
-		if _, err := w.svc.GetSeatText(w.ctx, "lead@rusty-engine", store.SeatTextCharter, 0); err != nil {
+		w.seat("rusty-engine.lead")
+		if _, err := w.svc.GetSeatText(w.ctx, "rusty-engine.lead", store.SeatTextCharter, 0); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := w.svc.ListSeatTexts(w.ctx, "lead@rusty-engine", store.SeatTextCharter); err != nil {
+		if _, err := w.svc.ListSeatTexts(w.ctx, "rusty-engine.lead", store.SeatTextCharter); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := w.svc.ListSeatHoldings(w.ctx, "lead@rusty-engine"); err != nil {
+		if _, err := w.svc.ListSeatHoldings(w.ctx, "rusty-engine.lead"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -483,13 +490,13 @@ func TestSeatsSurviveRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.TakeSeat(ctx, service.SeatRequest{AdapterID: lease.AdapterID, LeaseToken: lease.LeaseToken, OperationID: "take", SessionAddress: session.Address, SeatAddress: "lead@x"}); err != nil {
+	if _, err := svc.TakeSeat(ctx, service.SeatRequest{AdapterID: lease.AdapterID, LeaseToken: lease.LeaseToken, OperationID: "take", SessionAddress: session.Address, SeatAddress: "x.lead"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = first.Close()
 	second, svc := open()
 	defer second.Close()
-	seat, err := svc.GetSeat(ctx, "lead@x")
+	seat, err := svc.GetSeat(ctx, "x.lead")
 	if err != nil || seat.Holding == nil || seat.Holding.HolderAddress != session.Address {
 		t.Fatalf("seat after restart = %#v, %v", seat, err)
 	}

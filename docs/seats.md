@@ -55,13 +55,19 @@ conversation and shows who answers for something.
 
 ## Seat address
 
-A seat address has the form `name@scope`. Both parts are lowercase letters,
-digits and hyphens. The `@` form is reserved for seats and is never used for
-another kind of address.
+A seat address has the form `scope.name`, for example
+`rusty-engine.reviewer`. Both parts are lowercase letters, digits and hyphens,
+and there is exactly one dot. A bare address of that shape is reserved for
+seats and is never used for another kind of address.
+
+Seats used `name@scope` until 2026-11-02. They changed so that `@` stays free
+for a site, as in crew-board's `@rusty-engine.reviewer@interlake` mentions.
+Only retired demo seats ever had the old form. They stay readable by their
+exact address, and the fabric refuses new seats in that form.
 
 The scope is an opaque namespace. The fabric does not know what a project or a
-roundtable is and enforces no scoping rules: `lead@rusty-engine`,
-`reviewer@crew-services` and `skeptic@rt-12` are just three seats. There are no
+roundtable is and enforces no scoping rules: `rusty-engine.lead`,
+`crew-services.reviewer` and `rt-12.skeptic` are just three seats. There are no
 global seats without a scope, and there is no hierarchy between scopes.
 
 Names may be functional or playful. A playful name works as a prompt (a
@@ -75,7 +81,7 @@ duties.
 
 | Field | Meaning |
 | --- | --- |
-| `address` | `name@scope`. |
+| `address` | `scope.name`. |
 | `generation` | Advances only when the seat is retired and created again. A change of holder never advances it. |
 | `created_at`, `created_by` | First write that created the seat (see *Creating a seat*). |
 | `holding` | The current holding, or none when the seat is vacant. |
@@ -98,7 +104,7 @@ after it ends.
 | `note` | Optional free text given with take, leave or relieve. |
 
 A session may hold any number of seats at once. A session that is both
-`reviewer@crew-services` and `lead@crew-services` holds two holdings.
+`crew-services.reviewer` and `crew-services.lead` holds two holdings.
 
 ### Charter and handoff texts
 
@@ -228,8 +234,8 @@ sent it, so a thread keeps going across handoffs. Rounds match a reply that
 arrives from the seat they were addressed to.
 
 Drivers render seat provenance in the delivered text, for example
-`from s/5b69… (crew-claude) as lead@rusty-engine` and, for seat mail,
-`to lead@rusty-engine (your seat)`.
+`from s/5b69… (crew-claude) as rusty-engine.lead` and, for seat mail,
+`to rusty-engine.lead (your seat)`.
 
 ## Stale holdings
 
@@ -266,8 +272,8 @@ longer holds the seat and that sending as it will be refused.
 | `not_holder` | leave, or sending as a seat, by a session that does not hold it |
 | `seat_not_found` | sending to, or reading, a seat that was never created |
 | `seat_retired` | queued seat mail failed by retirement |
-| `invalid_seat_address` | malformed `name@scope` |
-| `invalid_request` | a binding write to a `name@scope` address, or an adapter ID starting with `fabric/` (reserved for service notices) |
+| `invalid_seat_address` | a seat write with a malformed `scope.name` |
+| `invalid_request` | a binding write to a `scope.name` address, or an adapter ID starting with `fabric/` (reserved for service notices) |
 | `version_conflict` | set with a stale `expected_version`; includes the current version |
 | `version_pruned` | read of a version removed by retention |
 | `version_not_found` | read of a version number that was never issued |
@@ -364,7 +370,7 @@ necessary. They do not inline charter text yet, only the pointer to
 Agreed with Patch on 2026-10-31.
 
 - **Name:** "seat", not "role" (see *Why "seat" and not "role"*).
-- **Scope:** an opaque namespace in `name@scope`; the fabric has no scoping
+- **Scope:** an opaque namespace in `scope.name`; the fabric has no scoping
   rules and no global seats.
 - **Several seats per session:** allowed, with no limit.
 - **Handoff location:** in the fabric, beside the charter, not in Den. Seats
@@ -382,6 +388,10 @@ Agreed with Patch on 2026-10-31.
   held until someone relieves it.
 - **Leaving without a handoff** is allowed and recorded as
   `left_without_handoff`.
+- **Address form** (2026-11-02): `scope.name` instead of `name@scope`, so that
+  `@` can name a site in crew-board mentions (`name@site`). Reads look a seat
+  up by its exact address, so the retired demo seats made before the change
+  stay readable.
 
 ## Proving slice
 
@@ -406,6 +416,6 @@ These are built (`internal/sqlite/seat_test.go`, `internal/httpapi/seat_test.go`
 11. Seats survive a fabric restart.
 
 The end-to-end demo spans two harnesses (for example Claude Code and Codex):
-one session takes `lead@<scope>`, the other is refused, the second relieves the
+one session takes `<scope>.lead`, the other is refused, the second relieves the
 first after a handoff is set, a message sent to the seat while it changes hands
 reaches the new holder, and `seat list` shows the right holder at each step.

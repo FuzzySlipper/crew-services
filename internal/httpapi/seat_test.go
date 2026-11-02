@@ -55,7 +55,7 @@ func TestSeatRoutesTakeRefuseAndList(t *testing.T) {
 		sessions[adapter+"/token"] = lease.LeaseToken
 	}
 	take := func(adapter, op string) (int, map[string]any) {
-		return do(http.MethodPost, "/v1/seats/lead@rusty-engine/take", map[string]any{"adapter_id": adapter, "lease_token": sessions[adapter+"/token"], "operation_id": op, "session_address": sessions[adapter]})
+		return do(http.MethodPost, "/v1/seats/rusty-engine.lead/take", map[string]any{"adapter_id": adapter, "lease_token": sessions[adapter+"/token"], "operation_id": op, "session_address": sessions[adapter]})
 	}
 	if status, body := take("crew-claude", "take-1"); status != http.StatusCreated || body["holding"].(map[string]any)["holder_address"] != sessions["crew-claude"] {
 		t.Fatalf("take = %d %v", status, body)
@@ -67,7 +67,7 @@ func TestSeatRoutesTakeRefuseAndList(t *testing.T) {
 	if holder := body["detail"].(map[string]any)["holding"].(map[string]any)["holder_address"]; holder != sessions["crew-claude"] {
 		t.Fatalf("seat_held names %v, want %s", holder, sessions["crew-claude"])
 	}
-	if status, body := do(http.MethodPut, "/v1/seats/lead@rusty-engine/charter", map[string]any{"adapter_id": "crew-codex", "lease_token": sessions["crew-codex/token"], "operation_id": "charter-1", "session_address": sessions["crew-codex"], "body": "Own the roadmap.\nSay no often."}); status != http.StatusCreated || body["text"].(map[string]any)["version"] != float64(1) {
+	if status, body := do(http.MethodPut, "/v1/seats/rusty-engine.lead/charter", map[string]any{"adapter_id": "crew-codex", "lease_token": sessions["crew-codex/token"], "operation_id": "charter-1", "session_address": sessions["crew-codex"], "body": "Own the roadmap.\nSay no often."}); status != http.StatusCreated || body["text"].(map[string]any)["version"] != float64(1) {
 		t.Fatalf("set charter = %d %v", status, body)
 	}
 	status, body = do(http.MethodGet, "/v1/seats?scope=rusty-engine", nil)
@@ -75,10 +75,10 @@ func TestSeatRoutesTakeRefuseAndList(t *testing.T) {
 	if status != http.StatusOK || len(seats) != 1 || seats[0].(map[string]any)["charter_summary"] != "Own the roadmap." {
 		t.Fatalf("list = %d %v", status, body)
 	}
-	if status, body := do(http.MethodGet, "/v1/seats/lead@rusty-engine/charter?version=1", nil); status != http.StatusOK || body["body"] != "Own the roadmap.\nSay no often." {
+	if status, body := do(http.MethodGet, "/v1/seats/rusty-engine.lead/charter?version=1", nil); status != http.StatusOK || body["body"] != "Own the roadmap.\nSay no often." {
 		t.Fatalf("charter v1 = %d %v", status, body)
 	}
-	if status, body := do(http.MethodGet, "/v1/seats/nobody@rusty-engine", nil); status != http.StatusNotFound || body["code"] != "seat_not_found" {
+	if status, body := do(http.MethodGet, "/v1/seats/rusty-engine.nobody", nil); status != http.StatusNotFound || body["code"] != "seat_not_found" {
 		t.Fatalf("missing seat = %d %v", status, body)
 	}
 }

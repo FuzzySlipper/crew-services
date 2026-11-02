@@ -881,7 +881,7 @@ func TestSeatMailFollowsTheHolder(t *testing.T) {
 	sockA, sockB := h.socket(t, "a"), h.socket(t, "b")
 	addressA := h.register(t, h.driver, "session-a", sockA)
 	addressB := h.register(t, h.driver, "session-b", sockB)
-	seat := "reviewer@crew"
+	seat := "crew.reviewer"
 	if _, err := h.driver.SeatWrite(h.ctx, crewcli.SeatRequest{From: "session-a", Write: "take", Seat: seat, OperationID: "take-a"}); err != nil {
 		t.Fatal(err)
 	}
@@ -892,7 +892,7 @@ func TestSeatMailFollowsTheHolder(t *testing.T) {
 	if len(posts) != 1 || posts[0].socket != sockA {
 		t.Fatalf("posts = %+v", posts)
 	}
-	if !strings.HasPrefix(posts[0].text, "Crew message to your seat reviewer@crew from s/") || !strings.Contains(posts[0].text, "please review the parser") || !strings.HasSuffix(posts[0].text, `crew-claude send --as reviewer@crew --to `+service.SessionAddress("producer", "sender")+` "your reply"`) {
+	if !strings.HasPrefix(posts[0].text, "Crew message to your seat crew.reviewer from s/") || !strings.Contains(posts[0].text, "please review the parser") || !strings.HasSuffix(posts[0].text, `crew-claude send --as crew.reviewer --to `+service.SessionAddress("producer", "sender")+` "your reply"`) {
 		t.Fatalf("seat mail text = %q", posts[0].text)
 	}
 	if got := h.states(t, seat); len(got) != 1 || got[0] != "delivered" {
@@ -917,7 +917,7 @@ func TestSeatMailFollowsTheHolder(t *testing.T) {
 	if len(toB) != 1 || !strings.Contains(toB[0].text, "and the lexer") {
 		t.Fatalf("posts to the new holder = %+v", toB)
 	}
-	if len(notice) != 1 || !strings.Contains(notice[0].text, "Crew message from fabric/seats") || !strings.Contains(notice[0].text, "You no longer hold the seat reviewer@crew") || strings.Contains(notice[0].text, "To reply") {
+	if len(notice) != 1 || !strings.Contains(notice[0].text, "Crew message from fabric/seats") || !strings.Contains(notice[0].text, "You no longer hold the seat crew.reviewer") || strings.Contains(notice[0].text, "To reply") {
 		t.Fatalf("relief notice = %+v", notice)
 	}
 
@@ -932,7 +932,7 @@ func TestSeatMailFollowsTheHolder(t *testing.T) {
 	api := httptest.NewServer(claudedriver.Handler(h.driver))
 	defer api.Close()
 	out := claudedriver.RunHook(h.ctx, api.URL, "session-start", claudedriver.HookInput{SessionID: "session-b", TranscriptPath: h.transcript("session-b")}, claudedriver.HookEnv{Socket: sockB, Token: "tok"})
-	if !strings.Contains(string(out), "You hold the crew seat reviewer@crew") {
+	if !strings.Contains(string(out), "You hold the crew seat crew.reviewer") {
 		t.Fatalf("session start context = %s", out)
 	}
 }
@@ -953,34 +953,34 @@ func TestSeatCommands(t *testing.T) {
 		code := crewcli.Main(h.ctx, args, "session-a", api.URL, strings.NewReader(stdin), &stdout, &stderr)
 		return code, stdout.String(), stderr.String()
 	}
-	if code, out, errOut := run("", "seat", "take", "reviewer@crew", "--note", "first shift"); code != 0 || !strings.Contains(out, "you hold reviewer@crew") || !strings.Contains(out, "no charter yet") {
+	if code, out, errOut := run("", "seat", "take", "crew.reviewer", "--note", "first shift"); code != 0 || !strings.Contains(out, "you hold crew.reviewer") || !strings.Contains(out, "no charter yet") {
 		t.Fatalf("take = %d %q %q", code, out, errOut)
 	}
-	if code, out, errOut := run("Review parser changes.\nBe terse.", "seat", "charter", "reviewer@crew", "--set", "--expect", "0"); code != 0 || !strings.Contains(out, "version 1") {
+	if code, out, errOut := run("Review parser changes.\nBe terse.", "seat", "charter", "crew.reviewer", "--set", "--expect", "0"); code != 0 || !strings.Contains(out, "version 1") {
 		t.Fatalf("charter set = %d %q %q", code, out, errOut)
 	}
-	if code, _, errOut := run("", "seat", "charter", "reviewer@crew", "--set", "--expect", "0", "stale edit"); code == 0 || !strings.Contains(errOut, "version_conflict: the current version is 1") {
+	if code, _, errOut := run("", "seat", "charter", "crew.reviewer", "--set", "--expect", "0", "stale edit"); code == 0 || !strings.Contains(errOut, "version_conflict: the current version is 1") {
 		t.Fatalf("stale charter set = %d %q", code, errOut)
 	}
-	if code, out, _ := run("", "seat", "show", "reviewer@crew"); code != 0 || !strings.Contains(out, "Review parser changes.\nBe terse.") || !strings.Contains(out, "Handoff: none yet") {
+	if code, out, _ := run("", "seat", "show", "crew.reviewer"); code != 0 || !strings.Contains(out, "Review parser changes.\nBe terse.") || !strings.Contains(out, "Handoff: none yet") {
 		t.Fatalf("show = %q", out)
 	}
-	if code, out, _ := run("", "seat", "list", "--mine"); code != 0 || !strings.Contains(out, "reviewer@crew") || !strings.Contains(out, "(you)") || !strings.Contains(out, "Review parser changes.") {
+	if code, out, _ := run("", "seat", "list", "--mine"); code != 0 || !strings.Contains(out, "crew.reviewer") || !strings.Contains(out, "(you)") || !strings.Contains(out, "Review parser changes.") {
 		t.Fatalf("list = %q", out)
 	}
-	if code, out, _ := run("", "who"); code != 0 || !strings.Contains(out, "SEATS") || !strings.Contains(out, "reviewer@crew") {
+	if code, out, _ := run("", "who"); code != 0 || !strings.Contains(out, "SEATS") || !strings.Contains(out, "crew.reviewer") {
 		t.Fatalf("who = %q", out)
 	}
-	if code, out, _ := run("", "seat", "leave", "reviewer@crew"); code != 0 || !strings.Contains(out, "You wrote no handoff") {
+	if code, out, _ := run("", "seat", "leave", "crew.reviewer"); code != 0 || !strings.Contains(out, "You wrote no handoff") {
 		t.Fatalf("leave = %q", out)
 	}
-	if code, out, _ := run("", "seat", "versions", "reviewer@crew", "charter"); code != 0 || !strings.Contains(out, "\n1 ") || !strings.Contains(out, "reviewer@crew") {
+	if code, out, _ := run("", "seat", "versions", "crew.reviewer", "charter"); code != 0 || !strings.Contains(out, "\n1 ") || !strings.Contains(out, "crew.reviewer") {
 		t.Fatalf("versions = %q", out)
 	}
-	if code, out, _ := run("", "seat", "charter", "reviewer@crew", "--version", "1"); code != 0 || !strings.Contains(out, "Be terse.") {
+	if code, out, _ := run("", "seat", "charter", "crew.reviewer", "--version", "1"); code != 0 || !strings.Contains(out, "Be terse.") {
 		t.Fatalf("charter version 1 = %q", out)
 	}
-	if code, _, errOut := run("", "send", "--as", "reviewer@crew", "--to", "reviewer@crew", "after leaving"); code == 0 || !strings.Contains(errOut, "not_holder: this session does not hold that seat now") {
+	if code, _, errOut := run("", "send", "--as", "crew.reviewer", "--to", "crew.reviewer", "after leaving"); code == 0 || !strings.Contains(errOut, "not_holder: this session does not hold that seat now") {
 		t.Fatalf("send as a seat left = %d %q", code, errOut)
 	}
 }

@@ -880,11 +880,11 @@ func TestSeatMailIsClaimedAtTheSeatAndQueuedIntoTheHolder(t *testing.T) {
 	fabric, native := newFakeFabric(), newFakeNative()
 	d := testDriver(t, fabric, native)
 	address := loadedThread(t, d, native, "thread-1", "idle")
-	fabric.holdSeat("reviewer@crew", 2, address, d.cfg.AdapterID)
-	fabric.holdSeat("lead@crew", 1, "s/elsewhere", "crew-claude")
-	claim := claimFor("reviewer@crew", "d1", "deliver_at_idle")
+	fabric.holdSeat("crew.reviewer", 2, address, d.cfg.AdapterID)
+	fabric.holdSeat("crew.lead", 1, "s/elsewhere", "crew-claude")
+	claim := claimFor("crew.reviewer", "d1", "deliver_at_idle")
 	claim.HolderAddress = address
-	fabric.claims["reviewer@crew"] = []fabricclient.Claim{claim}
+	fabric.claims["crew.reviewer"] = []fabricclient.Claim{claim}
 	if err := d.Pump(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -897,8 +897,8 @@ func TestSeatMailIsClaimedAtTheSeatAndQueuedIntoTheHolder(t *testing.T) {
 			seatClaims[r.RecipientAddress] = r.RecipientGeneration
 		}
 	}
-	if len(seatClaims) != 1 || seatClaims["reviewer@crew"] != 2 {
-		t.Fatalf("seat claims = %v; want only reviewer@crew at generation 2", seatClaims)
+	if len(seatClaims) != 1 || seatClaims["crew.reviewer"] != 2 {
+		t.Fatalf("seat claims = %v; want only crew.reviewer at generation 2", seatClaims)
 	}
 	if !slices.Equal(fabric.acked, []string{"d1"}) {
 		t.Fatalf("acked %v", fabric.acked)
@@ -909,10 +909,10 @@ func TestSeatMailForAnotherHolderIsReleased(t *testing.T) {
 	fabric, native := newFakeFabric(), newFakeNative()
 	d := testDriver(t, fabric, native)
 	address := loadedThread(t, d, native, "thread-1", "idle")
-	fabric.holdSeat("reviewer@crew", 1, address, d.cfg.AdapterID)
-	claim := claimFor("reviewer@crew", "d1", "deliver_at_idle")
+	fabric.holdSeat("crew.reviewer", 1, address, d.cfg.AdapterID)
+	claim := claimFor("crew.reviewer", "d1", "deliver_at_idle")
 	claim.HolderAddress = "s/the-new-holder"
-	fabric.claims["reviewer@crew"] = []fabricclient.Claim{claim}
+	fabric.claims["crew.reviewer"] = []fabricclient.Claim{claim}
 	if err := d.Pump(context.Background()); err != nil {
 		t.Fatal(err)
 	}

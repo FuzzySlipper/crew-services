@@ -666,7 +666,7 @@ func (s *Store) ListSeats(ctx context.Context, now time.Time, filter store.SeatF
 			rows.Close()
 			return nil, err
 		}
-		if filter.Scope != "" && !strings.HasSuffix(row.address, "@"+filter.Scope) {
+		if filter.Scope != "" && store.SeatScope(row.address) != filter.Scope {
 			continue
 		}
 		seats = append(seats, row)

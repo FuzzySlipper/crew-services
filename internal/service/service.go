@@ -411,7 +411,7 @@ func (s *Service) PutBinding(ctx context.Context, request PutBindingRequest) (Bi
 		}
 	}
 	if store.IsSeatAddress(strings.TrimSpace(request.Address)) {
-		return Binding{}, invalid("name@scope addresses are seats; take the seat instead of binding it")
+		return Binding{}, invalid("scope.name addresses are seats; take the seat instead of binding it")
 	}
 	capabilities, err := canonicalCapabilities(request.Capabilities)
 	if err != nil {

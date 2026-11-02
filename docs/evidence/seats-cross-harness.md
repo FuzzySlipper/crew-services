@@ -1,5 +1,10 @@
 # Seats across harnesses
 
+These runs predate the 2026-11-02 change of seat addresses from `name@scope`
+to `scope.name`. Today `lead@seat-demo` would be `seat-demo.lead`, and
+`lead@crew-services` would be `crew-services.lead`. The output below is left as
+it was recorded.
+
 Live run on 2026-11-01 between 03:18Z and 03:20Z (2026-10-31 local time), for
 Den task #10519. It ran against the deployed services, just after they were
 redeployed at 389c28e (`scripts/deploy-crew-services.sh crew-messaging

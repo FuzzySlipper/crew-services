@@ -40,7 +40,7 @@ but never returns it: registration, resolve and list responses omit
 native mapping. A binding an adapter puts with an explicit `target_ref` (for
 example a pinned role address) returns that value, since the adapter chose to
 publish it.
-Seat addresses (`name@scope`), which a session holds and hands over, are part
+Seat addresses (`scope.name`), which a session holds and hands over, are part
 of this contract; [Seats](seats.md) specifies them in full, and the rules below
 are the ones every other part of this specification relies on:
 

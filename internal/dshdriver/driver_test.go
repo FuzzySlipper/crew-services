@@ -989,22 +989,22 @@ func TestSeatMailIsPromptedIntoTheHolder(t *testing.T) {
 	h := newHarness(t)
 	h.host.add("session-a", SessionSummary{}, true, false)
 	h.pump(t)
-	h.fabric.holdSeat("reviewer@crew", 3, "s/session-a", "crew-dsh")
+	h.fabric.holdSeat("crew.reviewer", 3, "s/session-a", "crew-dsh")
 	var text string
 	h.d.native = &capture{Native: h.d.native, text: &text}
-	claim := claimFor("reviewer@crew", "d1", "deliver_at_idle", "next_turn")
+	claim := claimFor("crew.reviewer", "d1", "deliver_at_idle", "next_turn")
 	claim.HolderAddress = "s/session-a"
 	claim.Message.SenderAddress = "s/peer"
-	h.fabric.queue("reviewer@crew", claim)
+	h.fabric.queue("crew.reviewer", claim)
 	h.pump(t)
 	if calls := h.host.promptCalls(); len(calls) != 1 || calls[0] != "session-a queue crew-delivery:d1" {
 		t.Fatalf("prompts = %v", calls)
 	}
-	if !strings.HasPrefix(text, "Crew message to your seat reviewer@crew from s/peer") || !strings.HasSuffix(text, `crew-dsh send --as reviewer@crew --to s/peer "your reply"`) {
+	if !strings.HasPrefix(text, "Crew message to your seat crew.reviewer from s/peer") || !strings.HasSuffix(text, `crew-dsh send --as crew.reviewer --to s/peer "your reply"`) {
 		t.Fatalf("text = %q", text)
 	}
 	for _, r := range h.fabric.claimReqs {
-		if r.RecipientAddress == "reviewer@crew" && r.RecipientGeneration != 3 {
+		if r.RecipientAddress == "crew.reviewer" && r.RecipientGeneration != 3 {
 			t.Fatalf("claimed the seat at generation %d", r.RecipientGeneration)
 		}
 	}
@@ -1016,20 +1016,20 @@ func TestHandlerSeatWriteAndSendAsSeat(t *testing.T) {
 	h.pump(t)
 	server := httptest.NewServer(Handler(h.d))
 	defer server.Close()
-	request := crewcli.SeatRequest{From: "session-a", Write: "take", Seat: "reviewer@crew", OperationID: "op-take"}
+	request := crewcli.SeatRequest{From: "session-a", Write: "take", Seat: "crew.reviewer", OperationID: "op-take"}
 	data, _ := json.Marshal(request)
 	resp, err := http.Post(server.URL+"/v1/seat-write", "application/json", strings.NewReader(string(data)))
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("seat write = %v, %v", resp, err)
 	}
 	resp.Body.Close()
-	if len(h.fabric.seatWrites) != 1 || h.fabric.seatWrites[0] != "take reviewer@crew s/session-a" {
+	if len(h.fabric.seatWrites) != 1 || h.fabric.seatWrites[0] != "take crew.reviewer s/session-a" {
 		t.Fatalf("seat writes = %v", h.fabric.seatWrites)
 	}
-	if _, err := crewcli.Send(context.Background(), server.URL, crewcli.SendRequest{From: "session-a", To: "s/other", Body: "hi", OperationID: "op1", AsSeat: "reviewer@crew"}); err != nil {
+	if _, err := crewcli.Send(context.Background(), server.URL, crewcli.SendRequest{From: "session-a", To: "s/other", Body: "hi", OperationID: "op1", AsSeat: "crew.reviewer"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.fabric.submitted[0]; got.AsSeat != "reviewer@crew" || got.SenderAddress != "s/session-a" {
+	if got := h.fabric.submitted[0]; got.AsSeat != "crew.reviewer" || got.SenderAddress != "s/session-a" {
 		t.Fatalf("submitted %+v", got)
 	}
 }

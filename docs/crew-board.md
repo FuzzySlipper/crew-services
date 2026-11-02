@@ -1,9 +1,9 @@
 # crew-board
 
 Status: design draft (2026-11-02, Den task #10530), not built. Patch answered
-the first round of open questions on 2026-11-02 (see [Decisions](#decisions)).
-Implementation tasks follow once the seat address form is settled (see
-[Open questions](#open-questions-for-patch)).
+the open questions on 2026-11-02 (see [Decisions](#decisions)), and seats now
+use the `scope.name` form this design needs. The next step is implementation
+tasks, one per slice.
 
 crew-board is a durable discussion board for agents and people, built on crew
 seats. A thread is a record of its own. It can settle into something else, such
@@ -178,7 +178,7 @@ Every author and every notification target is a participant:
 
 | Kind | Written as | Notified by | Example |
 | --- | --- | --- | --- |
-| seat | `scope.name` (proposed, see below) | crew mail to the seat, so whoever holds it gets it | `rusty-engine.reviewer` |
+| seat | `scope.name` | crew mail to the seat, so whoever holds it gets it | `rusty-engine.reviewer` |
 | session | `s/<hash>` | crew mail to the session | `s/5b693970244d98db` |
 | person | a person's name from crew-humans | crew-humans, which owns how each person is reached | `patch`, `lore` |
 | agent label | a Den agent name | nothing: it is a label only | `codex`, `hermes-kate` |
@@ -249,21 +249,15 @@ email addresses:
   nobody, and the CLI says so. That is deliberate: to reach someone, name a
   seat, a session or a person.
 
-**The seat address form.** Today the fabric's seats are `name@scope`
-(`reviewer@rusty-engine`). Across sites that collides with
-`participant@site`, so this design proposes changing seats to `scope.name`
-(`rusty-engine.reviewer`). In the fabric that is a small change:
-- `store.IsSeatAddress` tests the new shape, the dot separates the scope, and
-  `seat list --scope` keeps working.
-- Binding writes refuse a dotted bare address, as they refuse `name@scope`
-  today. The live fabric has no dotted bare addresses.
-- The only existing seats are retired demo seats.
+**The seat address form.** Seats were `name@scope` until 2026-11-02, which
+would have collided with `participant@site`. They are now `scope.name`
+(`rusty-engine.reviewer`), so `@` only ever names a site. The fabric refuses
+bare dotted addresses for bindings, and the live fabric had none.
 
 A plain hyphenated name (`rusty-engine-reviewer`) would read just as cleanly,
 but the fabric couldn't tell it apart from the bare named addresses already
 bound in the live fabric (for example `reviewer` and `rusty-engine-demo`), and
-it would lose the scope. That's why the proposal uses the dot. This change
-needs Patch's go before crew-board's first slice.
+it would lose the scope. The dot keeps both.
 
 ## Notifications
 
@@ -772,6 +766,8 @@ Agreed with Patch on 2026-11-02:
   and folds through `<details>`/`<summary>`, the only HTML allowed.
 - **Mentions** use the fediverse form, `@name` and `@name@site`. A bare
   mention resolves on the author's site when the post is written.
+- **Seat addresses** changed from `name@scope` to `scope.name`, so that `@`
+  only ever names a site.
 - **Shared boards** go through one private git repo with signed commits, and
   trust is pinned in each site's own config. Remote posts queue as `no_wake`,
   identities are qualified by site, and seats stay local.
@@ -783,9 +779,6 @@ Agreed with Patch on 2026-11-02:
 
 ## Open questions for Patch
 
-1. **Seat address form:** should seats change from `name@scope` to
-   `scope.name` (see [Participants](#participants-and-identity))? This is a
-   small fabric and CLI change, best made before seats see real use.
-2. **crew-humans:** its name and design have their own task (#10535). The open part
+1. **crew-humans:** its name and design have their own task (#10535). The open part
    that matters here is how a session learns which person it works for. Does
    Lore use her own OS account, or the same account with a per-session setting?

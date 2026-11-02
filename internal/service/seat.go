@@ -160,7 +160,7 @@ func (s *Service) ListSeats(ctx context.Context, filter store.SeatFilter) ([]Sea
 }
 
 func (s *Service) GetSeat(ctx context.Context, address string) (Seat, error) {
-	seat, err := seatAddress(address)
+	seat, err := seatReadAddress(address)
 	if err != nil {
 		return Seat{}, err
 	}
@@ -170,7 +170,7 @@ func (s *Service) GetSeat(ctx context.Context, address string) (Seat, error) {
 
 // GetSeatText returns one version of a seat text; version 0 is the current one.
 func (s *Service) GetSeatText(ctx context.Context, address, kind string, version int64) (SeatText, error) {
-	seat, err := seatAddress(address)
+	seat, err := seatReadAddress(address)
 	if err != nil {
 		return SeatText{}, err
 	}
@@ -185,7 +185,7 @@ func (s *Service) GetSeatText(ctx context.Context, address, kind string, version
 }
 
 func (s *Service) ListSeatTexts(ctx context.Context, address, kind string) ([]SeatText, error) {
-	seat, err := seatAddress(address)
+	seat, err := seatReadAddress(address)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +197,7 @@ func (s *Service) ListSeatTexts(ctx context.Context, address, kind string) ([]Se
 }
 
 func (s *Service) ListSeatHoldings(ctx context.Context, address string) ([]Holding, error) {
-	seat, err := seatAddress(address)
+	seat, err := seatReadAddress(address)
 	if err != nil {
 		return nil, err
 	}
@@ -222,10 +222,21 @@ func (s *Service) PruneSeatOperations(ctx context.Context) (int64, error) {
 	}
 }
 
+// seatReadAddress checks an address a read looks up. Reads take any exact
+// address, so the retired seats created in the old name@scope form stay
+// readable; an address that names no seat is seat_not_found.
+func seatReadAddress(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", &Error{Code: CodeInvalidSeatAddress, Err: errors.New("seat address is required")}
+	}
+	return value, nil
+}
+
 func seatAddress(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if !store.IsSeatAddress(value) {
-		return "", &Error{Code: CodeInvalidSeatAddress, Err: fmt.Errorf("seat address must be name@scope in lowercase letters, digits and hyphens: %q", value)}
+		return "", &Error{Code: CodeInvalidSeatAddress, Err: fmt.Errorf("seat address must be scope.name in lowercase letters, digits and hyphens: %q", value)}
 	}
 	return value, nil
 }

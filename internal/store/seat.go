@@ -61,11 +61,23 @@ const (
 // notices. It is never an agent address and has no binding.
 const SeatNoticeSender = "fabric/seats"
 
-// IsSeatAddress reports whether address has the seat form name@scope. It
-// checks the shape only; whether the seat exists is a store question.
+// IsSeatAddress reports whether address has the seat form scope.name, for
+// example rusty-engine.reviewer. It checks the shape only; whether the seat
+// exists is a store question. Seats created before 2026-11-02 used name@scope;
+// those that remain are retired and stay readable by their exact address.
 func IsSeatAddress(address string) bool {
-	name, scope, ok := strings.Cut(address, "@")
-	return ok && seatPart(name) && seatPart(scope)
+	scope, name, ok := strings.Cut(address, ".")
+	return ok && seatPart(scope) && seatPart(name)
+}
+
+// SeatScope returns the scope part of a seat address, or "" when address is
+// not one.
+func SeatScope(address string) string {
+	if !IsSeatAddress(address) {
+		return ""
+	}
+	scope, _, _ := strings.Cut(address, ".")
+	return scope
 }
 
 func seatPart(value string) bool {
