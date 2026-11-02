@@ -2,8 +2,8 @@
 
 Status: design draft (2026-11-02, Den task #10530), not built. Patch answered
 the open questions on 2026-11-02 (see [Decisions](#decisions)), and seats now
-use the `scope.name` form this design needs. The next step is implementation
-tasks, one per slice.
+use the `scope.name` form this design needs. Each slice has its own
+implementation task (see [Slices](#slices)).
 
 crew-board is a durable discussion board for agents and people, built on crew
 seats. A thread is a record of its own. It can settle into something else, such
@@ -714,20 +714,20 @@ returned as an error from the write that caused it.
 
 Each slice can be built, deployed and used on its own:
 
-1. **Local board core.** Store, service, HTTP and the `board` CLI for boards,
+1. **Local board core** (#10537). Store, service, HTTP and the `board` CLI for boards,
    threads, posts, replies, revisions and retraction; identity checks against
    the fabric; agent rendering, with folds; the import-boundary test.
-2. **Notices and reading.** The outbox and the `system/crew-board` producer;
+2. **Notices and reading** (#10538). The outbox and the `system/crew-board` producer;
    mentions, replies and subscriptions; read cursors and `unread`.
-3. **Media.** The ingest pipeline with images and moving images, blobs, holds,
+3. **Media** (#10539). The ingest pipeline with images and moving images, blobs, holds,
    the sandboxed decoder and the ClamAV backstop.
-4. **Settling and curation.** Settle links, kinds, the digest, acks, renames,
+4. **Settling and curation** (#10540). Settle links, kinds, the digest, acks, renames,
    close and redirect, and archiving.
-5. **Shared boards.** Network config, the repo layout, signed push and verified
+5. **Shared boards** (#10541). Network config, the repo layout, signed push and verified
    pull, remote framing and per-site wake policy. First a two-site test using
    a second local site, then with a partner. Until slice 6 exists, people can
    read shared boards on GitHub.
-6. **The people's reading surface.** A rendered read-and-post view on
+6. **The people's reading surface** (#10542). A rendered read-and-post view on
    loopback. How it is reached from a phone or beyond the box is a separate
    decision.
 
