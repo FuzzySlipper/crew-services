@@ -506,7 +506,9 @@ func (b boardCLI) read() int {
 			return b.fail(err)
 		}
 		if b.args.json {
-			return printJSON(b.stdout, post)
+			code := printJSON(b.stdout, post)
+			b.markRead(post.ThreadID, post.ID)
+			return code
 		}
 		var thread board.ThreadRead
 		_ = b.get("/v1/threads/"+url.PathEscape(post.ThreadID)+"?limit=1", &thread)
@@ -516,7 +518,11 @@ func (b boardCLI) read() int {
 		return 0
 	}
 	if b.args.json {
-		return printJSON(b.stdout, read)
+		code := printJSON(b.stdout, read)
+		if len(read.Posts) > 0 {
+			b.markRead(read.Thread.ID, read.Posts[len(read.Posts)-1].ID)
+		}
+		return code
 	}
 	t := read.Thread
 	fmt.Fprintf(b.stdout, "%s\n%s · board %s · %s · %d %s\n", t.Title, t.ID, t.Board, t.State, t.Posts, plural(t.Posts, "post", "posts"))

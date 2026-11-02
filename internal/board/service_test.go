@@ -2,6 +2,7 @@ package board_test
 
 import (
 	"context"
+	"database/sql"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -346,5 +347,75 @@ func TestWritesAreIdempotentAndSurviveRestart(t *testing.T) {
 	}
 	if _, replayed, _ := w.svc.OpenThread(w.ctx, board.OpenThreadRequest{Actor: board.Actor{Person: "patch"}, OperationID: "open-once", Board: "rusty-engine", Title: "Once", Body: "only once"}); !replayed {
 		t.Fatal("receipt lost across restart")
+	}
+}
+
+// operationsMention counts stored receipts whose result contains text.
+func (w *world) operationsMention(text string) int {
+	w.t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(w.dir, "board.db"))
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM operations WHERE result LIKE ?`, "%"+text+"%").Scan(&n); err != nil {
+		w.t.Fatal(err)
+	}
+	return n
+}
+
+// A purge scrubs the receipts of the writes it undoes: their stored results
+// lose the text, and retrying the original operation is refused instead of
+// replaying it or writing again, also after a restart.
+func TestPurgeScrubsOperationReceipts(t *testing.T) {
+	w := newWorld(t)
+	w.newBoard("rusty-engine")
+	opened := w.thread(board.Actor{Person: "patch"}, "Keep me", "keep this opening")
+	replyRequest := board.ReplyRequest{Actor: board.Actor{SessionAddress: w.x}, OperationID: "reply-once", Thread: opened.Thread.ID, Body: "purge-me: the token is hunter2"}
+	reply, _, err := w.svc.Reply(w.ctx, replyRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.operationsMention("hunter2") == 0 {
+		t.Fatal("the test expects the reply receipt to hold its text before the purge")
+	}
+	if _, _, err := w.svc.Purge(w.ctx, board.ModerateRequest{Actor: board.Actor{Person: "patch"}, OperationID: w.op(), Post: reply.Post.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if n := w.operationsMention("hunter2"); n != 0 {
+		t.Fatalf("%d receipts still hold purged text", n)
+	}
+	if _, _, err := w.svc.Reply(w.ctx, replyRequest); board.CodeOf(err) != board.CodePostNotFound {
+		t.Fatalf("retrying a purged reply = %v", err)
+	}
+	if w.operationsMention("keep this opening") == 0 {
+		t.Fatal("an unrelated receipt was scrubbed")
+	}
+
+	openRequest := board.OpenThreadRequest{Actor: board.Actor{Person: "lore"}, OperationID: "open-once", Board: "rusty-engine", Title: "Secret title", Body: "purge-me-too"}
+	secret, _, err := w.svc.OpenThread(w.ctx, openRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.tick()
+	if _, _, err := w.svc.Edit(w.ctx, board.EditRequest{Actor: board.Actor{Person: "lore"}, OperationID: "edit-once", Post: secret.Post.ID, Body: "purge-me-three"}); err != nil {
+		t.Fatal(err)
+	}
+	w.reply(board.Actor{Person: "patch"}, secret.Thread.ID, "", "a reply in the secret thread")
+	if _, _, err := w.svc.Purge(w.ctx, board.ModerateRequest{Actor: board.Actor{Person: "patch"}, OperationID: w.op(), Post: secret.Post.ID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"Secret title", "purge-me-too", "purge-me-three", "a reply in the secret thread"} {
+		if n := w.operationsMention(text); n != 0 {
+			t.Fatalf("%d receipts still hold %q", n, text)
+		}
+	}
+	if err := w.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	w.open()
+	if _, _, err := w.svc.OpenThread(w.ctx, openRequest); board.CodeOf(err) != board.CodePostNotFound {
+		t.Fatalf("retrying a purged thread's opening after a restart = %v", err)
 	}
 }

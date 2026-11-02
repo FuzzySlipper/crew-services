@@ -94,18 +94,30 @@ func TestBoardCommandsEndToEnd(t *testing.T) {
 		t.Fatalf("unread = %d %q", code, out)
 	}
 	run("native-a", "", "read", thread, "--as", "rusty-engine.lead", "--peek")
+	run("native-a", "", "read", thread, "--as", "rusty-engine.lead", "--peek", "--json")
 	if _, out, _ := run("native-a", "", "unread", "--as", "rusty-engine.lead"); !strings.Contains(out, thread) {
-		t.Fatalf("unread after a peek = %q", out)
+		t.Fatalf("unread after peeks = %q", out)
 	}
-	run("native-a", "", "read", thread, "--as", "rusty-engine.lead")
+	// A JSON read moves the cursor like a text read.
+	run("native-a", "", "read", thread, "--as", "rusty-engine.lead", "--json")
 	if _, out, _ := run("native-a", "", "unread", "--as", "rusty-engine.lead"); !strings.Contains(out, "Nothing unread.") {
 		t.Fatalf("unread after reading = %q", out)
+	}
+	// Reading one post with --json moves the cursor too.
+	_, out, _ = run("", "", "reply", thread, "--person", "patch", "Another reply for the seat.")
+	single := strings.Fields(out)[1]
+	if _, out, _ := run("native-a", "", "unread", "--as", "rusty-engine.lead"); !strings.Contains(out, thread) {
+		t.Fatalf("unread before reading the post = %q", out)
+	}
+	run("native-a", "", "read", single, "--as", "rusty-engine.lead", "--json")
+	if _, out, _ := run("native-a", "", "unread", "--as", "rusty-engine.lead"); !strings.Contains(out, "Nothing unread.") {
+		t.Fatalf("unread after a JSON read of the post = %q", out)
 	}
 	if code, out, _ := run("", "", "notices"); code != 0 || !strings.Contains(out, "rusty-engine.lead  reply") {
 		t.Fatalf("notices = %d %q", code, out)
 	}
 	code, out, _ = run("native-a", "", "read", thread)
-	if code != 0 || !strings.Contains(out, "Shader cache\n"+thread+" · board rusty-engine · open · 2 posts") ||
+	if code != 0 || !strings.Contains(out, "Shader cache\n"+thread+" · board rusty-engine · open · 3 posts") ||
 		!strings.Contains(out, "rusty-engine.lead (Claude Code, "+binding.Address+")") ||
 		!strings.Contains(out, "[folded: Benchmarks, 2 lines; --unfold to show]") || !strings.Contains(out, "· lore · reply to den-") {
 		t.Fatalf("read = %d\n%s", code, out)
@@ -124,7 +136,7 @@ func TestBoardCommandsEndToEnd(t *testing.T) {
 	}
 	var read board.ThreadRead
 	_, out, _ = run("", "", "read", thread, "--json")
-	if err := json.Unmarshal([]byte(out), &read); err != nil || len(read.Posts) != 2 {
+	if err := json.Unmarshal([]byte(out), &read); err != nil || len(read.Posts) != 3 {
 		t.Fatalf("read --json = %q, %v", out, err)
 	}
 	opening := read.Posts[0].ID

@@ -191,9 +191,9 @@ func (s *Service) Unread(ctx context.Context, actor Actor, limit int) ([]Unread,
 // Notices lists recent notices, in one state or all.
 func (s *Service) Notices(ctx context.Context, state string, limit int) ([]Notice, error) {
 	switch state {
-	case "", NoticePending, NoticeSent, NoticeFailed, NoticeNoRoute:
+	case "", NoticePending, NoticeSent, NoticeDelivered, NoticeExpired, NoticeFailed, NoticeNoRoute:
 	default:
-		return nil, refuse(CodeInvalid, "state must be pending, sent, failed or no_route")
+		return nil, refuse(CodeInvalid, "state must be pending, sent, delivered, expired, failed or no_route")
 	}
 	return s.store.ListNotices(ctx, state, pageSize(limit))
 }
@@ -205,6 +205,7 @@ type NoticeFabric interface {
 	Resolve(ctx context.Context, address string) (fabricclient.Binding, error)
 	Bind(ctx context.Context, address string, request fabricclient.BindRequest) (fabricclient.Binding, error)
 	Submit(ctx context.Context, request fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error)
+	Mailbox(ctx context.Context, address string) ([]fabricclient.Delivery, error)
 }
 
 // NotifierConfig names crew-board's producer identity on the fabric.
@@ -286,11 +287,56 @@ func (n *Notifier) Pass(ctx context.Context) int {
 	}
 	settled := 0
 	for _, notice := range due {
-		if n.send(ctx, notice) {
+		done := false
+		if notice.State == NoticeSent {
+			done = n.check(ctx, notice)
+		} else {
+			done = n.send(ctx, notice)
+		}
+		if done {
 			settled++
 		}
 	}
 	return settled
+}
+
+// never is a next check that does not come: a sent notice whose delivery did
+// not settle within its check window stays sent.
+var never = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// check reads what became of a sent notice's delivery: delivered, expired (in
+// the fabric, or still queued past its TTL, so it never can be delivered), or
+// given up on by the fabric. A delivery in flight or still waiting is checked
+// again later.
+func (n *Notifier) check(ctx context.Context, notice Notice) bool {
+	now := n.now().UTC()
+	deliveries, err := n.fab.Mailbox(ctx, notice.Recipient.Address)
+	if err != nil {
+		notice.NextAttemptAt = now.Add(time.Minute)
+		_ = n.store.UpdateNotice(ctx, notice)
+		return false
+	}
+	for _, d := range deliveries {
+		if d.MessageID != notice.MessageID {
+			continue
+		}
+		switch {
+		case d.State == "delivered":
+			notice.State, notice.LastError = NoticeDelivered, ""
+		case d.State == "expired", (d.State == "queued" || d.State == "claimed") && !d.ExpiresAt.IsZero() && !d.ExpiresAt.After(now):
+			notice.State, notice.LastError = NoticeExpired, "not delivered before its TTL ran out"
+		case d.State == "failed" || d.State == "cancelled" || d.State == "outcome_unknown":
+			notice.State, notice.LastError = NoticeFailed, "the fabric settled it as "+d.State+" "+d.TerminalReason
+		}
+	}
+	if notice.State == NoticeSent {
+		notice.NextAttemptAt = now.Add(time.Minute)
+		if !now.Before(notice.GiveUpAt) {
+			notice.NextAttemptAt = never
+		}
+	}
+	_ = n.store.UpdateNotice(ctx, notice)
+	return notice.State != NoticeSent
 }
 
 // send makes one attempt and records it. A refusal fails the notice at once;
@@ -298,16 +344,32 @@ func (n *Notifier) Pass(ctx context.Context) int {
 func (n *Notifier) send(ctx context.Context, notice Notice) bool {
 	now := n.now().UTC()
 	notice.Attempts++
-	body, err := n.body(ctx, notice)
-	if err != nil {
+	if err := n.stillShown(ctx, notice); err != nil {
 		notice.State, notice.LastError = NoticeFailed, err.Error()
 		_ = n.store.UpdateNotice(ctx, notice)
 		return true
 	}
-	messageID, err := n.submit(ctx, notice, body)
+	if notice.Body == "" {
+		// The text is fixed before the first attempt, so a retry after a lost
+		// response submits the same request and the fabric replays it,
+		// whatever has happened to the post or the seat since.
+		body, err := n.body(ctx, notice)
+		if err != nil {
+			notice.State, notice.LastError = NoticeFailed, err.Error()
+			_ = n.store.UpdateNotice(ctx, notice)
+			return true
+		}
+		notice.Body = body
+		if err := n.store.UpdateNotice(ctx, notice); err != nil {
+			return false
+		}
+	}
+	messageID, err := n.submit(ctx, notice, notice.Body)
 	switch {
 	case err == nil:
 		notice.State, notice.MessageID, notice.SentAt, notice.LastError = NoticeSent, messageID, now, ""
+		// From now on the notice is checked until its delivery settles.
+		notice.NextAttemptAt, notice.GiveUpAt = now.Add(time.Minute), now.Add(n.cfg.TTL+time.Hour)
 	case refused(err):
 		notice.State, notice.LastError = NoticeFailed, "the fabric refused it: "+errorText(err)
 	case !now.Before(notice.GiveUpAt):
@@ -422,6 +484,22 @@ func (n *Notifier) ensureOrigin(ctx context.Context) error {
 		return fmt.Errorf("bind %s: %w", n.cfg.Origin, err)
 	}
 	n.bound = true
+	return nil
+}
+
+// stillShown refuses to send a notice for a post that was withdrawn after it
+// was written.
+func (n *Notifier) stillShown(ctx context.Context, notice Notice) error {
+	post, err := n.store.GetPost(ctx, notice.PostID)
+	if errors.Is(err, ErrNotFound) {
+		return errors.New("the post is gone")
+	}
+	if err != nil {
+		return err
+	}
+	if post.State != PostVisible {
+		return fmt.Errorf("the post was %s before the notice went out", post.State)
+	}
 	return nil
 }
 

@@ -28,7 +28,10 @@ var migration003 string
 //go:embed migrations/004_curation.sql
 var migration004 string
 
-var migrations = []string{migration001, migration002, migration003, migration004}
+//go:embed migrations/005_review_fixes.sql
+var migration005 string
+
+var migrations = []string{migration001, migration002, migration003, migration004, migration005}
 
 // Store is crew-board's records in one SQLite file.
 type Store struct {
@@ -102,7 +105,7 @@ func encode(value any) string {
 func (s *Store) Receipt(ctx context.Context, operationID string) (board.Receipt, error) {
 	var r board.Receipt
 	var result, created string
-	err := s.db.QueryRowContext(ctx, `SELECT operation_id, request_hash, result, created_at FROM operations WHERE operation_id = ?`, operationID).Scan(&r.OperationID, &r.RequestHash, &result, &created)
+	err := s.db.QueryRowContext(ctx, `SELECT operation_id, request_hash, result, created_at, purged FROM operations WHERE operation_id = ?`, operationID).Scan(&r.OperationID, &r.RequestHash, &result, &created, &r.Purged)
 	if errors.Is(err, sql.ErrNoRows) {
 		return board.Receipt{}, board.ErrNotFound
 	}
@@ -176,9 +179,15 @@ func apply(ctx context.Context, tx *sql.Tx, c board.Change) error {
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE posts SET state = ?, revision = ?, note = ?, edited_at = ? WHERE id = ?`, p.State, p.Revision, p.Note, edited, p.PostID)
 	case c.ScrubPost != "":
-		err = scrub(ctx, tx, `post_id = ?`, `id = ?`, c.ScrubPost)
+		if err = scrubReceipts(ctx, tx, `SELECT ?`, c.ScrubPost); err == nil {
+			err = scrub(ctx, tx, `post_id = ?`, `id = ?`, c.ScrubPost)
+		}
 	case c.ScrubThread != "":
-		if err = scrub(ctx, tx, `post_id IN (SELECT id FROM posts WHERE thread_id = ?)`, `thread_id = ?`, c.ScrubThread); err == nil {
+		// Receipts are scrubbed first, while the thread's post IDs are known.
+		if err = scrubReceipts(ctx, tx, `SELECT id FROM posts WHERE thread_id = ?1 UNION SELECT ?1`, c.ScrubThread); err == nil {
+			err = scrub(ctx, tx, `post_id IN (SELECT id FROM posts WHERE thread_id = ?)`, `thread_id = ?`, c.ScrubThread)
+		}
+		if err == nil {
 			_, err = tx.ExecContext(ctx, `UPDATE threads SET purged = 1, title = '', created_by = '{}' WHERE id = ?`, c.ScrubThread)
 		}
 	default:
@@ -186,6 +195,33 @@ func apply(ctx context.Context, tx *sql.Tx, c board.Change) error {
 	}
 	if err != nil {
 		return fmt.Errorf("apply change: %w", err)
+	}
+	return nil
+}
+
+// scrubReceipts empties the stored result of every receipt that carries one
+// of the IDs ids selects (a purged post, or a purged thread and its posts).
+// The receipt itself stays, marked purged, so a retry of the same operation
+// is refused instead of writing again.
+func scrubReceipts(ctx context.Context, tx *sql.Tx, ids string, arg string) error {
+	rows, err := tx.QueryContext(ctx, ids, arg)
+	if err != nil {
+		return err
+	}
+	var targets []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		targets = append(targets, id)
+	}
+	rows.Close()
+	for _, id := range targets {
+		if _, err := tx.ExecContext(ctx, `UPDATE operations SET result = '{}', purged = 1 WHERE result LIKE ?`, `%"`+id+`"%`); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -541,12 +577,12 @@ func (s *Store) Unread(ctx context.Context, p board.Participant, limit int) ([]b
 	return out, nil
 }
 
-const noticeColumns = `id, post_id, thread_id, recipient_kind, recipient_address, recipient_site, reason, policy, urgent, state, attempts, next_attempt_at, last_error, message_id, created_at, give_up_at, COALESCE(sent_at, '')`
+const noticeColumns = `id, post_id, thread_id, recipient_kind, recipient_address, recipient_site, reason, policy, urgent, state, attempts, next_attempt_at, last_error, message_id, created_at, give_up_at, COALESCE(sent_at, ''), body`
 
 func scanNotice(row interface{ Scan(...any) error }) (board.Notice, error) {
 	var n board.Notice
 	var next, created, giveUp, sent string
-	if err := row.Scan(&n.ID, &n.PostID, &n.ThreadID, &n.Recipient.Kind, &n.Recipient.Address, &n.Recipient.Site, &n.Reason, &n.Policy, &n.Urgent, &n.State, &n.Attempts, &next, &n.LastError, &n.MessageID, &created, &giveUp, &sent); err != nil {
+	if err := row.Scan(&n.ID, &n.PostID, &n.ThreadID, &n.Recipient.Kind, &n.Recipient.Address, &n.Recipient.Site, &n.Reason, &n.Policy, &n.Urgent, &n.State, &n.Attempts, &next, &n.LastError, &n.MessageID, &created, &giveUp, &sent, &n.Body); err != nil {
 		return board.Notice{}, err
 	}
 	n.NextAttemptAt, n.CreatedAt, n.GiveUpAt = parseStamp(next), parseStamp(created), parseStamp(giveUp)
@@ -573,9 +609,10 @@ func (s *Store) notices(ctx context.Context, query string, args ...any) ([]board
 	return out, rows.Err()
 }
 
-// DueNotices lists pending notices whose next attempt is due, oldest first.
+// DueNotices lists notices with work due, oldest first: pending ones to send,
+// and sent ones whose delivery is to be checked.
 func (s *Store) DueNotices(ctx context.Context, now time.Time, limit int) ([]board.Notice, error) {
-	return s.notices(ctx, `WHERE state = 'pending' AND next_attempt_at <= ? ORDER BY next_attempt_at, id LIMIT ?`, stamp(now), limit)
+	return s.notices(ctx, `WHERE state IN ('pending', 'sent') AND next_attempt_at <= ? ORDER BY next_attempt_at, id LIMIT ?`, stamp(now), limit)
 }
 
 // ListNotices lists recent notices, newest first, in one state or all.
@@ -592,7 +629,7 @@ func (s *Store) UpdateNotice(ctx context.Context, n board.Notice) error {
 	if !n.SentAt.IsZero() {
 		sent = sql.NullString{String: stamp(n.SentAt), Valid: true}
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE notices SET state = ?, attempts = ?, next_attempt_at = ?, last_error = ?, message_id = ?, sent_at = ? WHERE id = ?`, n.State, n.Attempts, stamp(n.NextAttemptAt), n.LastError, n.MessageID, sent, n.ID)
+	_, err := s.db.ExecContext(ctx, `UPDATE notices SET state = ?, attempts = ?, next_attempt_at = ?, last_error = ?, message_id = ?, sent_at = ?, body = ?, give_up_at = ? WHERE id = ?`, n.State, n.Attempts, stamp(n.NextAttemptAt), n.LastError, n.MessageID, sent, n.Body, stamp(n.GiveUpAt), n.ID)
 	return err
 }
 

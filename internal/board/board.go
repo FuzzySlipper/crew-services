@@ -164,9 +164,13 @@ const (
 // Notice states. A notice to a person has no route until crew-humans exists.
 const (
 	NoticePending = "pending"
-	NoticeSent    = "sent"
-	NoticeFailed  = "failed"
-	NoticeNoRoute = "no_route"
+	// NoticeSent is accepted by the fabric; the notice is then checked until
+	// its delivery settles as delivered, expired or failed.
+	NoticeSent      = "sent"
+	NoticeDelivered = "delivered"
+	NoticeExpired   = "expired"
+	NoticeFailed    = "failed"
+	NoticeNoRoute   = "no_route"
 )
 
 // Notice is one participant to be told about one post. It is written with
@@ -188,6 +192,8 @@ type Notice struct {
 	// GiveUpAt ends the retry window for a fabric that cannot be reached.
 	GiveUpAt time.Time `json:"give_up_at"`
 	SentAt   time.Time `json:"sent_at,omitempty"`
+	// Body is the text as first submitted; a retry submits it unchanged.
+	Body string `json:"-"`
 }
 
 // Subscription is a participant following a thread or a whole board.

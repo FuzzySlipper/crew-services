@@ -13,6 +13,25 @@ import (
 	"crew-services/internal/fabricclient"
 )
 
+// lossyFabric hands the first submit to the fabric but loses its answer, as
+// a dropped connection would.
+type lossyFabric struct {
+	board.NoticeFabric
+	mu   sync.Mutex
+	lost bool
+}
+
+func (f *lossyFabric) Submit(ctx context.Context, r fabricclient.MessageRequest) (fabricclient.SubmittedMessage, error) {
+	result, err := f.NoticeFabric.Submit(ctx, r)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.lost {
+		f.lost = true
+		return fabricclient.SubmittedMessage{}, errors.New("connection reset after the request was sent")
+	}
+	return result, err
+}
+
 // flakyFabric fails the first failures submits, as an unreachable fabric does.
 type flakyFabric struct {
 	board.NoticeFabric
@@ -263,5 +282,62 @@ func TestAnEditNotifiesOnlyNewMentions(t *testing.T) {
 	w.tick()
 	if _, _, err := w.svc.Edit(w.ctx, board.EditRequest{Actor: board.Actor{Person: "lore"}, OperationID: w.op(), Post: reply.Post.ID, Body: "an update for @" + w.b}); err != nil {
 		t.Fatalf("edit mentioning a follower: %v", err)
+	}
+}
+
+// A retry after a lost answer submits the very text it first sent, though the
+// post was edited and the seat changed hands since: the fabric replays it, and
+// the notice ends up sent with one message.
+func TestARetryAfterALostAnswerResubmitsTheSameNotice(t *testing.T) {
+	w := newWorld(t)
+	w.newBoard("rusty-engine")
+	w.seat("take", "rusty-engine.reviewer", "claude-code", w.a)
+	n := w.notifier(&lossyFabric{NoticeFabric: w.fabric})
+	opened := w.thread(board.Actor{Person: "patch"}, "Lossy", "first text for @rusty-engine.reviewer")
+	n.Pass(w.ctx)
+	if g := noticesByRecipient(t, w)["rusty-engine.reviewer/"+opened.Post.ID]; g.State != board.NoticePending || g.Attempts != 1 {
+		t.Fatalf("after the lost answer = %+v", g)
+	}
+	w.tick()
+	if _, _, err := w.svc.Edit(w.ctx, board.EditRequest{Actor: board.Actor{Person: "patch"}, OperationID: w.op(), Post: opened.Post.ID, Body: "edited text for @rusty-engine.reviewer"}); err != nil {
+		t.Fatal(err)
+	}
+	w.seat("relieve", "rusty-engine.reviewer", "crew-codex", w.x)
+	w.now = w.now.Add(time.Minute)
+	n.Pass(w.ctx)
+	g := noticesByRecipient(t, w)["rusty-engine.reviewer/"+opened.Post.ID]
+	mail := w.mail("rusty-engine.reviewer")
+	if g.State != board.NoticeSent || g.MessageID == "" || len(mail) != 1 || !strings.Contains(mail[0], "first text") || !strings.Contains(mail[0], "crew-claude board read") {
+		t.Fatalf("after the retry: %+v, mail %q", g, mail)
+	}
+}
+
+// A notice the fabric accepted for a vacant seat that nobody takes in time is
+// reported as expired; one still within its TTL stays sent.
+func TestANoticeThatOutlivesItsTTLIsReportedExpired(t *testing.T) {
+	w := newWorld(t)
+	w.now = time.Now().UTC()
+	w.newBoard("rusty-engine")
+	w.seat("take", "rusty-engine.reviewer", "claude-code", w.a)
+	w.seat("leave", "rusty-engine.reviewer", "claude-code", w.a)
+	n := board.NewNotifier(w.store, board.FabricDirectory{Fabric: w.fabric}, w.fabric, func() time.Time { return w.now }, board.NotifierConfig{InstanceID: "test", TTL: time.Second})
+	opened := w.thread(board.Actor{Person: "patch"}, "Nobody home", "@rusty-engine.reviewer are you there?")
+	n.Pass(w.ctx)
+	key := "rusty-engine.reviewer/" + opened.Post.ID
+	if g := noticesByRecipient(t, w)[key]; g.State != board.NoticeSent {
+		t.Fatalf("after sending = %+v", g)
+	}
+	n.Pass(w.ctx)
+	if g := noticesByRecipient(t, w)[key]; g.State != board.NoticeSent {
+		t.Fatalf("checked before its first check is due = %+v", g)
+	}
+	w.now = w.now.Add(2 * time.Minute)
+	n.Pass(w.ctx)
+	g := noticesByRecipient(t, w)[key]
+	if g.State != board.NoticeExpired || !strings.Contains(g.LastError, "TTL") {
+		t.Fatalf("after its TTL = %+v", g)
+	}
+	if expired, _ := w.svc.Notices(w.ctx, board.NoticeExpired, 10); len(expired) != 1 {
+		t.Fatalf("expired notices = %+v", expired)
 	}
 }

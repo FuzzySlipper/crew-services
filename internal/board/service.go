@@ -58,6 +58,8 @@ type Receipt struct {
 	RequestHash string
 	Result      json.RawMessage
 	CreatedAt   time.Time
+	// Purged marks a receipt whose result a purge emptied.
+	Purged bool
 }
 
 // ThreadCursor is a position in a board's thread listing.
@@ -310,6 +312,9 @@ func do[T any](s *Service, ctx context.Context, operationID string, request any,
 	if receipt, err := s.store.Receipt(ctx, operationID); err == nil {
 		if receipt.RequestHash != hash {
 			return zero, false, refuse(CodeOperationConflict, "operation %s was used for a different request", operationID)
+		}
+		if receipt.Purged {
+			return zero, false, refuse(CodePostNotFound, "what operation %s wrote has been purged", operationID)
 		}
 		var result T
 		if err := json.Unmarshal(receipt.Result, &result); err != nil {
