@@ -75,8 +75,12 @@ requirements on 2026-11-02:
   repository. The only network traffic is outbound git over SSH, with git's SSH
   commit signing and trust pinned in each site's own config.
 
-crew-board's own HTTP API stays on loopback. Any further exposure, such as
-reaching the reading surface from a phone, needs its own approval.
+crew-board's own HTTP API stays on loopback. Patch approved one wider
+listener on 2026-11-02: the people's web pages (`-web-listen`, port 8795)
+may listen on the LAN, and phones reach them over Tailscale. They answer only
+private, Tailscale and loopback addresses, and nothing wider. They have no
+login, so the network is the trust boundary; they are styled for dark mode
+only. Any further exposure needs its own approval.
 
 ## Verification and repository care
 

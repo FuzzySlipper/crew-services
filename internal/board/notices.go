@@ -180,6 +180,15 @@ func (s *Service) MarkRead(ctx context.Context, request MarkReadRequest) error {
 	return s.store.MarkRead(ctx, who.Participant(), request.Thread, request.Post, s.now().UTC())
 }
 
+// Cursor is the newest post the actor has read in a thread, or "".
+func (s *Service) Cursor(ctx context.Context, actor Actor, thread string) (string, error) {
+	who, err := s.author(ctx, actor)
+	if err != nil {
+		return "", err
+	}
+	return s.store.Cursor(ctx, who.Participant(), thread)
+}
+
 // Unread lists the threads the actor was told about and has not read past.
 func (s *Service) Unread(ctx context.Context, actor Actor, limit int) ([]Unread, error) {
 	who, err := s.author(ctx, actor)

@@ -27,6 +27,9 @@ unit_dir="$HOME/.config/systemd/user"
 unit="$unit_dir/crew-board.service"
 site="${CREW_BOARD_SITE:-den}"
 people="${CREW_BOARD_PEOPLE:-patch,lore}"
+# The people's pages answer the LAN, Tailscale and loopback only (Patch,
+# 2026-11-02); the JSON API stays on loopback.
+web_listen="${CREW_BOARD_WEB_LISTEN:-0.0.0.0:8795}"
 # Attachments are signature-scanned with ClamAV when it is installed.
 scanner=""
 if command -v clamscan >/dev/null 2>&1; then
@@ -48,7 +51,7 @@ After=crew-messaging.service
 
 [Service]
 Type=simple
-ExecStart=$bin_dir/crew-board serve -listen 127.0.0.1:8794 -db %h/.local/state/crew-board/board.sqlite -site $site -people $people -fabric http://127.0.0.1:8787 $scanner
+ExecStart=$bin_dir/crew-board serve -listen 127.0.0.1:8794 -db %h/.local/state/crew-board/board.sqlite -site $site -people $people -fabric http://127.0.0.1:8787 -web-listen $web_listen $scanner
 Restart=on-failure
 RestartSec=2
 

@@ -415,6 +415,14 @@ const postColumns = `p.id, p.thread_id, COALESCE(p.parent_id, ''), p.author, p.s
 
 const postFrom = ` FROM posts p JOIN revisions r ON r.post_id = p.id AND r.revision = p.revision`
 
+// postKey orders posts across sites: the time written (fixed-width, so it
+// sorts as text), then the ID. keyOf is the same key of a posts row selected
+// on its own.
+const (
+	postKey = `(p.created_at || '|' || p.id)`
+	keyOf   = `(created_at || '|' || id)`
+)
+
 func scanPost(row interface{ Scan(...any) error }) (board.Post, error) {
 	var p board.Post
 	var author, created, edited, mentions string
@@ -442,7 +450,9 @@ func (s *Store) GetPost(ctx context.Context, id string) (board.Post, error) {
 }
 
 func (s *Store) ListPosts(ctx context.Context, threadID, afterID string, limit int) ([]board.Post, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+postColumns+postFrom+` WHERE p.thread_id = ? AND p.id > ? ORDER BY p.id LIMIT ?`, threadID, afterID, limit)
+	// Posts are in the order they were written. IDs sort by time only within
+	// one site, so the order is the time, then the ID.
+	rows, err := s.db.QueryContext(ctx, `SELECT `+postColumns+postFrom+` WHERE p.thread_id = ? AND (? = '' OR `+postKey+` > (SELECT `+keyOf+` FROM posts WHERE id = ?)) ORDER BY p.created_at, p.id LIMIT ?`, threadID, afterID, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -489,7 +499,7 @@ func (s *Store) Search(ctx context.Context, name, query string, limit int) ([]bo
 	pattern := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(query) + "%"
 	rows, err := s.db.QueryContext(ctx, `SELECT `+postColumns+postFrom+` JOIN threads t ON t.id = p.thread_id
 		WHERE t.board = ? AND t.purged = 0 AND p.state = 'visible' AND (r.body LIKE ? ESCAPE '\' OR t.title LIKE ? ESCAPE '\' OR t.aliases LIKE ? ESCAPE '\')
-		ORDER BY p.id DESC LIMIT ?`, name, pattern, pattern, pattern, limit)
+		ORDER BY p.created_at DESC, p.id DESC LIMIT ?`, name, pattern, pattern, pattern, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -563,7 +573,8 @@ func (s *Store) Subscriptions(ctx context.Context, p board.Participant) ([]board
 // never moves back.
 func (s *Store) MarkRead(ctx context.Context, p board.Participant, threadID, postID string, at time.Time) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO read_cursors (participant_kind, participant_address, participant_site, thread_id, post_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (participant_kind, participant_address, participant_site, thread_id) DO UPDATE SET post_id = excluded.post_id, updated_at = excluded.updated_at WHERE excluded.post_id > read_cursors.post_id`,
+		ON CONFLICT (participant_kind, participant_address, participant_site, thread_id) DO UPDATE SET post_id = excluded.post_id, updated_at = excluded.updated_at
+		WHERE (SELECT `+keyOf+` FROM posts WHERE id = excluded.post_id) > (SELECT `+keyOf+` FROM posts WHERE id = read_cursors.post_id)`,
 		p.Kind, p.Address, p.Site, threadID, postID, stamp(at))
 	return err
 }
@@ -581,13 +592,13 @@ func (s *Store) Cursor(ctx context.Context, p board.Participant, threadID string
 // Unread lists the threads with visible posts a participant was told about
 // and has not read past, those that mention it first, then the newest.
 func (s *Store) Unread(ctx context.Context, p board.Participant, limit int) ([]board.Unread, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT n.thread_id, COUNT(DISTINCT n.post_id), SUM(n.reason = 'mention'), MAX(n.post_id), MAX(p.created_at)
+	rows, err := s.db.QueryContext(ctx, `SELECT n.thread_id, COUNT(DISTINCT n.post_id), SUM(n.reason = 'mention'), MAX(`+postKey+`), MAX(p.created_at)
 		FROM notices n
 		JOIN threads t ON t.id = n.thread_id AND t.purged = 0
 		JOIN posts p ON p.id = n.post_id AND p.state = 'visible'
 		LEFT JOIN read_cursors c ON c.participant_kind = n.recipient_kind AND c.participant_address = n.recipient_address AND c.participant_site = n.recipient_site AND c.thread_id = n.thread_id
-		WHERE n.recipient_kind = ? AND n.recipient_address = ? AND n.recipient_site = ? AND (c.post_id IS NULL OR n.post_id > c.post_id)
-		GROUP BY n.thread_id ORDER BY SUM(n.reason = 'mention') > 0 DESC, MAX(n.post_id) DESC LIMIT ?`, p.Kind, p.Address, p.Site, limit)
+		WHERE n.recipient_kind = ? AND n.recipient_address = ? AND n.recipient_site = ? AND (c.post_id IS NULL OR `+postKey+` > (SELECT `+keyOf+` FROM posts WHERE id = c.post_id))
+		GROUP BY n.thread_id ORDER BY SUM(n.reason = 'mention') > 0 DESC, MAX(`+postKey+`) DESC LIMIT ?`, p.Kind, p.Address, p.Site, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -599,6 +610,7 @@ func (s *Store) Unread(ctx context.Context, p board.Participant, limit int) ([]b
 			rows.Close()
 			return nil, err
 		}
+		_, u.NewestID, _ = strings.Cut(u.NewestID, "|")
 		u.NewestAt = parseStamp(newestAt)
 		out = append(out, u)
 	}
@@ -739,7 +751,7 @@ func (s *Store) ListAttachments(ctx context.Context, state string) ([]board.Atta
 // than beforeID when it is given ("" board for every board).
 func (s *Store) KindPosts(ctx context.Context, name, kind, beforeID string, limit int) ([]board.Post, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+postColumns+postFrom+` JOIN threads t ON t.id = p.thread_id
-		WHERE (? = '' OR t.board = ?) AND t.purged = 0 AND p.state = 'visible' AND p.kind = ? AND (? = '' OR p.id < ?) ORDER BY p.id DESC LIMIT ?`, name, name, kind, beforeID, beforeID, limit)
+		WHERE (? = '' OR t.board = ?) AND t.purged = 0 AND p.state = 'visible' AND p.kind = ? AND (? = '' OR `+postKey+` < (SELECT `+keyOf+` FROM posts WHERE id = ?)) ORDER BY p.created_at DESC, p.id DESC LIMIT ?`, name, name, kind, beforeID, beforeID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -752,7 +764,7 @@ func (s *Store) OpenQuestions(ctx context.Context, name string, limit int) ([]bo
 	rows, err := s.db.QueryContext(ctx, `SELECT `+postColumns+postFrom+` JOIN threads t ON t.id = p.thread_id
 		WHERE t.board = ? AND t.purged = 0 AND p.state = 'visible' AND p.kind = 'question'
 		AND NOT EXISTS (SELECT 1 FROM posts a WHERE a.parent_id = p.id AND a.kind = 'answer' AND a.state = 'visible')
-		ORDER BY p.id DESC LIMIT ?`, name, limit)
+		ORDER BY p.created_at DESC, p.id DESC LIMIT ?`, name, limit)
 	if err != nil {
 		return nil, err
 	}

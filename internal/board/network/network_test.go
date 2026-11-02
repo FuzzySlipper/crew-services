@@ -217,6 +217,21 @@ func TestPostsFlowBothWaysAndMentionsNotifyLocally(t *testing.T) {
 	if flags := den.flags(); len(flags) != 0 {
 		t.Fatalf("den flagged = %v", flags)
 	}
+	// Both sites show the thread in the order it was written, though den's
+	// IDs and interlake's sort apart.
+	later, _, _ := den.svc.Reply(den.ctx, board.ReplyRequest{Actor: board.Actor{Person: "lore"}, OperationID: den.op(), Thread: opened.Thread.ID, Body: "a later den reply"})
+	den.pass()
+	interlake.pass()
+	for _, s := range []*site{den, interlake} {
+		read, _ := s.svc.ReadThread(s.ctx, opened.Thread.ID, "", 10)
+		var order []string
+		for _, p := range read.Posts {
+			order = append(order, p.ID)
+		}
+		if strings.Join(order, ",") != strings.Join([]string{opened.Post.ID, reply.Post.ID, later.Post.ID}, ",") {
+			t.Fatalf("%s shows the thread out of order: %v", s.name, order)
+		}
+	}
 }
 
 // commit makes a commit in a third clone of the repo, as a misbehaving or

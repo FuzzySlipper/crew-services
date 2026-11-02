@@ -27,6 +27,7 @@ import (
 	"crew-services/internal/board"
 	"crew-services/internal/board/boardhttp"
 	"crew-services/internal/board/boardsqlite"
+	"crew-services/internal/board/boardweb"
 	"crew-services/internal/board/network"
 	"crew-services/internal/crewcli"
 	"crew-services/internal/fabricclient"
@@ -60,6 +61,7 @@ func serve(args []string) error {
 	noSandbox := fs.Bool("no-sandbox", false, "run decoders without bubblewrap (only for a box without it)")
 	networksFile := fs.String("networks", filepath.Join(home, ".config/crew-board/networks.json"), "the networks this site shares boards on (a missing file means none)")
 	pullEvery := fs.Duration("pull-every", time.Minute, "how often each network is pulled")
+	webListen := fs.String("web-listen", "", "address for the people's pages, for example 0.0.0.0:8795 (they answer only the LAN, Tailscale and loopback); empty serves none")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -136,11 +138,24 @@ func serve(args []string) error {
 		reindex[name] = syncer
 	}
 	server := &http.Server{Addr: *listen, Handler: boardhttp.NewHandler(svc, boardhttp.WithNetworks(reindex, store)), ReadHeaderTimeout: 10 * time.Second}
+	servers := []*http.Server{server}
+	if *webListen != "" {
+		web := &http.Server{Addr: *webListen, Handler: boardweb.NewHandler(svc), ReadHeaderTimeout: 10 * time.Second}
+		servers = append(servers, web)
+		go func() {
+			fmt.Fprintf(os.Stderr, "crew-board: pages on %s\n", *webListen)
+			if err := web.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintln(os.Stderr, "crew-board: pages:", err)
+			}
+		}()
+	}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutdown)
+		for _, srv := range servers {
+			_ = srv.Shutdown(shutdown)
+		}
 	}()
 	fmt.Fprintf(os.Stderr, "crew-board: site %s serving on %s\n", *site, *listen)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
