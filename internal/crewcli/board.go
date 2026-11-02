@@ -23,7 +23,9 @@ import (
 
 const boardUsage = `usage: board COMMAND
   board boards
-  board new-board NAME [--note DESCRIPTION]
+  board new-board NAME [--shared NETWORK] [--note DESCRIPTION]
+  board networks                           shared networks: sync state and ignored files
+  board reindex NETWORK                    (a person on this site) read a network's repo again
   board threads BOARD [--state open|settled|closed|all] [--archived] [--after CURSOR] [--limit N]
   board new BOARD TITLE [--as SEAT] [--kind KIND] [--urgent] [--no-subscribe] [--attach FILE|URL]... [TEXT... | -]
   board read THREAD|POST [--after POST] [--limit N] [--unfold] [--peek] [--as SEAT]
@@ -62,12 +64,12 @@ func BoardURL() string {
 }
 
 type boardArgs struct {
-	words                                                         []string
-	as, person, note, after, op, state, out, kind, into, redirect string
-	attach                                                        []string
-	limit                                                         int
-	unfold, json, urgent, noSubscribe                             bool
-	peek, archived                                                bool
+	words                                                                 []string
+	as, person, note, after, op, state, out, kind, into, redirect, shared string
+	attach                                                                []string
+	limit                                                                 int
+	unfold, json, urgent, noSubscribe                                     bool
+	peek, archived                                                        bool
 }
 
 func parseBoardArgs(args []string) (boardArgs, error) {
@@ -75,7 +77,7 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
-		case "--as", "--person", "--note", "--after", "--operation-id", "--limit", "--state", "--attach", "--out", "--kind", "--into", "--redirect":
+		case "--as", "--person", "--note", "--after", "--operation-id", "--limit", "--state", "--attach", "--out", "--kind", "--into", "--redirect", "--shared":
 			if i+1 >= len(args) {
 				return out, fmt.Errorf("%s needs a value", a)
 			}
@@ -103,6 +105,8 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 				out.into = args[i]
 			case "--redirect":
 				out.redirect = args[i]
+			case "--shared":
+				out.shared = args[i]
 			case "--limit":
 				n, err := strconv.Atoi(args[i])
 				if err != nil || n <= 0 {
@@ -200,6 +204,10 @@ func BoardMain(ctx context.Context, args []string, self string, stdin io.Reader,
 		return b.acks()
 	case "digest":
 		return b.digest()
+	case "networks":
+		return b.networks()
+	case "reindex":
+		return b.reindex()
 	}
 	fmt.Fprintf(stderr, "board: unknown command %q\n%s\n", command, boardUsage)
 	return 2
@@ -336,10 +344,14 @@ func (b boardCLI) newBoard() int {
 		return b.fail(err)
 	}
 	var out board.Board
-	if err := b.post("/v1/boards", board.CreateBoardRequest{Actor: actor, OperationID: b.args.op, Name: b.args.words[0], Description: b.args.note}, &out); err != nil {
+	if err := b.post("/v1/boards", board.CreateBoardRequest{Actor: actor, OperationID: b.args.op, Name: b.args.words[0], Description: b.args.note, Network: b.args.shared}, &out); err != nil {
 		return b.fail(err)
 	}
-	fmt.Fprintf(b.stdout, "made board %s.\n", out.Name)
+	if out.Network != "" {
+		fmt.Fprintf(b.stdout, "made board %s, shared on network %s.\n", out.Name, out.Network)
+	} else {
+		fmt.Fprintf(b.stdout, "made board %s.\n", out.Name)
+	}
 	return 0
 }
 
@@ -703,6 +715,12 @@ func (b boardCLI) printPost(p board.Post) {
 	header = append(header, p.CreatedAt.UTC().Format("2006-01-02 15:04Z"))
 	if !p.EditedAt.IsZero() {
 		header = append(header, fmt.Sprintf("edited, revision %d", p.Revision))
+	}
+	if p.Remote {
+		header = append(header, "from site "+p.Site)
+	}
+	if p.Sync == board.SyncPending {
+		header = append(header, "not yet in the network's repo")
 	}
 	if p.Kind != "" {
 		header = append(header, p.Kind)
@@ -1162,4 +1180,55 @@ func banner(t board.Thread) string {
 		return "Closed."
 	}
 	return ""
+}
+
+func (b boardCLI) networks() int {
+	var out struct {
+		Networks []struct {
+			State board.SyncState  `json:"state"`
+			Flags []board.SyncFlag `json:"flags"`
+		} `json:"networks"`
+	}
+	if err := b.get("/v1/networks", &out); err != nil {
+		return b.fail(err)
+	}
+	if b.args.json {
+		return printJSON(b.stdout, out)
+	}
+	if len(out.Networks) == 0 {
+		fmt.Fprintln(b.stdout, "This site shares no boards with other sites.")
+		return 0
+	}
+	for _, n := range out.Networks {
+		st := n.State
+		last := st.LastCommit
+		if len(last) > 12 {
+			last = last[:12]
+		}
+		fmt.Fprintf(b.stdout, "%s: %s, read to %s, %d files waiting to push, repo %d MB, checked %s\n", st.Network, st.Status, last, st.Pending, st.RepoBytes>>20, age(st.CheckedAt))
+		for _, f := range n.Flags {
+			commit := f.Commit
+			if len(commit) > 12 {
+				commit = commit[:12]
+			}
+			fmt.Fprintf(b.stdout, "  ignored %s in %s: %s\n", f.Path, commit, f.Reason)
+		}
+	}
+	return 0
+}
+
+func (b boardCLI) reindex() int {
+	if !b.need(1, "a network") {
+		return 2
+	}
+	actor, err := b.actor()
+	if err != nil {
+		return b.fail(err)
+	}
+	var out map[string]string
+	if err := call(b.ctx, http.MethodPost, b.base+"/v1/networks/"+url.PathEscape(b.args.words[0])+"/reindex", actor, &out); err != nil {
+		return b.fail(err)
+	}
+	fmt.Fprintf(b.stdout, "reindexed %s from its repo.\n", b.args.words[0])
+	return 0
 }

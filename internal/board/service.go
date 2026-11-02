@@ -93,6 +93,7 @@ type AckChange struct {
 
 // Change is one row a write adds or updates. Exactly one field is set.
 type Change struct {
+	Outbox       *OutboxFile
 	ThreadUpdate *ThreadUpdate
 	Ack          *AckChange
 	Notice       *Notice
@@ -148,6 +149,8 @@ type Config struct {
 	// ArchiveAfter is how long a thread may go without activity before it
 	// drops out of the default listing. It is never purged for that.
 	ArchiveAfter time.Duration
+	// Networks are the networks this site shares boards on.
+	Networks []NetworkInfo
 }
 
 const (
@@ -165,6 +168,8 @@ type Service struct {
 	cfg   Config
 	mu    sync.Mutex
 	poke  func()
+	// sharePoke asks the network syncers to push now.
+	sharePoke func()
 
 	media       *Ingester
 	attachments AttachmentStore
@@ -190,8 +195,11 @@ func New(store Store, dir Directory, now func() time.Time, cfg Config) (*Service
 	if cfg.ArchiveAfter <= 0 {
 		cfg.ArchiveAfter = 30 * 24 * time.Hour
 	}
-	return &Service{store: store, dir: dir, now: now, cfg: cfg, poke: func() {}}, nil
+	return &Service{store: store, dir: dir, now: now, cfg: cfg, poke: func() {}, sharePoke: func() {}}, nil
 }
+
+// OnShare sets what to call after a write queues files for a network.
+func (s *Service) OnShare(poke func()) { s.sharePoke = poke }
 
 // OnNotices sets what to call after a write queues notices, so the sender
 // can go at once instead of on its next tick.
@@ -261,7 +269,13 @@ func (s *Service) resolveMentions(ctx context.Context, body string) ([]Mention, 
 	var warnings []MentionWarning
 	for _, c := range mentionCandidates(body) {
 		if c.Site != "" && c.Site != s.cfg.Site {
-			warnings = append(warnings, MentionWarning{Text: c.Text, Reason: "this site shares no board with " + c.Site + " yet"})
+			// Another site vouches for its own participants; this site cannot
+			// check them, only that it shares a network with that site.
+			if !s.partnerSite(c.Site) {
+				warnings = append(warnings, MentionWarning{Text: c.Text, Reason: "this site shares no board with " + c.Site})
+				continue
+			}
+			mentions = append(mentions, Mention{Text: c.Text, Kind: participantKind(c.Name), Address: c.Name, Site: c.Site})
 			continue
 		}
 		kind := participantKind(c.Name)
@@ -329,6 +343,9 @@ func do[T any](s *Service, ctx context.Context, operationID string, request any,
 	if err != nil {
 		return zero, false, err
 	}
+	if changes, err = s.share(ctx, changes); err != nil {
+		return zero, false, err
+	}
 	stored, err := json.Marshal(result)
 	if err != nil {
 		return zero, false, err
@@ -342,6 +359,12 @@ func do[T any](s *Service, ctx context.Context, operationID string, request any,
 			break
 		}
 	}
+	for _, c := range changes {
+		if c.Outbox != nil {
+			s.sharePoke()
+			break
+		}
+	}
 	return result, false, nil
 }
 
@@ -351,6 +374,8 @@ type CreateBoardRequest struct {
 	OperationID string `json:"operation_id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	// Network shares the board on a network from its creation.
+	Network string `json:"network,omitempty"`
 }
 
 func (s *Service) CreateBoard(ctx context.Context, request CreateBoardRequest) (Board, bool, error) {
@@ -368,7 +393,12 @@ func (s *Service) CreateBoard(ctx context.Context, request CreateBoardRequest) (
 		} else if !errors.Is(err, ErrNotFound) {
 			return Board{}, nil, err
 		}
-		board := Board{Name: name, Site: s.cfg.Site, Description: strings.TrimSpace(request.Description), CreatedAt: now, CreatedBy: author}
+		if request.Network != "" {
+			if _, ok := s.network(request.Network); !ok {
+				return Board{}, nil, refuse(CodeInvalid, "no network %s is configured on this site", request.Network)
+			}
+		}
+		board := Board{Name: name, Site: s.cfg.Site, Description: strings.TrimSpace(request.Description), CreatedAt: now, CreatedBy: author, Network: request.Network}
 		return board, []Change{{Board: &board}}, nil
 	})
 }
@@ -769,6 +799,7 @@ func (s *Service) ReadThread(ctx context.Context, id, after string, limit int) (
 		read.Next = posts[limit-1].ID
 	}
 	for _, p := range posts {
+		p.Remote = p.Site != s.cfg.Site
 		read.Posts = append(read.Posts, s.withAttachments(ctx, public(p)))
 	}
 	return read, nil
@@ -780,6 +811,7 @@ func (s *Service) GetPost(ctx context.Context, id string) (Post, error) {
 	if errors.Is(err, ErrNotFound) {
 		return Post{}, refuse(CodePostNotFound, "no post %s", id)
 	}
+	post.Remote = post.Site != "" && post.Site != s.cfg.Site
 	return s.withAttachments(ctx, public(post)), err
 }
 

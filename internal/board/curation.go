@@ -141,15 +141,23 @@ func (s *Service) Ack(ctx context.Context, request AckRequest) (Decision, error)
 	if !slices.ContainsFunc(post.Mentions, func(m Mention) bool { return m.Participant() == me }) {
 		return Decision{}, refuse(CodeNotAuthor, "the decision does not name %s; only the participants it mentions acknowledge it", me.Address)
 	}
-	s.mu.Lock()
-	err = s.store.Apply(ctx, Receipt{}, []Change{{Ack: &AckChange{PostID: post.ID, For: me, By: who, At: s.now().UTC()}}})
-	s.mu.Unlock()
-	if err != nil {
-		return Decision{}, err
-	}
 	thread, err := s.thread(ctx, post.ThreadID)
 	if err != nil {
 		return Decision{}, err
+	}
+	acked, err := s.store.Acks(ctx, post.ID)
+	if err != nil {
+		return Decision{}, err
+	}
+	if !slices.Contains(acked, me) {
+		now := s.now().UTC()
+		changes := append([]Change{{Ack: &AckChange{PostID: post.ID, For: me, By: who, At: now}}}, s.shareAck(ctx, post, thread, who, now)...)
+		s.mu.Lock()
+		err = s.store.Apply(ctx, Receipt{}, changes)
+		s.mu.Unlock()
+		if err != nil {
+			return Decision{}, err
+		}
 	}
 	return s.decision(ctx, post, thread)
 }

@@ -18,6 +18,9 @@ type Board struct {
 	CreatedAt   time.Time `json:"created_at"`
 	CreatedBy   Author    `json:"created_by"`
 	Threads     int       `json:"threads"`
+	// Network is the network the board is shared on, fixed when it is made;
+	// "" for a board of this site only.
+	Network string `json:"network,omitempty"`
 }
 
 // Thread states.
@@ -94,6 +97,11 @@ type Post struct {
 	Kind string `json:"kind,omitempty"`
 	// Urgent is the author's label; for now it changes only how notices read.
 	Urgent bool `json:"urgent,omitempty"`
+	// Sync is pending_push until a post on a shared board is in its
+	// network's repo, then synced.
+	Sync string `json:"sync,omitempty"`
+	// Remote marks a post another site wrote.
+	Remote bool `json:"remote,omitempty"`
 	// Attachments are what the post's blob: references name, filled in on
 	// reads.
 	Attachments []Attachment `json:"attachments,omitempty"`

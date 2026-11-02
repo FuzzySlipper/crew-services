@@ -34,7 +34,10 @@ var migration005 string
 //go:embed migrations/006_purge_notices.sql
 var migration006 string
 
-var migrations = []string{migration001, migration002, migration003, migration004, migration005, migration006}
+//go:embed migrations/007_shared.sql
+var migration007 string
+
+var migrations = []string{migration001, migration002, migration003, migration004, migration005, migration006, migration007}
 
 // Store is crew-board's records in one SQLite file.
 type Store struct {
@@ -143,13 +146,18 @@ func apply(ctx context.Context, tx *sql.Tx, c board.Change) error {
 	switch {
 	case c.Board != nil:
 		b := c.Board
-		_, err = tx.ExecContext(ctx, `INSERT INTO boards (name, site, description, created_at, created_by) VALUES (?, ?, ?, ?, ?)`, b.Name, b.Site, b.Description, stamp(b.CreatedAt), encode(b.CreatedBy))
+		_, err = tx.ExecContext(ctx, `INSERT INTO boards (name, site, description, created_at, created_by, network) VALUES (?, ?, ?, ?, ?, ?)`, b.Name, b.Site, b.Description, stamp(b.CreatedAt), encode(b.CreatedBy), b.Network)
+	case c.Outbox != nil:
+		o := c.Outbox
+		if _, err = tx.ExecContext(ctx, `INSERT INTO sync_outbox (network, path, content, post_id, created_at) VALUES (?, ?, ?, ?, ?)`, o.Network, o.Path, o.Content, o.PostID, stamp(time.Now())); err == nil && o.PostID != "" && strings.Contains(o.Path, "/posts/") {
+			_, err = tx.ExecContext(ctx, `UPDATE posts SET sync = 'pending_push' WHERE id = ?`, o.PostID)
+		}
 	case c.Thread != nil:
 		t := c.Thread
 		_, err = tx.ExecContext(ctx, `INSERT INTO threads (id, board, title, state, opening_post_id, created_at, created_by, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, t.ID, t.Board, t.Title, t.State, t.OpeningPostID, stamp(t.CreatedAt), encode(t.CreatedBy), stamp(t.LastActivityAt))
 	case c.Post != nil:
 		p := c.Post
-		_, err = tx.ExecContext(ctx, `INSERT INTO posts (id, thread_id, parent_id, author, site, state, revision, note, urgent, kind, created_at) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?)`, p.ID, p.ThreadID, p.ParentID, encode(p.Author), p.Site, p.State, p.Revision, p.Note, p.Urgent, p.Kind, stamp(p.CreatedAt))
+		_, err = tx.ExecContext(ctx, `INSERT INTO posts (id, thread_id, parent_id, author, site, state, revision, note, urgent, kind, sync, created_at) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.ID, p.ThreadID, p.ParentID, encode(p.Author), p.Site, p.State, p.Revision, p.Note, p.Urgent, p.Kind, p.Sync, stamp(p.CreatedAt))
 	case c.ThreadUpdate != nil:
 		t := c.ThreadUpdate
 		_, err = tx.ExecContext(ctx, `UPDATE threads SET state = ?, title = ?, links = ?, aliases = ?, redirect_to = ? WHERE id = ?`, t.State, t.Title, encode(nonNilLinks(t.Links)), encode(nonNilStrings(t.Aliases)), t.RedirectTo, t.ID)
@@ -185,6 +193,9 @@ func apply(ctx context.Context, tx *sql.Tx, c board.Change) error {
 		if err = scrubReceipts(ctx, tx, `SELECT ?`, c.ScrubPost); err == nil {
 			err = scrub(ctx, tx, `post_id = ?`, `id = ?`, c.ScrubPost)
 		}
+		if err == nil {
+			err = scrubOutbox(ctx, tx, `post_id = ? AND path LIKE '%/posts/%'`, c.ScrubPost)
+		}
 	case c.ScrubThread != "":
 		// Receipts are scrubbed first, while the thread's post IDs are known.
 		if err = scrubReceipts(ctx, tx, `SELECT id FROM posts WHERE thread_id = ?1 UNION SELECT ?1`, c.ScrubThread); err == nil {
@@ -197,6 +208,9 @@ func apply(ctx context.Context, tx *sql.Tx, c board.Change) error {
 		}
 		if err == nil {
 			_, err = tx.ExecContext(ctx, `UPDATE threads SET purged = 1, title = '', created_by = '{}', links = '[]', aliases = '[]', redirect_to = '' WHERE id = ?`, c.ScrubThread)
+		}
+		if err == nil {
+			err = scrubOutbox(ctx, tx, `path LIKE '%/threads/' || ? || '/%'`, c.ScrubThread)
 		}
 	default:
 		err = errors.New("empty change")
@@ -232,6 +246,17 @@ func scrubReceipts(ctx context.Context, tx *sql.Tx, ids string, arg string) erro
 		}
 	}
 	return nil
+}
+
+// scrubOutbox drops repo files not yet pushed for what is purged, and empties
+// the stored copy of those already pushed (the repo keeps its own history;
+// see docs/crew-board.md, Security).
+func scrubOutbox(ctx context.Context, tx *sql.Tx, where, arg string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sync_outbox WHERE state = 'pending' AND `+where, arg); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE sync_outbox SET content = '' WHERE `+where, arg)
+	return err
 }
 
 // scrub removes authored text and identity from the posts whereRevision and
@@ -275,12 +300,12 @@ func nonNil(m []board.Mention) []board.Mention {
 	return m
 }
 
-const boardColumns = `b.name, b.site, b.description, b.created_at, b.created_by, (SELECT COUNT(*) FROM threads t WHERE t.board = b.name AND t.purged = 0)`
+const boardColumns = `b.name, b.site, b.description, b.created_at, b.created_by, (SELECT COUNT(*) FROM threads t WHERE t.board = b.name AND t.purged = 0), b.network`
 
 func scanBoard(row interface{ Scan(...any) error }) (board.Board, error) {
 	var b board.Board
 	var created, by string
-	if err := row.Scan(&b.Name, &b.Site, &b.Description, &created, &by, &b.Threads); err != nil {
+	if err := row.Scan(&b.Name, &b.Site, &b.Description, &created, &by, &b.Threads, &b.Network); err != nil {
 		return board.Board{}, err
 	}
 	b.CreatedAt = parseStamp(created)
@@ -380,14 +405,14 @@ func (s *Store) ListThreads(ctx context.Context, name string, after board.Thread
 	return out, rows.Err()
 }
 
-const postColumns = `p.id, p.thread_id, COALESCE(p.parent_id, ''), p.author, p.site, p.state, p.revision, p.note, p.urgent, p.kind, p.created_at, COALESCE(p.edited_at, ''), r.body, r.mentions`
+const postColumns = `p.id, p.thread_id, COALESCE(p.parent_id, ''), p.author, p.site, p.state, p.revision, p.note, p.urgent, p.kind, p.sync, p.created_at, COALESCE(p.edited_at, ''), r.body, r.mentions`
 
 const postFrom = ` FROM posts p JOIN revisions r ON r.post_id = p.id AND r.revision = p.revision`
 
 func scanPost(row interface{ Scan(...any) error }) (board.Post, error) {
 	var p board.Post
 	var author, created, edited, mentions string
-	if err := row.Scan(&p.ID, &p.ThreadID, &p.ParentID, &author, &p.Site, &p.State, &p.Revision, &p.Note, &p.Urgent, &p.Kind, &created, &edited, &p.Body, &mentions); err != nil {
+	if err := row.Scan(&p.ID, &p.ThreadID, &p.ParentID, &author, &p.Site, &p.State, &p.Revision, &p.Note, &p.Urgent, &p.Kind, &p.Sync, &created, &edited, &p.Body, &mentions); err != nil {
 		return board.Post{}, err
 	}
 	p.CreatedAt = parseStamp(created)
@@ -742,4 +767,93 @@ func (s *Store) Acks(ctx context.Context, postID string) ([]board.Participant, e
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// PendingOutbox lists a network's files still to push, oldest first.
+func (s *Store) PendingOutbox(ctx context.Context, network string, limit int) ([]board.OutboxFile, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, network, path, content, post_id FROM sync_outbox WHERE network = ? AND state = 'pending' ORDER BY id LIMIT ?`, network, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []board.OutboxFile{}
+	for rows.Next() {
+		var f board.OutboxFile
+		if err := rows.Scan(&f.ID, &f.Network, &f.Path, &f.Content, &f.PostID); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// OutboxDone marks files as pushed in commit, and the posts they belong to
+// synced once nothing of theirs is left to push.
+func (s *Store) OutboxDone(ctx context.Context, ids []int64, commit string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `UPDATE sync_outbox SET state = 'pushed', commit_id = ? WHERE id = ?`, commit, id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE posts SET sync = 'synced' WHERE sync = 'pending_push' AND NOT EXISTS (SELECT 1 FROM sync_outbox o WHERE o.post_id = posts.id AND o.state = 'pending')`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) GetSyncState(ctx context.Context, network string) (board.SyncState, error) {
+	var st board.SyncState
+	var checked string
+	err := s.db.QueryRowContext(ctx, `SELECT network, last_commit, status, checked_at, repo_bytes FROM sync_state WHERE network = ?`, network).Scan(&st.Network, &st.LastCommit, &st.Status, &checked, &st.RepoBytes)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = board.ErrNotFound
+	}
+	if checked != "" {
+		st.CheckedAt = parseStamp(checked)
+	}
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_outbox WHERE network = ? AND state = 'pending'`, network).Scan(&st.Pending)
+	return st, err
+}
+
+func (s *Store) PutSyncState(ctx context.Context, st board.SyncState) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sync_state (network, last_commit, status, checked_at, repo_bytes) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (network) DO UPDATE SET last_commit = excluded.last_commit, status = excluded.status, checked_at = excluded.checked_at, repo_bytes = excluded.repo_bytes`,
+		st.Network, st.LastCommit, st.Status, stamp(st.CheckedAt), st.RepoBytes)
+	return err
+}
+
+func (s *Store) AddFlag(ctx context.Context, f board.SyncFlag) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sync_flags (network, commit_id, path, reason, created_at) VALUES (?, ?, ?, ?, ?)`, f.Network, f.Commit, f.Path, f.Reason, stamp(f.CreatedAt))
+	return err
+}
+
+func (s *Store) ListFlags(ctx context.Context, network string, limit int) ([]board.SyncFlag, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT network, commit_id, path, reason, created_at FROM sync_flags WHERE network = ? ORDER BY id DESC LIMIT ?`, network, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []board.SyncFlag{}
+	for rows.Next() {
+		var f board.SyncFlag
+		var created string
+		if err := rows.Scan(&f.Network, &f.Commit, &f.Path, &f.Reason, &created); err != nil {
+			return nil, err
+		}
+		f.CreatedAt = parseStamp(created)
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// HasEvent reports whether an event is in the index already.
+func (s *Store) HasEvent(ctx context.Context, id string) bool {
+	var n int
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE id = ?`, id).Scan(&n)
+	return n > 0
 }

@@ -57,7 +57,8 @@ func (s *Service) noticesFor(ctx context.Context, now time.Time, thread Thread, 
 	}
 	var changes []Change
 	for _, p := range order {
-		if s.isSelf(post.Author, p) {
+		// Another site's participants hear from their own site.
+		if s.isSelf(post.Author, p) || p.Site != s.cfg.Site {
 			continue
 		}
 		changes = append(changes, Change{Notice: s.notice(now, thread, post, p, reasons[p])})
@@ -69,7 +70,7 @@ func (s *Service) noticesFor(ctx context.Context, now time.Time, thread Thread, 
 func (s *Service) mentionNotices(ctx context.Context, now time.Time, thread Thread, post Post, mentions []Mention) ([]Change, error) {
 	var changes []Change
 	for _, m := range mentions {
-		if !s.isSelf(post.Author, m.Participant()) {
+		if !s.isSelf(post.Author, m.Participant()) && m.Site == s.cfg.Site {
 			changes = append(changes, Change{Notice: s.notice(now, thread, post, m.Participant(), ReasonMention)})
 		}
 	}
@@ -214,7 +215,10 @@ type NotifierConfig struct {
 	// address notices come from (nothing drives it, and replies to it are
 	// never delivered).
 	AdapterID, InstanceID, Origin string
-	LeaseDuration                 time.Duration
+	// Site is this site; a post from any other is framed as coming from
+	// outside this box.
+	Site          string
+	LeaseDuration time.Duration
 	// TTL is how long a sent notice waits in the fabric, for example for a
 	// vacant seat's next holder. It must not exceed the fabric's own cap.
 	TTL time.Duration
@@ -528,6 +532,9 @@ func (n *Notifier) body(ctx context.Context, notice Notice) (string, error) {
 	where := "board " + thread.Board
 	if post.Kind != "" {
 		where += ", a " + post.Kind
+	}
+	if n.cfg.Site != "" && post.Site != n.cfg.Site {
+		where += "; from site " + post.Site + ", outside this box"
 	}
 	fmt.Fprintf(&b, "%s %s in %q (%s):\n\n", what, displayAuthor(post.Author), thread.Title, where)
 	quote := strings.TrimSpace(RenderForAgent(post.Body, false))

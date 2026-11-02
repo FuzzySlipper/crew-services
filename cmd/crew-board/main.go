@@ -14,6 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"crew-services/internal/board"
 	"crew-services/internal/board/boardhttp"
 	"crew-services/internal/board/boardsqlite"
+	"crew-services/internal/board/network"
 	"crew-services/internal/crewcli"
 	"crew-services/internal/fabricclient"
 )
@@ -56,6 +58,8 @@ func serve(args []string) error {
 	mediaDir := fs.String("media", filepath.Join(home, ".local/state/crew-board/media"), "where attachment blobs, held originals and scratch files live")
 	scanner := fs.String("scanner", "", "signature scan command run on each attachment, file path appended (for example \"clamscan --no-summary\"); empty skips the scan")
 	noSandbox := fs.Bool("no-sandbox", false, "run decoders without bubblewrap (only for a box without it)")
+	networksFile := fs.String("networks", filepath.Join(home, ".config/crew-board/networks.json"), "the networks this site shares boards on (a missing file means none)")
+	pullEvery := fs.Duration("pull-every", time.Minute, "how often each network is pulled")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -86,11 +90,34 @@ func serve(args []string) error {
 			names = append(names, p)
 		}
 	}
+	var networks []network.Config
+	if _, err := os.Stat(*networksFile); err == nil {
+		if networks, err = network.LoadConfigs(*networksFile, home, filepath.Join(filepath.Dir(*dbPath), "networks")); err != nil {
+			return err
+		}
+	}
+	var infos []board.NetworkInfo
+	for _, n := range networks {
+		infos = append(infos, n.Info())
+	}
 	dir := board.FabricDirectory{Fabric: fabric}
-	svc, err := board.New(store, dir, time.Now, board.Config{Site: *site, People: names, NoticeRetry: *noticeRetry})
+	svc, err := board.New(store, dir, time.Now, board.Config{Site: *site, People: names, NoticeRetry: *noticeRetry, Networks: infos})
 	if err != nil {
 		return err
 	}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	syncers := map[string]*network.Syncer{}
+	for _, n := range networks {
+		n.PullEvery = *pullEvery
+		syncer := network.NewSyncer(n, *site, svc, store, time.Now, logger)
+		syncers[n.Name] = syncer
+		go syncer.Run(ctx)
+	}
+	svc.OnShare(func() {
+		for _, syncer := range syncers {
+			syncer.Poke()
+		}
+	})
 	media := board.DefaultMediaConfig(*mediaDir)
 	media.Scanner = strings.Fields(*scanner)
 	if *noSandbox {
@@ -101,10 +128,14 @@ func serve(args []string) error {
 		return err
 	}
 	svc.UseMedia(ingester, store)
-	notifier := board.NewNotifier(store, dir, fabric, time.Now, board.NotifierConfig{InstanceID: "crew-board-" + *site, TTL: *noticeTTL})
+	notifier := board.NewNotifier(store, dir, fabric, time.Now, board.NotifierConfig{InstanceID: "crew-board-" + *site, Site: *site, TTL: *noticeTTL})
 	svc.OnNotices(notifier.Poke)
 	go notifier.Run(ctx, 5*time.Second)
-	server := &http.Server{Addr: *listen, Handler: boardhttp.NewHandler(svc), ReadHeaderTimeout: 10 * time.Second}
+	reindex := map[string]boardhttp.Reindexer{}
+	for name, syncer := range syncers {
+		reindex[name] = syncer
+	}
+	server := &http.Server{Addr: *listen, Handler: boardhttp.NewHandler(svc, boardhttp.WithNetworks(reindex, store)), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)

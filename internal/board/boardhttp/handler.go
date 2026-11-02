@@ -14,8 +14,34 @@ import (
 	"crew-services/internal/board"
 )
 
+// Reindexer re-reads one network's repo from the start.
+type Reindexer interface {
+	Reindex(ctx context.Context) error
+}
+
+type options struct {
+	reindex map[string]Reindexer
+	flags   interface {
+		ListFlags(ctx context.Context, network string, limit int) ([]board.SyncFlag, error)
+	}
+}
+
+// Option configures the handler.
+type Option func(*options)
+
+// WithNetworks serves network status, flags and reindex.
+func WithNetworks(reindex map[string]Reindexer, flags interface {
+	ListFlags(ctx context.Context, network string, limit int) ([]board.SyncFlag, error)
+}) Option {
+	return func(o *options) { o.reindex, o.flags = reindex, flags }
+}
+
 // NewHandler serves crew-board's API (docs/crew-board.md, Operations).
-func NewHandler(svc *board.Service) http.Handler {
+func NewHandler(svc *board.Service, opts ...Option) http.Handler {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -163,7 +189,50 @@ func NewHandler(svc *board.Service) http.Handler {
 		d, err := svc.Digest(r.Context(), r.PathValue("board"))
 		reply(w, d, err)
 	})
+	mux.HandleFunc("GET /v1/networks", func(w http.ResponseWriter, r *http.Request) {
+		states, err := svc.Networks(r.Context())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		out := []map[string]any{}
+		for _, st := range states {
+			entry := map[string]any{"state": st}
+			if o.flags != nil {
+				flags, _ := o.flags.ListFlags(r.Context(), st.Network, limit(r))
+				entry["flags"] = flags
+			}
+			out = append(out, entry)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"networks": out})
+	})
+	mux.HandleFunc("POST /v1/networks/{name}/reindex", func(w http.ResponseWriter, r *http.Request) {
+		var request board.Actor
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil || request.Person == "" || !slicesContains(svc.People(), request.Person) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"code": string(board.CodePersonOnly), "error": "only a person on this site can reindex a network"})
+			return
+		}
+		syncer, ok := o.reindex[r.PathValue("name")]
+		if !ok {
+			writeJSON(w, http.StatusNotFound, map[string]string{"code": string(board.CodeInvalid), "error": "no such network on this site"})
+			return
+		}
+		if err := syncer.Reindex(r.Context()); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"code": "reindex_failed", "error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"network": r.PathValue("name"), "status": "reindexed"})
+	})
 	return mux
+}
+
+func slicesContains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // actorFrom reads a reader's identity from the query: session_address with
