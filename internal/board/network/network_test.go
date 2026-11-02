@@ -101,6 +101,10 @@ func (s *site) open(people ...string) {
 	s.store, s.svc = store, svc
 	s.notices = board.NewNotifier(store, dir, s.fabric, time.Now, board.NotifierConfig{InstanceID: s.name, Site: s.name})
 	s.sync = network.NewSyncer(s.cfg, s.name, svc, store, time.Now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// As Run does when the site starts with the network configured.
+	if err := s.sync.Join(s.ctx); err != nil {
+		s.t.Fatal(err)
+	}
 }
 
 func (s *site) op() string {
@@ -369,9 +373,17 @@ func TestReindexRebuildsALostIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	opened, _, _ := den.svc.OpenThread(den.ctx, board.OpenThreadRequest{Actor: board.Actor{Person: "patch"}, OperationID: den.op(), Board: "design", Title: "Keep", Body: "kept in the repo"})
-	den.svc.Reply(den.ctx, board.ReplyRequest{Actor: board.Actor{Person: "lore"}, OperationID: den.op(), Thread: opened.Thread.ID, Body: "a reply"})
+	den.svc.Reply(den.ctx, board.ReplyRequest{Actor: board.Actor{Person: "lore"}, OperationID: den.op(), Thread: opened.Thread.ID, Body: "a reply for @" + interlake.session + "@interlake"})
 	den.pass()
 	interlake.pass()
+	interlake.notices.Pass(interlake.ctx)
+	mail := func() int {
+		deliveries, _ := interlake.hub.Mailbox(interlake.ctx, interlake.session)
+		return len(deliveries)
+	}
+	if mail() != 1 {
+		t.Fatalf("interlake's session mail after the first read = %d", mail())
+	}
 	// interlake loses its database.
 	if err := interlake.store.Close(); err != nil {
 		t.Fatal(err)
@@ -386,6 +398,11 @@ func TestReindexRebuildsALostIndex(t *testing.T) {
 	read, err := interlake.svc.ReadThread(interlake.ctx, opened.Thread.ID, "", 10)
 	if err != nil || len(read.Posts) != 2 || read.Thread.Title != "Keep" {
 		t.Fatalf("after reindex = %+v, %v", read, err)
+	}
+	// Replaying history delivers nothing and wakes nobody.
+	interlake.notices.Pass(interlake.ctx)
+	if n, _ := interlake.svc.Notices(interlake.ctx, "", 10); len(n) != 0 || mail() != 1 {
+		t.Fatalf("reindex made %d notices; session mail = %d", len(n), mail())
 	}
 	// Reindexing again changes nothing.
 	if err := interlake.sync.Reindex(interlake.ctx); err != nil {
@@ -438,5 +455,82 @@ func TestPulledMediaIsCheckedAgainOnTheReceivingSite(t *testing.T) {
 	}
 	if flags := interlake.flags(); len(flags) != 0 {
 		t.Fatalf("interlake flagged = %v", flags)
+	}
+
+	// A purge on den removes the image on both sites: records, bytes, and the
+	// copy den kept of what it pushed.
+	_, denPath, _ := den.svc.BlobPath(den.ctx, a.Ref)
+	_, interlakePath, _ := interlake.svc.BlobPath(interlake.ctx, a.Ref)
+	if _, _, err := den.svc.Purge(den.ctx, board.ModerateRequest{Actor: board.Actor{Person: "patch"}, OperationID: den.op(), Post: opened.Post.ID}); err != nil {
+		t.Fatal(err)
+	}
+	den.pass()
+	interlake.pass()
+	for _, s := range []*site{den, interlake} {
+		if _, err := s.svc.Attachment(s.ctx, a.Ref); board.CodeOf(err) != board.CodeAttachmentUnknown {
+			t.Errorf("%s still has the attachment: %v", s.name, err)
+		}
+	}
+	for _, path := range []string{denPath, interlakePath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("purged image bytes still at %s", path)
+		}
+	}
+	if pending, _ := den.store.PendingOutbox(den.ctx, "friends", 100); len(pending) != 0 {
+		t.Errorf("den still has files to push: %+v", pending)
+	}
+}
+
+// An image held by the scan and then released by a person is shared under
+// the hash of its bytes, and the partner shows it.
+func TestAReleasedAttachmentIsSharedSoThePartnerCanShowIt(t *testing.T) {
+	for _, tool := range []string{"ffmpeg", "ffprobe", "bwrap", "prlimit"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not installed", tool)
+		}
+	}
+	den, interlake, _, _, _ := twoSites(t)
+	held := board.DefaultMediaConfig(filepath.Join(den.dir, "media"))
+	held.Scanner = []string{"sh", "-c", "exit 1", "--"}
+	in, err := board.NewIngester(held, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	den.svc.UseMedia(in, den.store)
+	in2, _ := board.NewIngester(board.DefaultMediaConfig(filepath.Join(interlake.dir, "media")), time.Now)
+	interlake.svc.UseMedia(in2, interlake.store)
+	image := filepath.Join(t.TempDir(), "flagged.png")
+	if out, err := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=64x48", "-frames:v", "1", image).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v %s", err, out)
+	}
+	data, _ := os.ReadFile(image)
+	a, err := den.svc.Upload(den.ctx, "flagged.png", data)
+	if err != nil || a.State != board.AttachmentHeld {
+		t.Fatalf("upload = %+v, %v", a, err)
+	}
+	released, err := den.svc.Release(den.ctx, board.HeldRequest{Actor: board.Actor{Person: "patch"}, Ref: a.Ref})
+	if err != nil || released.State != board.AttachmentReady || released.Ref == released.OutputHash {
+		t.Fatalf("release = %+v, %v", released, err)
+	}
+	if _, _, err := den.svc.CreateBoard(den.ctx, board.CreateBoardRequest{Actor: board.Actor{Person: "patch"}, OperationID: den.op(), Name: "design", Network: "friends"}); err != nil {
+		t.Fatal(err)
+	}
+	opened, _, err := den.svc.OpenThread(den.ctx, board.OpenThreadRequest{Actor: board.Actor{Person: "patch"}, OperationID: den.op(), Board: "design", Title: "Released", Body: "![flagged](blob:sha256-" + a.Ref + ")"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	den.pass()
+	interlake.pass()
+	post, _ := interlake.svc.GetPost(interlake.ctx, opened.Post.ID)
+	if text := board.RenderForAgentWith(post.Body, false, post.Attachments); !strings.Contains(text, "[image: flagged; 64×48; board blob "+released.OutputHash+"]") {
+		t.Fatalf("interlake's render = %q", text)
+	}
+	if flags := interlake.flags(); len(flags) != 0 {
+		t.Fatalf("interlake flagged = %v", flags)
+	}
+	// den's own copy still shows it under its local reference.
+	local, _ := den.svc.GetPost(den.ctx, opened.Post.ID)
+	if text := board.RenderForAgentWith(local.Body, false, local.Attachments); !strings.Contains(text, "[image: flagged; 64×48; board blob "+a.Ref+"]") {
+		t.Fatalf("den's render = %q", text)
 	}
 }

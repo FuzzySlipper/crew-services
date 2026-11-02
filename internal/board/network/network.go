@@ -110,6 +110,10 @@ type Syncer struct {
 	// beforePush runs between a push's fetch and its push; tests use it to
 	// make another site push first.
 	beforePush func()
+	// quiet is set while a reindex replays history.
+	quiet bool
+	// since is when this site joined the network.
+	since time.Time
 }
 
 func NewSyncer(cfg Config, site string, apply Applier, store board.SharedStore, now func() time.Time, log *slog.Logger) *Syncer {
@@ -132,8 +136,26 @@ func (s *Syncer) Poke() {
 	}
 }
 
+// Join records when this site started taking part in the network, the first
+// time it does: posts written before then are history and notify nobody
+// here; posts written after, even while this site was down, are not.
+func (s *Syncer) Join(ctx context.Context) error {
+	st, err := s.store.GetSyncState(ctx, s.cfg.Name)
+	if err != nil && !errors.Is(err, board.ErrNotFound) {
+		return err
+	}
+	if !st.JoinedAt.IsZero() {
+		return nil
+	}
+	st.Network, st.JoinedAt, st.CheckedAt = s.cfg.Name, s.now().UTC(), s.now().UTC()
+	return s.store.PutSyncState(ctx, st)
+}
+
 // Run syncs on every interval and whenever poked, until ctx ends.
 func (s *Syncer) Run(ctx context.Context) {
+	if err := s.Join(ctx); err != nil {
+		s.log.Warn("network join", "network", s.cfg.Name, "error", err)
+	}
 	ticker := time.NewTicker(s.cfg.PullEvery)
 	defer ticker.Stop()
 	for {
@@ -171,9 +193,17 @@ func (s *Syncer) Reindex(ctx context.Context) error {
 	if err := s.ensureClone(ctx); err != nil {
 		return err
 	}
-	if err := s.store.PutSyncState(ctx, board.SyncState{Network: s.cfg.Name, CheckedAt: s.now().UTC(), Status: "reindexing"}); err != nil {
+	st, err := s.store.GetSyncState(ctx, s.cfg.Name)
+	if err != nil && !errors.Is(err, board.ErrNotFound) {
 		return err
 	}
+	st.Network, st.LastCommit = s.cfg.Name, ""
+	if err := s.store.PutSyncState(ctx, st); err != nil {
+		return err
+	}
+	// Replaying history rebuilds the index but notifies nobody.
+	s.quiet = true
+	defer func() { s.quiet = false }()
 	return s.pull(ctx)
 }
 
@@ -317,14 +347,24 @@ func (s *Syncer) push(ctx context.Context) error {
 // checked by the board service against its signer.
 func (s *Syncer) pull(ctx context.Context) error {
 	head, err := s.remoteHead(ctx)
-	if err != nil || head == "" {
+	if err != nil {
 		return err
 	}
 	st, err := s.store.GetSyncState(ctx, s.cfg.Name)
 	if err != nil && !errors.Is(err, board.ErrNotFound) {
 		return err
 	}
+	if head == "" {
+		st.Network = s.cfg.Name
+		return s.recordState(ctx, st, "empty")
+	}
 	st.Network = s.cfg.Name
+	if st.JoinedAt.IsZero() {
+		// The first read of this network: everything already in it is
+		// history here.
+		st.JoinedAt = s.now().UTC()
+	}
+	s.since = st.JoinedAt
 	if st.LastCommit != "" && st.Status == "history_rewritten" {
 		return errors.New("the network's history was rewritten; run reindex once it is safe")
 	}
@@ -440,7 +480,7 @@ func (s *Syncer) readCommit(ctx context.Context, commit string) error {
 		if err != nil {
 			return err
 		}
-		err = s.apply.ApplyRemote(ctx, board.RemoteFile{Network: s.cfg.Name, Commit: commit, Signer: signer, Path: a.path, File: a.file, Data: []byte(data)})
+		err = s.apply.ApplyRemote(ctx, board.RemoteFile{Network: s.cfg.Name, Commit: commit, Signer: signer, Path: a.path, File: a.file, Data: []byte(data), Quiet: s.quiet, Since: s.since})
 		var ignored *board.Ignored
 		switch {
 		case errors.As(err, &ignored):

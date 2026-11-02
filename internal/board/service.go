@@ -630,6 +630,15 @@ func (s *Service) Hide(ctx context.Context, request ModerateRequest) (PostResult
 // Purge scrubs a post's text, every revision of it and its author, leaving a
 // content-free tombstone. Purging a thread's opening post purges the thread.
 func (s *Service) Purge(ctx context.Context, request ModerateRequest) (PostResult, bool, error) {
+	var refs []string
+	result, replayed, err := s.purge(ctx, request, &refs)
+	if err == nil && !replayed {
+		err = s.dropUnreferenced(ctx, refs)
+	}
+	return result, replayed, err
+}
+
+func (s *Service) purge(ctx context.Context, request ModerateRequest, refs *[]string) (PostResult, bool, error) {
 	return do(s, ctx, request.OperationID, struct {
 		Op string
 		ModerateRequest
@@ -641,8 +650,10 @@ func (s *Service) Purge(ctx context.Context, request ModerateRequest) (PostResul
 		// The audit event keeps who purged and when, never what was purged.
 		event := Event{ID: NewID(s.cfg.Site, now), ThreadID: thread.ID, PostID: post.ID, Type: "purge", Note: strings.TrimSpace(request.Note), Actor: person, CreatedAt: now}
 		if post.ID == thread.OpeningPostID {
+			*refs = s.refsOf(ctx, thread.ID, "")
 			return PostResult{Post: Post{ID: post.ID, ThreadID: thread.ID, State: PostPurged}}, []Change{{ScrubThread: thread.ID}, {Event: &event}}, nil
 		}
+		*refs = s.refsOf(ctx, thread.ID, post.ID)
 		return PostResult{Thread: thread, Post: Post{ID: post.ID, ThreadID: thread.ID, ParentID: post.ParentID, State: PostPurged}}, []Change{{ScrubPost: post.ID}, {Event: &event}}, nil
 	})
 }

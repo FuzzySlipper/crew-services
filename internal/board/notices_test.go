@@ -429,3 +429,31 @@ func TestPurgeLeavesNoCopyOfTheText(t *testing.T) {
 		}
 	}
 }
+
+// Notices about purged posts drop out of the sender's work, so a full batch
+// of them cannot hold back newer notices.
+func TestPurgedSentNoticesDoNotStarveNewOnes(t *testing.T) {
+	w := newWorld(t)
+	w.newBoard("rusty-engine")
+	n := w.notifier(nil)
+	opened := w.thread(board.Actor{Person: "patch"}, "Many", "start")
+	var posts []string
+	for i := 0; i < 55; i++ {
+		posts = append(posts, w.reply(board.Actor{Person: "lore"}, opened.Thread.ID, "", "ping @"+w.x).Post.ID)
+	}
+	n.Pass(w.ctx)
+	n.Pass(w.ctx)
+	for _, id := range posts {
+		if _, _, err := w.svc.Purge(w.ctx, board.ModerateRequest{Actor: board.Actor{Person: "patch"}, OperationID: w.op(), Post: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.now = w.now.Add(10 * time.Minute)
+	fresh := w.thread(board.Actor{Person: "patch"}, "Fresh", "after the purge @"+w.x)
+	for i := 0; i < 3; i++ {
+		n.Pass(w.ctx)
+	}
+	if g := noticesByRecipient(t, w)[w.x+"/"+fresh.Post.ID]; g.State != board.NoticeSent {
+		t.Fatalf("a new notice behind purged ones = %+v", g)
+	}
+}

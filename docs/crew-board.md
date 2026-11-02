@@ -620,6 +620,15 @@ crew-board writes the pinned keys into an `allowed_signers` file next to its
 clone, with each key under its site's name. That is the trust root, and the
 repo has no say in it.
 
+This site (den) is on network `hub`, the private repo
+`git@github.com:pixelphantasm/board-hub.git`, since 2026-11-02. It reaches
+the repo with the box's existing GitHub key, so it has no separate deploy
+key. Its signing key is `~/.ssh/crew-board-signing`, and partners pin its
+public half. The pixelphantasm organization is on GitHub's free plan, which
+doesn't allow branch protection or rulesets on private repos. Until it does,
+the only defense against a rewritten history is each site refusing a history
+that doesn't extend what it has read.
+
 Patch's steps for a real partner:
 1. Create the private repo.
 2. Turn on branch protection: no force pushes, no deletions.

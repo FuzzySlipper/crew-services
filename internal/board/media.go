@@ -300,6 +300,14 @@ func (in *Ingester) Quarantined(a Attachment) ([]byte, error) {
 	return os.ReadFile(in.quarantinePath(a.OriginalHash))
 }
 
+// Remove deletes an attachment's bytes and any held original.
+func (in *Ingester) Remove(a Attachment) {
+	if a.OutputHash != "" {
+		_ = os.Remove(in.BlobPath(a))
+	}
+	_ = os.Remove(in.quarantinePath(a.OriginalHash))
+}
+
 // Discard removes a held attachment's original.
 func (in *Ingester) Discard(a Attachment) error {
 	err := os.Remove(in.quarantinePath(a.OriginalHash))

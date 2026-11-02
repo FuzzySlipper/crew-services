@@ -45,6 +45,9 @@ type SyncState struct {
 	CheckedAt  time.Time `json:"checked_at"`
 	RepoBytes  int64     `json:"repo_bytes"`
 	Pending    int       `json:"pending_files"`
+	// JoinedAt is when this site started reading the network; posts written
+	// before then are history and never notify anyone here.
+	JoinedAt time.Time `json:"joined_at"`
 }
 
 // SyncFlag is a file a pull ignored, and why.
@@ -154,14 +157,21 @@ func (s *Service) share(ctx context.Context, changes []Change) ([]Change, error)
 			if network == "" {
 				continue
 			}
-			files, err := s.blobFiles(ctx, c.Revision.Body)
+			files, renames, err := s.blobFiles(ctx, c.Revision.Body)
 			if err != nil {
 				return nil, err
 			}
 			for path, data := range files {
 				add(network, path, data, "")
 			}
-			add(network, PostFilePath(t.Board, t.ID, p.ID, c.Revision.Revision), EncodePost(t.Board, p, *c.Revision), p.ID)
+			// The repo names each attachment by the hash of the bytes it
+			// carries; a released attachment's local reference is its
+			// original's, so the shared text names it the repo's way.
+			shared := *c.Revision
+			for from, to := range renames {
+				shared.Body = strings.ReplaceAll(shared.Body, "blob:sha256-"+from, "blob:sha256-"+to)
+			}
+			add(network, PostFilePath(t.Board, t.ID, p.ID, c.Revision.Revision), EncodePost(t.Board, p, shared), p.ID)
 		case c.Event != nil && c.Event.Type != "hide":
 			t, ok := threadOf(c.Event.ThreadID)
 			if !ok {
@@ -175,30 +185,92 @@ func (s *Service) share(ctx context.Context, changes []Change) ([]Change, error)
 	return append(changes, out...), nil
 }
 
-// blobFiles are the repo files of the attachments a body shows. An attachment
-// still held cannot be shared yet.
-func (s *Service) blobFiles(ctx context.Context, body string) (map[string][]byte, error) {
+// blobFiles are the repo files of the attachments a body shows, each named by
+// the hash of its bytes, and the references to rename in the shared text
+// where that differs from the local one. An attachment still held cannot be
+// shared yet.
+func (s *Service) blobFiles(ctx context.Context, body string) (map[string][]byte, map[string]string, error) {
 	refs := attachmentRefs(body)
 	if len(refs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	out := map[string][]byte{}
+	out, renames := map[string][]byte{}, map[string]string{}
 	for _, ref := range refs {
 		a, path, err := s.BlobPath(ctx, ref)
 		if err != nil {
 			if CodeOf(err) == CodeAttachmentHeld {
-				return nil, refuse(CodeAttachmentHeld, "attachment %s is held; a person must release it before it can go on a shared board", short(ref))
+				return nil, nil, refuse(CodeAttachmentHeld, "attachment %s is held; a person must release it before it can go on a shared board", short(ref))
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		out[BlobFilePath(ref, filepath.Ext(path))] = data
-		_ = a
+		out[BlobFilePath(a.OutputHash, filepath.Ext(path))] = data
+		if a.OutputHash != ref {
+			renames[ref] = a.OutputHash
+		}
 	}
-	return out, nil
+	return out, renames, nil
+}
+
+// refsOf lists the attachments the posts a purge removes show, in any
+// revision: one post, or ("" post) the whole thread.
+func (s *Service) refsOf(ctx context.Context, threadID, postID string) []string {
+	ids := []string{postID}
+	if postID == "" {
+		ids = nil
+		posts, _ := s.store.ListPosts(ctx, threadID, "", 10000)
+		for _, p := range posts {
+			ids = append(ids, p.ID)
+		}
+	}
+	seen := map[string]bool{}
+	var refs []string
+	for _, id := range ids {
+		revisions, _ := s.store.ListRevisions(ctx, id)
+		for _, r := range revisions {
+			for _, ref := range attachmentRefs(r.Body) {
+				if !seen[ref] {
+					seen[ref] = true
+					refs = append(refs, ref)
+				}
+			}
+		}
+	}
+	return refs
+}
+
+// dropUnreferenced removes the attachments a purge left unshown: their
+// records, their bytes on this site, and their copies queued for or stored
+// from the repo. An attachment another post still shows stays.
+func (s *Service) dropUnreferenced(ctx context.Context, refs []string) error {
+	if s.media == nil || len(refs) == 0 {
+		return nil
+	}
+	type remover interface {
+		AttachmentReferenced(ctx context.Context, ref string) (bool, error)
+		DeleteAttachment(ctx context.Context, a Attachment) error
+	}
+	store, ok := s.attachments.(remover)
+	if !ok {
+		return nil
+	}
+	for _, ref := range refs {
+		if still, err := store.AttachmentReferenced(ctx, ref); err != nil || still {
+			continue
+		}
+		a, err := s.attachments.GetAttachment(ctx, ref)
+		if err != nil {
+			continue
+		}
+		if err := store.DeleteAttachment(ctx, a); err != nil {
+			return err
+		}
+		s.media.Remove(a)
+	}
+	return nil
 }
 
 // RemoteFile is one file a pull read from a network's repo, added by a commit
@@ -210,6 +282,17 @@ type RemoteFile struct {
 	Path    string
 	File    RepoFile
 	Data    []byte
+	// Quiet rebuilds without notifying anyone, as a reindex does: replaying
+	// history never delivers or wakes.
+	Quiet bool
+	// Since is when this site joined the network; earlier posts are history.
+	Since time.Time
+}
+
+// history reports whether a post from f is history here, so that adding it
+// notifies nobody.
+func (f RemoteFile) history(written time.Time) bool {
+	return f.Quiet || !f.Since.IsZero() && written.Before(f.Since)
 }
 
 // Ignored is a remote file a pull does not apply, with the reason it is
@@ -322,11 +405,13 @@ func (s *Service) applyPost(ctx context.Context, f RemoteFile, now time.Time) er
 		if parent, err := s.store.GetPost(ctx, head.Parent); err == nil && head.Parent != "" && parent.State == PostVisible {
 			replyTo = []Participant{parent.Author.Participant()}
 		}
-		notices, err := s.noticesFor(ctx, now, thread, post, ReasonReply, replyTo)
-		if err != nil {
-			return err
+		if !f.history(head.CreatedAt) {
+			notices, err := s.noticesFor(ctx, now, thread, post, ReasonReply, replyTo)
+			if err != nil {
+				return err
+			}
+			changes = append(changes, s.localNotices(f, notices)...)
 		}
-		changes = append(changes, s.localNotices(f, notices)...)
 		return s.applyAndPoke(ctx, changes)
 	}
 	if err != nil {
@@ -353,6 +438,9 @@ func (s *Service) applyPost(ctx context.Context, f RemoteFile, now time.Time) er
 	}
 	existing.Body, existing.Mentions, existing.Revision = body, head.Mentions, head.Revision
 	changes := []Change{{Revision: &revision}, {PostState: &PostState{PostID: existing.ID, State: PostVisible, Revision: head.Revision, EditedAt: head.CreatedAt}}, {Touch: &Touch{ThreadID: thread.ID, At: maxTime(thread.LastActivityAt, head.CreatedAt)}}}
+	if f.history(head.CreatedAt) {
+		return s.applyAndPoke(ctx, changes)
+	}
 	notices, err := s.mentionNotices(ctx, now, thread, existing, added)
 	if err != nil {
 		return err
@@ -436,11 +524,18 @@ func (s *Service) applyEvent(ctx context.Context, f RemoteFile, now time.Time) e
 		}
 		changes = []Change{{PostState: &PostState{PostID: post.ID, State: PostRetracted, Revision: post.Revision, Note: e.Note, EditedAt: post.EditedAt}}}
 	case "purge":
+		target := e.Post
 		if e.Post == "" || e.Post == thread.OpeningPostID {
-			changes = []Change{{ScrubThread: thread.ID}}
+			changes, target = []Change{{ScrubThread: thread.ID}}, ""
 		} else {
 			changes = []Change{{ScrubPost: e.Post}}
 		}
+		refs := s.refsOf(ctx, thread.ID, target)
+		event.Note = ""
+		if err := s.store.Apply(ctx, Receipt{}, append(changes, Change{Event: &event})); err != nil {
+			return err
+		}
+		return s.dropUnreferenced(ctx, refs)
 	case "settle":
 		into := str("into")
 		if !linkRef.MatchString(into) {
@@ -507,6 +602,15 @@ func (s *Service) applyBlob(ctx context.Context, f RemoteFile) error {
 	}
 	if a, err := s.attachments.GetAttachment(ctx, f.File.ID); err == nil && a.State != AttachmentDropped {
 		return nil
+	}
+	type byOutput interface {
+		AttachmentByOutput(ctx context.Context, output string) (Attachment, error)
+	}
+	if store, ok := s.attachments.(byOutput); ok {
+		// This site's own attachment, shared under the hash of its bytes.
+		if _, err := store.AttachmentByOutput(ctx, f.File.ID); err == nil {
+			return nil
+		}
 	}
 	a, err := s.media.Ingest(ctx, f.File.ID+f.File.Ext, f.Data, Skip{})
 	if err != nil {

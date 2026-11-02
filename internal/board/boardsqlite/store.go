@@ -37,7 +37,10 @@ var migration006 string
 //go:embed migrations/007_shared.sql
 var migration007 string
 
-var migrations = []string{migration001, migration002, migration003, migration004, migration005, migration006, migration007}
+//go:embed migrations/008_joined.sql
+var migration008 string
+
+var migrations = []string{migration001, migration002, migration003, migration004, migration005, migration006, migration007, migration008}
 
 // Store is crew-board's records in one SQLite file.
 type Store struct {
@@ -269,7 +272,7 @@ func scrub(ctx context.Context, tx *sql.Tx, whereRevision, wherePost, arg string
 		`UPDATE events SET note = '', data = '{}', actor = '{}' WHERE type != 'purge' AND ` + whereRevision,
 		// Every notice about the post loses its cached text, whatever its
 		// state; one not yet sent never will be.
-		`UPDATE notices SET body = '', purged = 1, state = CASE WHEN state = 'pending' THEN 'failed' ELSE state END,
+		`UPDATE notices SET body = '', purged = 1, next_attempt_at = '9999-01-01T00:00:00.000000000Z', state = CASE WHEN state = 'pending' THEN 'failed' ELSE state END,
 			last_error = CASE WHEN state = 'pending' THEN 'post purged before the notice went out' ELSE last_error END WHERE ` + whereRevision,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt, arg); err != nil {
@@ -648,7 +651,9 @@ func (s *Store) notices(ctx context.Context, query string, args ...any) ([]board
 // DueNotices lists notices with work due, oldest first: pending ones to send,
 // and sent ones whose delivery is to be checked.
 func (s *Store) DueNotices(ctx context.Context, now time.Time, limit int) ([]board.Notice, error) {
-	return s.notices(ctx, `WHERE state IN ('pending', 'sent') AND next_attempt_at <= ? ORDER BY next_attempt_at, id LIMIT ?`, stamp(now), limit)
+	// A purged notice is never worked on again: it has no text left to send,
+	// and its row may not change.
+	return s.notices(ctx, `WHERE state IN ('pending', 'sent') AND purged = 0 AND next_attempt_at <= ? ORDER BY next_attempt_at, id LIMIT ?`, stamp(now), limit)
 }
 
 // ListNotices lists recent notices, newest first, in one state or all.
@@ -808,8 +813,11 @@ func (s *Store) OutboxDone(ctx context.Context, ids []int64, commit string) erro
 
 func (s *Store) GetSyncState(ctx context.Context, network string) (board.SyncState, error) {
 	var st board.SyncState
-	var checked string
-	err := s.db.QueryRowContext(ctx, `SELECT network, last_commit, status, checked_at, repo_bytes FROM sync_state WHERE network = ?`, network).Scan(&st.Network, &st.LastCommit, &st.Status, &checked, &st.RepoBytes)
+	var checked, joined string
+	err := s.db.QueryRowContext(ctx, `SELECT network, last_commit, status, checked_at, repo_bytes, joined_at FROM sync_state WHERE network = ?`, network).Scan(&st.Network, &st.LastCommit, &st.Status, &checked, &st.RepoBytes, &joined)
+	if joined != "" {
+		st.JoinedAt = parseStamp(joined)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		err = board.ErrNotFound
 	}
@@ -821,9 +829,14 @@ func (s *Store) GetSyncState(ctx context.Context, network string) (board.SyncSta
 }
 
 func (s *Store) PutSyncState(ctx context.Context, st board.SyncState) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sync_state (network, last_commit, status, checked_at, repo_bytes) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (network) DO UPDATE SET last_commit = excluded.last_commit, status = excluded.status, checked_at = excluded.checked_at, repo_bytes = excluded.repo_bytes`,
-		st.Network, st.LastCommit, st.Status, stamp(st.CheckedAt), st.RepoBytes)
+	joined := ""
+	if !st.JoinedAt.IsZero() {
+		joined = stamp(st.JoinedAt)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sync_state (network, last_commit, status, checked_at, repo_bytes, joined_at) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (network) DO UPDATE SET last_commit = excluded.last_commit, status = excluded.status, checked_at = excluded.checked_at, repo_bytes = excluded.repo_bytes,
+		joined_at = CASE WHEN sync_state.joined_at = '' THEN excluded.joined_at ELSE sync_state.joined_at END`,
+		st.Network, st.LastCommit, st.Status, stamp(st.CheckedAt), st.RepoBytes, joined)
 	return err
 }
 
@@ -856,4 +869,48 @@ func (s *Store) HasEvent(ctx context.Context, id string) bool {
 	var n int
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE id = ?`, id).Scan(&n)
 	return n > 0
+}
+
+// AttachmentByOutput finds an attachment by the hash of its transformed
+// bytes.
+func (s *Store) AttachmentByOutput(ctx context.Context, output string) (board.Attachment, error) {
+	a, err := scanAttachment(s.db.QueryRowContext(ctx, `SELECT `+attachmentColumns+` FROM attachments WHERE output_hash = ? AND state != 'dropped' LIMIT 1`, output))
+	if errors.Is(err, sql.ErrNoRows) {
+		return board.Attachment{}, board.ErrNotFound
+	}
+	return a, err
+}
+
+// AttachmentReferenced reports whether any post that is not purged still
+// shows the attachment, in any revision.
+func (s *Store) AttachmentReferenced(ctx context.Context, ref string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM revisions r JOIN posts p ON p.id = r.post_id WHERE p.state != 'purged' AND r.body LIKE ?`, "%blob:sha256-"+ref+"%").Scan(&n)
+	return n > 0, err
+}
+
+// DeleteAttachment removes an attachment's record, and the queued or stored
+// repo copies of its bytes.
+func (s *Store) DeleteAttachment(ctx context.Context, a board.Attachment) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM attachments WHERE ref = ?`, a.Ref); err != nil {
+		return err
+	}
+	for _, hash := range []string{a.Ref, a.OutputHash} {
+		if hash == "" {
+			continue
+		}
+		pattern := "blobs/sha256/" + hash[:2] + "/" + hash + "%"
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sync_outbox WHERE state = 'pending' AND path LIKE ?`, pattern); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE sync_outbox SET content = '' WHERE path LIKE ?`, pattern); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
