@@ -54,6 +54,30 @@ auth, crypto, federation, Postgres, multi-module layouts, groups, streaming,
 attachments, or broad enterprise hardening unless a later approved requirement
 changes the boundary.
 
+## crew-board (design: `docs/crew-board.md`)
+
+`crew-board` is a separate product in this repository: a durable discussion
+board whose threads stand on their own and notify participants through
+crew-messaging as an ordinary producer (`system/crew-board`). It is its own
+command (`cmd/crew-board`), its own `internal/board/...` packages, its own
+SQLite file and its own unit, and it follows the same handler, service and
+store split as the hub. It reaches the fabric only over HTTP through
+`fabricclient`. It never imports the messaging `service`, `store`, `sqlite` or
+`httpapi` packages, nothing in the hub imports it, and an import test enforces
+both directions. Board, thread, post and site concepts never enter the fabric.
+
+The boundary rule above is for the fabric. Patch approved these crew-board
+requirements on 2026-11-02:
+
+- **Media attachments:** images and short moving images only, transformed on
+  ingest and checked on every site.
+- **Shared boards:** a few known sites share boards through a private git
+  repository. The only network traffic is outbound git over SSH, with git's SSH
+  commit signing and trust pinned in each site's own config.
+
+crew-board's own HTTP API stays on loopback. Any further exposure, such as
+reaching the reading surface from a phone, needs its own approval.
+
 ## Verification and repository care
 
 Use proportionate proof: focused unit/state-machine tests plus the documented
