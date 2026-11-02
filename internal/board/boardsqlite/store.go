@@ -22,7 +22,10 @@ var migration001 string
 //go:embed migrations/002_notices.sql
 var migration002 string
 
-var migrations = []string{migration001, migration002}
+//go:embed migrations/003_attachments.sql
+var migration003 string
+
+var migrations = []string{migration001, migration002, migration003}
 
 // Store is crew-board's records in one SQLite file.
 type Store struct {
@@ -547,4 +550,62 @@ func (s *Store) UpdateNotice(ctx context.Context, n board.Notice) error {
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE notices SET state = ?, attempts = ?, next_attempt_at = ?, last_error = ?, message_id = ?, sent_at = ? WHERE id = ?`, n.State, n.Attempts, stamp(n.NextAttemptAt), n.LastError, n.MessageID, sent, n.ID)
 	return err
+}
+
+const attachmentColumns = `ref, original_hash, output_hash, name, state, reason, kind, type, width, height, duration_ms, bytes, checks, created_at`
+
+func scanAttachment(row interface{ Scan(...any) error }) (board.Attachment, error) {
+	var a board.Attachment
+	var checks, created string
+	if err := row.Scan(&a.Ref, &a.OriginalHash, &a.OutputHash, &a.Name, &a.State, &a.Reason, &a.Kind, &a.Type, &a.Width, &a.Height, &a.DurationMS, &a.Bytes, &checks, &created); err != nil {
+		return board.Attachment{}, err
+	}
+	a.CreatedAt = parseStamp(created)
+	_ = json.Unmarshal([]byte(checks), &a.Checks)
+	return a, nil
+}
+
+// PutAttachment records an attachment, replacing the record with its ref.
+func (s *Store) PutAttachment(ctx context.Context, a board.Attachment) error {
+	checks := a.Checks
+	if checks == nil {
+		checks = []string{}
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO attachments (`+attachmentColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Ref, a.OriginalHash, a.OutputHash, a.Name, a.State, a.Reason, a.Kind, a.Type, a.Width, a.Height, a.DurationMS, a.Bytes, encode(checks), stamp(a.CreatedAt))
+	return err
+}
+
+func (s *Store) GetAttachment(ctx context.Context, ref string) (board.Attachment, error) {
+	a, err := scanAttachment(s.db.QueryRowContext(ctx, `SELECT `+attachmentColumns+` FROM attachments WHERE ref = ?`, ref))
+	if errors.Is(err, sql.ErrNoRows) {
+		return board.Attachment{}, board.ErrNotFound
+	}
+	return a, err
+}
+
+// AttachmentByOriginal finds an upload of the same bytes seen before.
+func (s *Store) AttachmentByOriginal(ctx context.Context, original string) (board.Attachment, error) {
+	a, err := scanAttachment(s.db.QueryRowContext(ctx, `SELECT `+attachmentColumns+` FROM attachments WHERE original_hash = ? AND state != 'dropped' ORDER BY created_at LIMIT 1`, original))
+	if errors.Is(err, sql.ErrNoRows) {
+		return board.Attachment{}, board.ErrNotFound
+	}
+	return a, err
+}
+
+func (s *Store) ListAttachments(ctx context.Context, state string) ([]board.Attachment, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+attachmentColumns+` FROM attachments WHERE state = ? ORDER BY created_at`, state)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []board.Attachment{}
+	for rows.Next() {
+		a, err := scanAttachment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }

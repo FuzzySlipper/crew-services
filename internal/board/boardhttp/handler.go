@@ -88,6 +88,49 @@ func NewHandler(svc *board.Service) http.Handler {
 		notices, err := svc.Notices(r.Context(), r.URL.Query().Get("state"), limit(r))
 		reply(w, map[string]any{"notices": notices}, err)
 	})
+	mux.HandleFunc("POST /v1/blobs", func(w http.ResponseWriter, r *http.Request) {
+		data, err := io.ReadAll(io.LimitReader(r.Body, (100<<20)+1))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"code": string(board.CodeInvalid), "error": "unreadable upload"})
+			return
+		}
+		a, err := svc.Upload(r.Context(), r.Header.Get("X-Filename"), data)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, a)
+	})
+	mux.HandleFunc("GET /v1/blobs/{ref}", func(w http.ResponseWriter, r *http.Request) {
+		a, path, err := svc.BlobPath(r.Context(), r.PathValue("ref"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", a.Type)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		http.ServeFile(w, r, path)
+	})
+	mux.HandleFunc("GET /v1/blobs/{ref}/info", func(w http.ResponseWriter, r *http.Request) {
+		a, err := svc.Attachment(r.Context(), r.PathValue("ref"))
+		reply(w, a, err)
+	})
+	mux.HandleFunc("GET /v1/held", func(w http.ResponseWriter, r *http.Request) {
+		held, err := svc.Held(r.Context())
+		reply(w, map[string]any{"held": held}, err)
+	})
+	for name, op := range map[string]func(context.Context, board.HeldRequest) (board.Attachment, error){"release": svc.Release, "drop": svc.Drop} {
+		mux.HandleFunc("POST /v1/held/{ref}/"+name, func(w http.ResponseWriter, r *http.Request) {
+			var request board.HeldRequest
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"code": string(board.CodeInvalid), "error": "invalid JSON"})
+				return
+			}
+			request.Ref = r.PathValue("ref")
+			a, err := op(r.Context(), request)
+			reply(w, a, err)
+		})
+	}
 	return mux
 }
 
@@ -159,8 +202,14 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case board.CodeNotHolder, board.CodeNotAuthor, board.CodePersonOnly, board.CodeSessionUnbound, board.CodeUnknownPerson:
 		status = http.StatusForbidden
-	case board.CodeBoardExists, board.CodeOperationConflict, board.CodePostNotVisible:
+	case board.CodeBoardExists, board.CodeOperationConflict, board.CodePostNotVisible, board.CodeAttachmentHeld:
 		status = http.StatusConflict
+	case board.CodeAttachmentUnknown:
+		status = http.StatusNotFound
+	case board.CodeMediaTooLarge:
+		status = http.StatusRequestEntityTooLarge
+	case board.CodeMediaTypeRefused, board.CodeMediaTypeMismatch:
+		status = http.StatusUnsupportedMediaType
 	case board.CodeDirectoryUnreached:
 		status = http.StatusBadGateway
 	}

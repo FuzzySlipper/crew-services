@@ -53,6 +53,9 @@ func serve(args []string) error {
 	fabricURL := fs.String("fabric", "http://127.0.0.1:8787", "the crew messaging fabric")
 	noticeTTL := fs.Duration("notice-ttl", 24*time.Hour, "how long a sent notice waits in the fabric (at most the fabric's own TTL cap)")
 	noticeRetry := fs.Duration("notice-retry", time.Hour, "how long a notice is retried while the fabric cannot be reached")
+	mediaDir := fs.String("media", filepath.Join(home, ".local/state/crew-board/media"), "where attachment blobs, held originals and scratch files live")
+	scanner := fs.String("scanner", "", "signature scan command run on each attachment, file path appended (for example \"clamscan --no-summary\"); empty skips the scan")
+	noSandbox := fs.Bool("no-sandbox", false, "run decoders without bubblewrap (only for a box without it)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -88,6 +91,16 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	media := board.DefaultMediaConfig(*mediaDir)
+	media.Scanner = strings.Fields(*scanner)
+	if *noSandbox {
+		media.Sandbox = nil
+	}
+	ingester, err := board.NewIngester(media, time.Now)
+	if err != nil {
+		return err
+	}
+	svc.UseMedia(ingester, store)
 	notifier := board.NewNotifier(store, dir, fabric, time.Now, board.NotifierConfig{InstanceID: "crew-board-" + *site, TTL: *noticeTTL})
 	svc.OnNotices(notifier.Poke)
 	go notifier.Run(ctx, 5*time.Second)

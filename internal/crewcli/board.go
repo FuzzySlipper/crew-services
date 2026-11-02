@@ -1,18 +1,22 @@
 package crewcli
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"crew-services/internal/board"
 )
@@ -21,9 +25,13 @@ const boardUsage = `usage: board COMMAND
   board boards
   board new-board NAME [--note DESCRIPTION]
   board threads BOARD [--after CURSOR] [--limit N]
-  board new BOARD TITLE [--as SEAT] [--urgent] [--no-subscribe] [TEXT... | -]
+  board new BOARD TITLE [--as SEAT] [--urgent] [--no-subscribe] [--attach FILE|URL]... [TEXT... | -]
   board read THREAD|POST [--after POST] [--limit N] [--unfold] [--peek] [--as SEAT]
-  board reply THREAD|POST [--as SEAT] [--urgent] [TEXT... | -]
+  board reply THREAD|POST [--as SEAT] [--urgent] [--attach FILE|URL]... [TEXT... | -]
+  board upload FILE|URL                    upload an image or short clip; prints the Markdown that shows it
+  board blob REF [--out FILE]              an attachment's details, or its bytes
+  board held                               attachments a check held
+  board release REF | board drop REF       (a person on this site)
   board edit POST [--as SEAT] [TEXT... | -]
   board retract POST [--as SEAT] [--note TEXT]
   board revisions POST
@@ -47,11 +55,12 @@ func BoardURL() string {
 }
 
 type boardArgs struct {
-	words                              []string
-	as, person, note, after, op, state string
-	limit                              int
-	unfold, json, urgent, noSubscribe  bool
-	peek                               bool
+	words                                   []string
+	as, person, note, after, op, state, out string
+	attach                                  []string
+	limit                                   int
+	unfold, json, urgent, noSubscribe       bool
+	peek                                    bool
 }
 
 func parseBoardArgs(args []string) (boardArgs, error) {
@@ -59,7 +68,7 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
-		case "--as", "--person", "--note", "--after", "--operation-id", "--limit", "--state":
+		case "--as", "--person", "--note", "--after", "--operation-id", "--limit", "--state", "--attach", "--out":
 			if i+1 >= len(args) {
 				return out, fmt.Errorf("%s needs a value", a)
 			}
@@ -77,6 +86,10 @@ func parseBoardArgs(args []string) (boardArgs, error) {
 				out.op = args[i]
 			case "--state":
 				out.state = args[i]
+			case "--attach":
+				out.attach = append(out.attach, args[i])
+			case "--out":
+				out.out = args[i]
 			case "--limit":
 				n, err := strconv.Atoi(args[i])
 				if err != nil || n <= 0 {
@@ -155,8 +168,13 @@ func BoardMain(ctx context.Context, args []string, self string, stdin io.Reader,
 	case "notices":
 		return b.notices()
 	case "blob":
-		fmt.Fprintln(stderr, "board blob: media is not supported yet")
-		return 2
+		return b.blob()
+	case "upload":
+		return b.uploadCommand()
+	case "held":
+		return b.held()
+	case "release", "drop":
+		return b.release(command)
 	}
 	fmt.Fprintf(stderr, "board: unknown command %q\n%s\n", command, boardUsage)
 	return 2
@@ -236,6 +254,23 @@ func (b boardCLI) text(skip int) (string, error) {
 		return string(data), nil
 	}
 	return strings.Join(words, " "), nil
+}
+
+// textWithAttachments is the post text with every --attach shown after it.
+// With attachments and no text, the post is just the attachments.
+func (b boardCLI) textWithAttachments(skip int) (string, error) {
+	shown, err := b.attachments()
+	if err != nil {
+		return "", err
+	}
+	if shown != "" && len(b.args.words) <= skip {
+		return strings.TrimSpace(shown), nil
+	}
+	body, err := b.text(skip)
+	if err != nil {
+		return "", err
+	}
+	return body + shown, nil
 }
 
 func (b boardCLI) warn(warnings []board.MentionWarning) {
@@ -321,7 +356,7 @@ func (b boardCLI) open() int {
 	if !b.need(2, "a board and a title") {
 		return 2
 	}
-	body, err := b.text(2)
+	body, err := b.textWithAttachments(2)
 	if err != nil {
 		return b.fail(err)
 	}
@@ -351,7 +386,7 @@ func (b boardCLI) reply() int {
 	if !b.need(1, "a thread or the post to answer") {
 		return 2
 	}
-	body, err := b.text(1)
+	body, err := b.textWithAttachments(1)
 	if err != nil {
 		return b.fail(err)
 	}
@@ -645,7 +680,7 @@ func (b boardCLI) printPost(p board.Post) {
 	case board.PostPurged:
 		fmt.Fprintln(b.stdout, "[removed]")
 	default:
-		fmt.Fprintln(b.stdout, strings.TrimRight(board.RenderForAgent(p.Body, b.args.unfold), "\n"))
+		fmt.Fprintln(b.stdout, strings.TrimRight(board.RenderForAgentWith(p.Body, b.args.unfold, p.Attachments), "\n"))
 	}
 }
 
@@ -732,4 +767,199 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// upload sends a file, or a URL the CLI fetches on the poster's request, to
+// crew-board's ingest. The service itself never fetches URLs.
+func (b boardCLI) upload(source string) (board.Attachment, error) {
+	var data []byte
+	name := source
+	if strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") {
+		ctx, cancel := context.WithTimeout(b.ctx, 60*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+		if err != nil {
+			return board.Attachment{}, err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return board.Attachment{}, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return board.Attachment{}, fmt.Errorf("fetch %s: %s", source, resp.Status)
+		}
+		if data, err = io.ReadAll(io.LimitReader(resp.Body, 100<<20)); err != nil {
+			return board.Attachment{}, err
+		}
+		if u, err := url.Parse(source); err == nil {
+			name = u.Path
+		}
+	} else {
+		var err error
+		if data, err = os.ReadFile(source); err != nil {
+			return board.Attachment{}, err
+		}
+	}
+	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.base+"/v1/blobs", bytes.NewReader(data))
+	if err != nil {
+		return board.Attachment{}, err
+	}
+	req.Header.Set("X-Filename", filepath.Base(name))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return board.Attachment{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		if text := describeRefusal(body); text != "" {
+			return board.Attachment{}, errors.New(text)
+		}
+		return board.Attachment{}, errors.New(resp.Status)
+	}
+	var a board.Attachment
+	return a, json.Unmarshal(body, &a)
+}
+
+// attachments uploads every --attach and returns the Markdown lines that show
+// them, one image per line.
+func (b boardCLI) attachments() (string, error) {
+	var lines []string
+	for _, source := range b.args.attach {
+		a, err := b.upload(source)
+		if err != nil {
+			return "", fmt.Errorf("attach %s: %w", source, err)
+		}
+		if a.State == board.AttachmentHeld {
+			fmt.Fprintf(b.stderr, "note: %s is held (%s); the post shows a placeholder until a person releases it\n", source, a.Reason)
+		}
+		alt := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source))
+		lines = append(lines, fmt.Sprintf("![%s](blob:sha256-%s)", alt, a.Ref))
+	}
+	if len(lines) == 0 {
+		return "", nil
+	}
+	return "\n\n" + strings.Join(lines, "\n\n") + "\n", nil
+}
+
+func (b boardCLI) uploadCommand() int {
+	if !b.need(1, "a file or URL") {
+		return 2
+	}
+	a, err := b.upload(b.args.words[0])
+	if err != nil {
+		return b.fail(err)
+	}
+	if b.args.json {
+		return printJSON(b.stdout, a)
+	}
+	if a.State == board.AttachmentHeld {
+		fmt.Fprintf(b.stdout, "held %s: %s\nA person on this site can release it with `board release %s`.\n", a.Ref, a.Reason, a.Ref)
+		return 0
+	}
+	fmt.Fprintf(b.stdout, "%s %s, %d×%d, %d KB. Put it in a post with:\n![%s](blob:sha256-%s \"caption\")\n", a.Kind, a.Ref, a.Width, a.Height, a.Bytes>>10, strings.TrimSuffix(a.Name, filepath.Ext(a.Name)), a.Ref)
+	return 0
+}
+
+func (b boardCLI) blob() int {
+	if !b.need(1, "an attachment ref") {
+		return 2
+	}
+	ref := strings.TrimPrefix(b.args.words[0], "sha256-")
+	var a board.Attachment
+	if err := b.get("/v1/blobs/"+url.PathEscape(ref)+"/info", &a); err != nil {
+		return b.fail(err)
+	}
+	if b.args.out == "" {
+		if b.args.json {
+			return printJSON(b.stdout, a)
+		}
+		fmt.Fprintf(b.stdout, "%s %s: %s", a.Kind, a.Ref, a.State)
+		if a.State == board.AttachmentReady {
+			fmt.Fprintf(b.stdout, ", %s, %d×%d, %d KB", a.Type, a.Width, a.Height, a.Bytes>>10)
+		}
+		if a.Reason != "" {
+			fmt.Fprintf(b.stdout, " (%s)", a.Reason)
+		}
+		fmt.Fprintln(b.stdout)
+		for _, c := range a.Checks {
+			fmt.Fprintln(b.stdout, "  "+c)
+		}
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(b.ctx, 5*time.Minute)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, b.base+"/v1/blobs/"+url.PathEscape(ref), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return b.fail(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return b.fail(errors.New(describeRefusal(body)))
+	}
+	f, err := os.Create(b.args.out)
+	if err != nil {
+		return b.fail(err)
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		return b.fail(err)
+	}
+	if err := f.Close(); err != nil {
+		return b.fail(err)
+	}
+	fmt.Fprintf(b.stdout, "saved %s to %s.\n", a.Kind, b.args.out)
+	return 0
+}
+
+func (b boardCLI) held() int {
+	var out struct {
+		Held []board.Attachment `json:"held"`
+	}
+	if err := b.get("/v1/held", &out); err != nil {
+		return b.fail(err)
+	}
+	if b.args.json {
+		return printJSON(b.stdout, out)
+	}
+	if len(out.Held) == 0 {
+		fmt.Fprintln(b.stdout, "Nothing is held.")
+		return 0
+	}
+	tw := tabwriter.NewWriter(b.stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "REF\tNAME\tWHEN\tWHY")
+	for _, a := range out.Held {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", a.Ref, a.Name, age(a.CreatedAt), a.Reason)
+	}
+	_ = tw.Flush()
+	return 0
+}
+
+func (b boardCLI) release(op string) int {
+	if !b.need(1, "an attachment ref") {
+		return 2
+	}
+	actor, err := b.actor()
+	if err != nil {
+		return b.fail(err)
+	}
+	ref := strings.TrimPrefix(b.args.words[0], "sha256-")
+	var a board.Attachment
+	if err := b.post("/v1/held/"+url.PathEscape(ref)+"/"+op, board.HeldRequest{Actor: actor}, &a); err != nil {
+		return b.fail(err)
+	}
+	switch {
+	case op == "drop":
+		fmt.Fprintf(b.stdout, "dropped %s; posts naming it show it as removed.\n", ref)
+	case a.State == board.AttachmentReady:
+		fmt.Fprintf(b.stdout, "released %s: re-encoded to %s, %d×%d; posts naming it show it now.\n", ref, a.Type, a.Width, a.Height)
+	default:
+		fmt.Fprintf(b.stdout, "still held: %s\n", a.Reason)
+	}
+	return 0
 }

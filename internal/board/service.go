@@ -132,6 +132,9 @@ type Service struct {
 	cfg   Config
 	mu    sync.Mutex
 	poke  func()
+
+	media       *Ingester
+	attachments AttachmentStore
 }
 
 var siteName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
@@ -359,6 +362,9 @@ func (s *Service) OpenThread(ctx context.Context, request OpenThreadRequest) (Po
 		if err := checkBody(request.Body); err != nil {
 			return PostResult{}, nil, err
 		}
+		if err := s.checkAttachments(ctx, request.Body); err != nil {
+			return PostResult{}, nil, err
+		}
 		if _, err := s.store.GetBoard(ctx, request.Board); errors.Is(err, ErrNotFound) {
 			return PostResult{}, nil, refuse(CodeBoardNotFound, "no board %s", request.Board)
 		} else if err != nil {
@@ -400,6 +406,9 @@ type ReplyRequest struct {
 func (s *Service) Reply(ctx context.Context, request ReplyRequest) (PostResult, bool, error) {
 	return do(s, ctx, request.OperationID, request, func(now time.Time) (PostResult, []Change, error) {
 		if err := checkBody(request.Body); err != nil {
+			return PostResult{}, nil, err
+		}
+		if err := s.checkAttachments(ctx, request.Body); err != nil {
 			return PostResult{}, nil, err
 		}
 		thread, err := s.thread(ctx, request.Thread)
@@ -458,6 +467,9 @@ type EditRequest struct {
 func (s *Service) Edit(ctx context.Context, request EditRequest) (PostResult, bool, error) {
 	return do(s, ctx, request.OperationID, request, func(now time.Time) (PostResult, []Change, error) {
 		if err := checkBody(request.Body); err != nil {
+			return PostResult{}, nil, err
+		}
+		if err := s.checkAttachments(ctx, request.Body); err != nil {
 			return PostResult{}, nil, err
 		}
 		post, thread, err := s.authorsPost(ctx, request.Actor, request.Post)
@@ -710,7 +722,7 @@ func (s *Service) ReadThread(ctx context.Context, id, after string, limit int) (
 		read.Next = posts[limit-1].ID
 	}
 	for _, p := range posts {
-		read.Posts = append(read.Posts, public(p))
+		read.Posts = append(read.Posts, s.withAttachments(ctx, public(p)))
 	}
 	return read, nil
 }
@@ -721,7 +733,7 @@ func (s *Service) GetPost(ctx context.Context, id string) (Post, error) {
 	if errors.Is(err, ErrNotFound) {
 		return Post{}, refuse(CodePostNotFound, "no post %s", id)
 	}
-	return public(post), err
+	return s.withAttachments(ctx, public(post)), err
 }
 
 // Revisions lists a visible post's revisions, oldest first.

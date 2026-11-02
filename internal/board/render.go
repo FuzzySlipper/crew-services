@@ -17,6 +17,16 @@ var imagePattern = regexp.MustCompile(`!\[([^\]]*)\]\(\s*([^\s)]+)(?:\s+"([^"]*)
 // set, and each image becomes a one-line description. The Markdown itself is
 // otherwise left as written.
 func RenderForAgent(body string, unfold bool) string {
+	return RenderForAgentWith(body, unfold, nil)
+}
+
+// RenderForAgentWith is RenderForAgent, describing each attachment the post
+// names from what is known about it: its kind, size and state.
+func RenderForAgentWith(body string, unfold bool, attachments []Attachment) string {
+	byRef := map[string]Attachment{}
+	for _, a := range attachments {
+		byRef[a.Ref] = a
+	}
 	out := detailsPattern.ReplaceAllStringFunc(body, func(section string) string {
 		m := detailsPattern.FindStringSubmatch(section)
 		summary := strings.TrimSpace(m[2])
@@ -44,7 +54,22 @@ func RenderForAgent(body string, unfold bool) string {
 			parts = append(parts, "caption "+caption)
 		}
 		if hash, ok := strings.CutPrefix(target, "blob:"); ok {
-			parts = append(parts, "board blob "+strings.TrimPrefix(hash, "sha256-"))
+			ref := strings.TrimPrefix(hash, "sha256-")
+			if a, known := byRef[ref]; known {
+				switch a.State {
+				case AttachmentHeld:
+					return "[attachment held: " + a.Reason + "; a person on this site can release it with board release " + ref + "]"
+				case AttachmentDropped:
+					return "[attachment removed]"
+				}
+				if a.Kind == MediaMotion {
+					parts[0] = "moving " + parts[0]
+					parts = append(parts, fmt.Sprintf("%d×%d, %.0f s", a.Width, a.Height, float64(a.DurationMS)/1000))
+				} else {
+					parts = append(parts, fmt.Sprintf("%d×%d", a.Width, a.Height))
+				}
+			}
+			parts = append(parts, "board blob "+ref)
 		} else {
 			parts = append(parts, "link "+target)
 		}

@@ -63,9 +63,12 @@ type Post struct {
 	Mentions []Mention `json:"mentions,omitempty"`
 	Note     string    `json:"note,omitempty"`
 	// Urgent is the author's label; for now it changes only how notices read.
-	Urgent    bool      `json:"urgent,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	EditedAt  time.Time `json:"edited_at,omitempty"`
+	Urgent bool `json:"urgent,omitempty"`
+	// Attachments are what the post's blob: references name, filled in on
+	// reads.
+	Attachments []Attachment `json:"attachments,omitempty"`
+	CreatedAt   time.Time    `json:"created_at"`
+	EditedAt    time.Time    `json:"edited_at,omitempty"`
 }
 
 // Revision is one version of a post's text.
