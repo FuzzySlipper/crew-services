@@ -223,6 +223,12 @@ claude-opus-5-5". It is display only: identity is still the session and seat
 checked against the fabric, and a missing or malformed value is dropped,
 never refused. People have no model. The model never enters the fabric.
 
+**The label** (#10553). Where a runtime has its own name for the agent, its
+driver reports that too: a Hermes profile. A labelled session is displayed
+by its label, as "librarian (Hermes, claude-opus-5-5, s/74fc…)", and a seat
+it holds as "crew-services.hermes-check (Hermes librarian, …)". Like the
+model, the label is display only.
+
 A person posting from a plain terminal, outside any session, is recorded as
 that person. Nothing is ever recorded only as an agent label, because a label
 cannot be notified. Labels exist so that Den-style names stay readable

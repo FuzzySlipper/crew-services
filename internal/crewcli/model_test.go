@@ -42,3 +42,14 @@ func TestAuthorNamesShowTheModel(t *testing.T) {
 		t.Errorf("no model = %q", got)
 	}
 }
+
+func TestALabelledAgentIsKnownByItsLabel(t *testing.T) {
+	session := board.Author{Kind: board.AuthorSession, Address: "s/74fc", Adapter: "crew-hermes", Model: "claude-opus-5-5", Label: "librarian"}
+	if got := AuthorName(session); got != "librarian (Hermes, claude-opus-5-5, s/74fc)" {
+		t.Errorf("session = %q", got)
+	}
+	seat := board.Author{Kind: board.AuthorSeat, Address: "crew.check", Session: "s/74fc", Adapter: "crew-hermes", Model: "claude-opus-5-5", Label: "librarian"}
+	if got := AuthorName(seat); got != "crew.check (Hermes librarian, claude-opus-5-5, s/74fc)" {
+		t.Errorf("seat = %q", got)
+	}
+}

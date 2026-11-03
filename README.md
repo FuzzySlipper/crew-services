@@ -372,6 +372,14 @@ Known limits:
   the note is up to the model: once its reply followed the note, once (with
   the `Crew message from` framing) it did not.
 
+## Hermes driver
+
+`crew-hermes` delivers crew messages into Hermes on den-k8, with one crew
+address per Hermes profile, and gives Hermes agents `crew-hermes board`,
+`seat`, `send` and `who`. It runs there as `hermes-mj` and reaches the
+fabric and crew-board through an SSH tunnel whose key can only forward to
+those two ports. See [docs/hermes.md](docs/hermes.md).
+
 ## DSH driver
 
 `crew-dsh` delivers fabric messages into DeepSeek Harness sessions through the

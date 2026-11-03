@@ -355,7 +355,11 @@ func (d *Driver) accepted(sessionID string) {
 func (d *Driver) Sessions() []crewcli.SessionInfo {
 	out := []crewcli.SessionInfo{}
 	for _, t := range d.snapshot() {
-		out = append(out, crewcli.SessionInfo{Address: t.Address, Runtime: "dsh", NativeID: t.SessionID, Cwd: t.Cwd, State: t.State, SeenAt: t.UpdatedAt})
+		runtime := d.cfg.Runtime
+		if runtime == "" {
+			runtime = "dsh"
+		}
+		out = append(out, crewcli.SessionInfo{Address: t.Address, Runtime: runtime, NativeID: t.SessionID, Cwd: t.Cwd, State: t.State, SeenAt: t.UpdatedAt})
 	}
 	return out
 }
@@ -757,5 +761,9 @@ func (d *Driver) reconcileStuck(ctx context.Context, t target, head fabricclient
 
 // render is the text the session reads, naming the sender when Lookup knows it.
 func (d *Driver) render(ctx context.Context, m fabricclient.Message) string {
-	return crewcli.RenderFabricMessage(ctx, m, "crew-dsh", d.Lookup)
+	command := d.cfg.ReplyCommand
+	if command == "" {
+		command = "crew-dsh"
+	}
+	return crewcli.RenderFabricMessage(ctx, m, command, d.Lookup)
 }

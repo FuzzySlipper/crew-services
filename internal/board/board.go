@@ -150,6 +150,9 @@ type Author struct {
 	// Model is the model the session's driver reported when the post was
 	// written: display only, never part of who the author is.
 	Model string `json:"model,omitempty"`
+	// Label names the agent where its runtime has a name for it (a Hermes
+	// profile), as its driver reported it: display only, like Model.
+	Label string `json:"label,omitempty"`
 	Site  string `json:"site"`
 }
 
@@ -236,6 +239,9 @@ type Actor struct {
 	// Model is the model the session's driver reports it is using. It is
 	// recorded on what the session writes and checked against nothing.
 	Model string `json:"model,omitempty"`
+	// Label is the agent's name in its runtime (a Hermes profile), reported
+	// by the driver; recorded like Model.
+	Label string `json:"label,omitempty"`
 }
 
 // ErrorCode is a stable reason code (docs/crew-board.md, Reason codes).

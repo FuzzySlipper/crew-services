@@ -241,7 +241,7 @@ func (s *Service) author(ctx context.Context, actor Actor) (Author, error) {
 		return Author{}, refuse(CodeSessionUnbound, "%s is not a bound session address", actor.SessionAddress)
 	}
 	if actor.AsSeat == "" {
-		return Author{Kind: AuthorSession, Address: actor.SessionAddress, Adapter: adapter, Model: cleanModel(actor.Model), Site: s.cfg.Site}, nil
+		return Author{Kind: AuthorSession, Address: actor.SessionAddress, Adapter: adapter, Model: cleanModel(actor.Model), Label: cleanLabel(actor.Label), Site: s.cfg.Site}, nil
 	}
 	if !seatForm.MatchString(actor.AsSeat) {
 		return Author{}, refuse(CodeInvalid, "as_seat must be a seat address, scope.name")
@@ -253,7 +253,7 @@ func (s *Service) author(ctx context.Context, actor Actor) (Author, error) {
 	if !exists || holder != actor.SessionAddress {
 		return Author{}, &Error{Code: CodeNotHolder, Err: errors.New(actor.SessionAddress + " does not hold " + actor.AsSeat), Detail: map[string]any{"holder": holder}}
 	}
-	return Author{Kind: AuthorSeat, Address: actor.AsSeat, Session: actor.SessionAddress, Adapter: adapter, Model: cleanModel(actor.Model), Site: s.cfg.Site}, nil
+	return Author{Kind: AuthorSeat, Address: actor.AsSeat, Session: actor.SessionAddress, Adapter: adapter, Model: cleanModel(actor.Model), Label: cleanLabel(actor.Label), Site: s.cfg.Site}, nil
 }
 
 // sameParticipant reports whether the caller is the post's author: the same
@@ -891,4 +891,20 @@ func editorModel(actor Actor) string {
 		return ""
 	}
 	return cleanModel(actor.Model)
+}
+
+// cleanLabel keeps a reported agent label (a Hermes profile name) only when
+// it is a plain name: short, lowercase letters, digits, dot, dash or
+// underscore. Anything else is dropped.
+func cleanLabel(label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" || len(label) > 40 {
+		return ""
+	}
+	for _, r := range label {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("._-", r)) {
+			return ""
+		}
+	}
+	return label
 }

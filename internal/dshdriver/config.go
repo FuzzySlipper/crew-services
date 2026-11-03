@@ -29,6 +29,11 @@ type Config struct {
 	// out of the inbox about 0.1s before it writes the user message, and a
 	// repeat in between is not deduplicated.
 	ReconcileWait time.Duration
+	// ReplyCommand is the command a rendered message tells the agent to
+	// reply with: crew-dsh, or crew-hermes when this driver serves Hermes.
+	ReplyCommand string
+	// Runtime is the runtime name `who` shows: dsh, or hermes.
+	Runtime string
 	// Recent limits discovery to sessions updated within this window.
 	Recent time.Duration
 }

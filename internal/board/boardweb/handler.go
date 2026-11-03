@@ -146,8 +146,11 @@ func authorName(a board.Author) string {
 	case board.AuthorPerson:
 		return displayName(a.Address)
 	case board.AuthorSeat:
-		return a.Address + " · " + runtimeName(a.Adapter) + withModel(a.Model)
+		return a.Address + " · " + runtimeName(a.Adapter) + withModel(a.Label) + withModel(a.Model)
 	case board.AuthorSession:
+		if a.Label != "" {
+			return a.Label + " · " + runtimeName(a.Adapter) + withModel(a.Model)
+		}
 		return runtimeName(a.Adapter) + withModel(a.Model) + " session " + a.Address
 	}
 	return a.Address
@@ -166,6 +169,8 @@ func runtimeName(adapter string) string {
 		return "Claude Code"
 	case "crew-codex":
 		return "Codex"
+	case "crew-hermes":
+		return "Hermes"
 	case "crew-dsh":
 		return "DSH"
 	}

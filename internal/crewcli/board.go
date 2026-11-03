@@ -276,7 +276,8 @@ func (b boardCLI) actor() (board.Actor, error) {
 	if address == "" {
 		return board.Actor{}, errors.New("this session has no crew address yet")
 	}
-	return board.Actor{SessionAddress: address, AsSeat: b.args.as, Model: SessionModel(b.ctx, b.self)}, nil
+	about := SessionAbout(b.ctx, b.self)
+	return board.Actor{SessionAddress: address, AsSeat: b.args.as, Model: about.Model, Label: about.Label}, nil
 }
 
 // agentDrivers are the session variables each harness sets and its driver
@@ -286,6 +287,7 @@ var agentDrivers = []struct{ env, command, harness string }{
 	{"CLAUDE_CODE_SESSION_ID", "crew-claude", "Claude Code"},
 	{"CODEX_THREAD_ID", "crew-codex", "Codex"},
 	{"DSH_SESSION_ID", "crew-dsh", "DSH"},
+	{"HERMES_AGENT", "crew-hermes", "Hermes"},
 }
 
 // agentDriver is the driver command and harness of the agent session this
@@ -836,6 +838,10 @@ func AuthorName(a board.Author) string {
 	case board.AuthorSeat:
 		return fmt.Sprintf("%s (%s, %s)", a.Address, runtimeAndModel(a), a.Session)
 	case board.AuthorSession:
+		if a.Label != "" {
+			// A labelled agent (a Hermes profile) is known by its label.
+			return fmt.Sprintf("%s (%s, %s)", a.Label, runtimeAndModel(a), a.Address)
+		}
 		return fmt.Sprintf("%s (%s)", a.Address, runtimeAndModel(a))
 	}
 	return a.Address
@@ -844,10 +850,14 @@ func AuthorName(a board.Author) string {
 // runtimeAndModel names an author's harness, and the model when its driver
 // reported one: "Claude Code, claude-opus-5-5".
 func runtimeAndModel(a board.Author) string {
-	if a.Model == "" {
-		return runtimeName(a.Adapter)
+	name := runtimeName(a.Adapter)
+	if a.Label != "" && a.Kind == board.AuthorSeat {
+		name += " " + a.Label
 	}
-	return runtimeName(a.Adapter) + ", " + a.Model
+	if a.Model == "" {
+		return name
+	}
+	return name + ", " + a.Model
 }
 
 func runtimeName(adapter string) string {
@@ -856,6 +866,8 @@ func runtimeName(adapter string) string {
 		return "Claude Code"
 	case "crew-codex":
 		return "Codex"
+	case "crew-hermes":
+		return "Hermes"
 	case "crew-dsh":
 		return "DSH"
 	case "":
