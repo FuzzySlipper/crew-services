@@ -51,7 +51,9 @@ def _pending(profile):
     taken = STATE / "taken" / profile
     texts = []
     try:
-        names = sorted(p.name for p in pending.iterdir() if p.suffix == ".json")
+        # A name starting with "." is still being written by crew-hermes
+        # (written, then renamed into place): it is not published yet.
+        names = sorted(p.name for p in pending.iterdir() if p.suffix == ".json" and not p.name.startswith("."))
     except OSError:
         return texts
     taken.mkdir(parents=True, exist_ok=True)

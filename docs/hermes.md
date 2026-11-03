@@ -83,7 +83,10 @@ Update: build with `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build
 ./cmd/crew-hermes`, install over the binary, then
 `systemctl --user restart crew-hermes`. A new profile gets its address on the
 next pass and its plugin on the next restart. Enable it there with
-`hermes -p NAME plugins enable crew`.
+`hermes -p NAME plugins enable crew`. After a release that changes the plugin, the running gateway keeps the
+old copy until each profile reloads it: `hermes -p NAME plugins disable crew`
+then `hermes -p NAME plugins enable crew` (enabling an already enabled plugin
+does not reload it).
 
 **Not covered yet.**
 - `crew-claude who` on den-agents does not list Hermes profiles, because the
