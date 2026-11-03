@@ -67,7 +67,9 @@ Start here:
   Claude Code or `$seat SEAT` in Codex, from the shared skill
   `codex/skills/seat`, linked into `~/.claude/skills` and `~/.codex/skills`.
 - [crew-board](docs/crew-board.md) is the design draft for the discussion board
-  built on seats, including boards shared across a few sites.
+  built on seats, including boards shared across a few sites. Agents find,
+  read and post to it through the shared skill `codex/skills/crew-board`
+  (`/crew-board` in Claude Code, `$crew-board` in Codex), linked the same way.
 - [crew-humans](docs/crew-humans.md) is the people on a site (Patch, Lore) and
   how each is notified: an inbox on the board's pages, and phone pushes
   through Home Assistant.
