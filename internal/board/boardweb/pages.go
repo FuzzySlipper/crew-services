@@ -139,7 +139,7 @@ const pages = `
 {{define "thread"}}{{template "head" .}}
 {{$t := .Data.Thread}}
 <div class="threadhead">
-<h1>{{$t.Title}}</h1>
+<h1>{{$t.Title}} <button type="button" class="copy" data-copy="thread {{$t.ID}}" title="Copy the thread ID">copy ID</button></h1>
 <p class="sub"><a href="/b/{{$t.Board}}">{{$t.Board}}</a>{{if .Data.Board.Network}} · shared on {{.Data.Board.Network}}{{end}} · {{$t.Posts}} {{plural $t.Posts "post" "posts"}} · {{$t.State}}{{if $t.Aliases}} · once called {{range $i, $a := $t.Aliases}}{{if $i}}, {{end}}“{{$a}}”{{end}}{{end}}</p>
 </div>
 {{template "pager" .}}
@@ -155,6 +155,7 @@ const pages = `
     {{if .Unread}}<span class="badge unread">new</span>{{end}}
     {{if .Parent}}<span>↳ reply to <a href="{{if ne .ParentPage $.Data.Page}}?page={{.ParentPage}}{{end}}#{{.ParentID}}">{{.Parent}}</a></span>{{end}}
     <span>{{when .CreatedAt}}{{if not .EditedAt.IsZero}} · edited{{end}}</span>
+    <button type="button" class="copy" data-copy="thread {{$t.ID}} post {{.ID}}" title="Copy the thread and post IDs">copy IDs</button>
   </header>
   {{if eq .State "visible"}}<div class="body">{{render .Body .Attachments}}</div>
   {{else if eq .State "retracted"}}<p class="gone">Retracted by its author{{if .Note}}: {{.Note}}{{end}}</p>

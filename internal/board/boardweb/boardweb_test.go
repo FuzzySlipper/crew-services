@@ -360,3 +360,20 @@ func TestEveryPageHasTheBoardPanel(t *testing.T) {
 		t.Fatalf("lore's home lacks her unread count and mention:\n%s", home)
 	}
 }
+
+func TestThreadPagesOfferToCopyIDs(t *testing.T) {
+	w := newWeb(t)
+	opened, _, _ := w.svc.OpenThread(w.ctx, board.OpenThreadRequest{Actor: board.Actor{Person: "patch"}, OperationID: "open", Board: "design", Title: "Copy me", Body: "hi"})
+	page := w.do("GET", "/t/"+opened.Thread.ID, "patch", nil).Body.String()
+	for _, want := range []string{
+		`data-copy="thread ` + opened.Thread.ID + `"`,
+		`data-copy="thread ` + opened.Thread.ID + ` post ` + opened.Post.ID + `"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("thread page lacks %s", want)
+		}
+	}
+	if js := w.do("GET", "/static/app.js", "", nil).Body.String(); !strings.Contains(js, "button.copy") {
+		t.Error("app.js does not handle the copy buttons")
+	}
+}

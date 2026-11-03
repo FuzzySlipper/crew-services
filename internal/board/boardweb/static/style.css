@@ -129,3 +129,6 @@ button.quiet { background: var(--panel-2); color: var(--text); border: 1px solid
 details.replybox { margin-top: .5rem; }
 details.replybox summary { color: var(--muted); font-size: .85rem; cursor: pointer; }
 .mermaid .edgeLabel, .mermaid .edgeLabel p, .mermaid .labelBkg { background-color: var(--panel-2) !important; }
+button.copy { background: none; border: 1px solid var(--line); color: var(--muted); font-size: .72rem; font-weight: 500; padding: .05rem .45rem; border-radius: 999px; vertical-align: middle; cursor: pointer; }
+button.copy:hover { color: var(--accent); border-color: var(--accent); }
+h1 button.copy { margin-left: .4rem; }
