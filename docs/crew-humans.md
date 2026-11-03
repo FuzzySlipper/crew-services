@@ -1,9 +1,8 @@
 # crew-humans
 
-Status: draft for Patch's decisions (Den task 10535). Nothing here is built
-yet. Each section gives a recommendation; the
-[decisions](#decisions-for-patch) at the end are Patch's to make, and the
-design changes to follow them before any code is written.
+Status: design agreed (Den task 10535). Patch accepted the recommendations on
+2026-11-02; they are recorded under [Decisions](#decisions). Nothing is built
+yet.
 
 crew-humans is the crew service for the people on a site: Patch and Lore on
 this one. Other services ask it to notify a person, and it alone decides what
@@ -57,18 +56,26 @@ person and their routes:
       "display": "Patch",
       "routes": [
         { "kind": "inbox" },
-        { "kind": "home-assistant", "service": "mobile_app_<patch's phone>",
+        { "kind": "home-assistant", "service": "mobile_app_pixel_10_pro_xl",
           "token_file": "/etc/crew-humans/ha-token", "push": "mentions" }
       ]
     },
     {
       "name": "lore",
       "display": "Lore",
-      "routes": [{ "kind": "inbox" }]
+      "routes": [
+        { "kind": "inbox" },
+        { "kind": "home-assistant", "service": "mobile_app_<lore's phone>",
+          "token_file": "/etc/crew-humans/ha-token", "push": "mentions" }
+      ]
     }
   ]
 }
 ```
+
+Patch's phone is the Pixel 10 Pro XL that already gets the camera alerts
+(`notify.mobile_app_pixel_10_pro_xl`). Lore has the Companion app too; her
+phone's notify target is read from Home Assistant when the route is set up.
 
 - **Names** are short, lowercase and stable (`patch`, `lore`): what `@patch`
   resolves to on the board and what records store. The display name is only
@@ -221,13 +228,17 @@ A session can say which person it works for. That lets crew-board show
 "rusty-engine.reviewer (Claude Code, s/5b69…, working for Patch)" and lets a
 session tell its own person's requests from another person's agent.
 
-Recommended:
+Patch and Lore each work on their own computers: Patch's agents run on this
+box and his others, Lore's on den-lore and den-lore-mini. Each harness is
+already set up for its own person, so naming the person matters only where
+sessions meet: on the fabric, the board and in docs and records.
 
-- **A default per OS account,** in crew's config (`CREW_PERSON=patch` or
-  `~/.config/crew/person`). One account, one person covers the usual case.
-- **A per-session override:** `crew-claude whoami --person lore` (and the same
-  for each driver), for a session Lore drives from Patch's account. The driver
-  records it with the session, in its own state.
+- **A default per machine account,** in crew's config (`CREW_PERSON=lore` or
+  `~/.config/crew/person`). Since every computer belongs to one person, this
+  is how nearly every session learns its person.
+- **A per-session override:** `crew-claude whoami --person NAME` (and the same
+  for each driver), for the rare session started on someone else's computer.
+  The driver records it with the session, in its own state.
 - **Drivers report it** next to the model and label they already report
   (`GET /v1/sessions/{id}/model`, which already answers `{model, label}` and would gain `person`), and crew-board stores it on posts as display
   only, like the model. The fabric never sees it.
@@ -235,27 +246,34 @@ Recommended:
   also says "you work for Patch", so the harness's "user" has a name from the
   first turn.
 - **Unrecorded means unknown,** shown as nothing, never guessed.
+- **Lore's computers reach this site's services the way den-k8 does:** the
+  fabric, crew-board and crew-humans stay on loopback here, and a driver on
+  den-lore reaches them through a forward-only SSH tunnel, as crew-hermes does
+  (`docs/hermes.md`). Setting that up is its own step when Lore's agents join
+  the fabric.
 
 A person's name on a session is a label for people reading, not an identity
 check: on a trusted box it stops honest confusion, as the rest of v1 does.
 
 ## Partner sites
 
-Recommended: partner sites' people appear only on crew-board, as
+Partner sites' people appear only on crew-board, as
 `kate@interlake`. A mention of a partner site's person reaches that site's
 crew-board through the shared board, and that site's own crew-humans notifies
 them. This site's crew-humans lists and notifies only this site's people, and
 holds no routes for anyone else's.
 
-## Decisions for Patch
+## Decisions
 
-| Decision | Recommendation |
+Patch decided these on 2026-11-02:
+
+| Decision | Decided |
 | --- | --- |
 | The name | `crew-humans`, which keeps people apart from the harness "user" |
-| Lore's OS account | Patch and Lore say which; either works with the default-plus-override below |
-| How a session learns its person | a per-account default plus a per-session `whoami --person` override, recorded by the driver |
+| Lore's computers | her own (den-lore, den-lore-mini), each harness set up for her |
+| How a session learns its person | a per-machine-account default, with a per-session `whoami --person` override for the exception, recorded by the driver |
 | The first push route | Home Assistant's Companion app, plus the board's inbox for everyone |
-| Which phone is whose | the `mobile_app_…` notify target for Patch, and whether Lore has the Companion app |
+| Phones | Patch: the Pixel 10 Pro XL (`mobile_app_pixel_10_pro_xl`); Lore: her phone's Companion app, target read from Home Assistant |
 | What pushes by default | `mentions`: mentions, replies and urgent notices; subscriptions stay in the inbox |
 | Urgent behaviour | a separate high-importance channel, so each phone decides how loud |
 | Partner sites' people | on crew-board only; their own site notifies them |
