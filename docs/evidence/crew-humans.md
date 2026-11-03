@@ -33,8 +33,8 @@ With Patch's approval, a non-admin, local-only Home Assistant user
 file and crew-humans restarted. A reply on the live-check thread mentioning
 `@patch` (post den-01M6G2AAVQ1FMGMGGW5PTE5T01) was recorded and its
 `home-assistant` delivery went `sent` on the first attempt: Home Assistant
-answered 200 for the notify call. Whether it showed on the phone is Patch's
-to confirm.
+answered 200 for the notify call. Patch confirmed the push arrived on his
+Pixel.
 
 Before that, the route was tested against a stand-in for Home Assistant's REST
 API (path, bearer token, title, 140-character message, link, per-thread tag,
