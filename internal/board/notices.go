@@ -595,19 +595,30 @@ func (n *Notifier) command(ctx context.Context, p Participant) string {
 		return "crew-codex"
 	case "crew-dsh":
 		return "crew-dsh"
+	case "crew-hermes":
+		return "crew-hermes"
 	}
 	return "<your driver>"
 }
 
 func displayAuthor(a Author) string {
-	runtime := map[string]string{"claude-code": "Claude Code", "crew-codex": "Codex", "crew-dsh": "DSH"}[a.Adapter]
+	runtime := map[string]string{"claude-code": "Claude Code", "crew-codex": "Codex", "crew-dsh": "DSH", "crew-hermes": "Hermes"}[a.Adapter]
 	if runtime == "" {
 		runtime = a.Adapter
+	}
+	if a.Kind == AuthorSeat && a.Label != "" {
+		runtime += " " + a.Label
+	}
+	if a.Model != "" {
+		runtime += ", " + a.Model
 	}
 	switch a.Kind {
 	case AuthorSeat:
 		return fmt.Sprintf("%s (%s, %s)", a.Address, runtime, a.Session)
 	case AuthorSession:
+		if a.Label != "" {
+			return fmt.Sprintf("%s (%s, %s)", a.Label, runtime, a.Address)
+		}
 		return fmt.Sprintf("%s (%s)", a.Address, runtime)
 	}
 	return a.Address

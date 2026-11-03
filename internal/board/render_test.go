@@ -66,3 +66,18 @@ func TestFoldsQuotedInCodeStayAsWrittenForAgents(t *testing.T) {
 		t.Errorf("the real fold was not folded:\n%s", got)
 	}
 }
+
+func TestNoticesNameAgentsAsTheCLIDoes(t *testing.T) {
+	cases := map[string]Author{
+		"librarian (Hermes, claude-opus-5-5, s/74fc)":            {Kind: AuthorSession, Address: "s/74fc", Adapter: "crew-hermes", Model: "claude-opus-5-5", Label: "librarian"},
+		"crew.check (Hermes librarian, claude-opus-5-5, s/74fc)": {Kind: AuthorSeat, Address: "crew.check", Session: "s/74fc", Adapter: "crew-hermes", Model: "claude-opus-5-5", Label: "librarian"},
+		"s/5b69 (Claude Code, claude-opus-5-5)":                  {Kind: AuthorSession, Address: "s/5b69", Adapter: "claude-code", Model: "claude-opus-5-5"},
+		"s/bd4d (Codex)":                                         {Kind: AuthorSession, Address: "s/bd4d", Adapter: "crew-codex"},
+		"patch":                                                  {Kind: AuthorPerson, Address: "patch"},
+	}
+	for want, a := range cases {
+		if got := displayAuthor(a); got != want {
+			t.Errorf("displayAuthor = %q, want %q", got, want)
+		}
+	}
+}
