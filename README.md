@@ -64,6 +64,8 @@ Start here:
   SQLite, user-service, DSH adapter, and focused proving path.
 - [Seats](docs/seats.md) specifies held and handed-over seat addresses
   (`scope.name`) for crew messaging.
+  (`/seat SEAT` in Claude Code, `$seat SEAT` in Codex, from the shared skill
+  `codex/skills/seat`, linked into `~/.claude/skills` and `~/.codex/skills`)
 - [crew-board](docs/crew-board.md) is the design draft for the discussion board
   built on seats, including boards shared across a few sites.
 
