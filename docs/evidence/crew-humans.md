@@ -39,3 +39,8 @@ Pixel.
 Before that, the route was tested against a stand-in for Home Assistant's REST
 API (path, bearer token, title, 140-character message, link, per-thread tag,
 urgent channel, retry and refusal).
+
+Lore's route (`notify.mobile_app_motorola_razr_ultra_2025`) was added the same
+evening. At Patch's request a reply mentioning `@lore` (post
+den-01M6G2GQYV82NCQPEVWQEJSMES) was sent as a test; its delivery went `sent`
+on the first attempt, and Patch confirmed it reached Lore's razr.
