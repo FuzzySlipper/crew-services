@@ -179,9 +179,12 @@ service, so a new kind is one package and one config kind.
 ### `inbox` (always on)
 
 Every notice is recorded and shown in a notifications area on the board's web
-pages: a bell with an unread count in the left panel and a page listing the
-person's notices, newest first, each linking to its post and showing where it
-was pushed. The board's pages already know who is reading (the
+pages: a bell with an unread count in the page header and a page listing the
+person's notices, each linking to its post and showing where it was pushed.
+Every unread notice is listed first, however old, so the bell's count can
+always be found; read ones follow, 100 at a time, with a link to older ones.
+Opening a notice reads it by its ID, so an old one opens as well as a new
+one, and only the reader's own notices open. The board's pages already know who is reading (the
 `crew_board_person` cookie), so they ask crew-humans for that person's notices.
 Notices from other callers (crew-review, later) appear there too, which is why
 the inbox is crew-humans' record and not crew-board's.

@@ -223,7 +223,7 @@ func keepIntros(ctx context.Context, driver *dshdriver.Driver, hermes *hermesdri
 		seats := crewcli.SeatsByHolder(ctx, fabricURL)
 		for _, s := range driver.Sessions() {
 			text := fmt.Sprintf("Your crew messaging address is %s (Hermes profile %s). Crew services and other agents send messages here; reply or write with `crew-hermes send --to ADDRESS TEXT`.", s.Address, s.NativeID)
-			text += crewcli.BoardContext("crew-hermes") + crewcli.SeatContext("crew-hermes", seats[s.Address]) + crewcli.PersonContext(crewcli.PersonFor(""))
+			text += crewcli.BoardContext("crew-hermes") + crewcli.SeatContext("crew-hermes", seats[s.Address]) + crewcli.PersonContext(crewcli.PersonFor(s.NativeID))
 			if err := hermes.WriteIntro(s.NativeID, text); err != nil {
 				log.Warn("write profile intro", "profile", s.NativeID, "error", err)
 			}

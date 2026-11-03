@@ -26,9 +26,11 @@ import (
 func TestBoardCommandsEndToEnd(t *testing.T) {
 	// Person-less and person commands run as from a terminal, so clear the
 	// harness session variables this test may inherit from an agent.
-	for _, env := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "DSH_SESSION_ID"} {
+	for _, env := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "DSH_SESSION_ID", "HERMES_AGENT", "CREW_PERSON"} {
 		t.Setenv(env, "")
 	}
+	// Nor the person this machine's sessions work for.
+	t.Setenv("HOME", t.TempDir())
 	ctx := context.Background()
 	dir := t.TempDir()
 	persistence, err := sqlite.Open(ctx, filepath.Join(dir, "fabric.db"))

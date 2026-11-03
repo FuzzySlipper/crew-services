@@ -216,14 +216,14 @@ func TestTheClientAndHandler(t *testing.T) {
 	if _, err := client.Notify(ctx, humansclient.NotifyRequest(reply("kate", "c"))); !errors.As(err, &refused) || refused.Code != "unknown_person" {
 		t.Fatalf("unknown person over HTTP = %v", err)
 	}
-	inbox, err := client.Notices(ctx, "lore", true, 10)
+	inbox, err := client.Notices(ctx, "lore", true, "", 10)
 	if err != nil || inbox.Unread != 2 || inbox.Notices[0].ID != second.NoticeID {
 		t.Fatalf("inbox = %+v %v", inbox, err)
 	}
 	if err := client.MarkRead(ctx, "lore", nil, first.NoticeID, ""); err != nil {
 		t.Fatal(err)
 	}
-	if inbox, _ := client.Notices(ctx, "lore", true, 10); inbox.Unread != 1 || inbox.Notices[0].ID != second.NoticeID {
+	if inbox, _ := client.Notices(ctx, "lore", true, "", 10); inbox.Unread != 1 || inbox.Notices[0].ID != second.NoticeID {
 		t.Fatalf("after marking through the first: %+v", inbox)
 	}
 	if err := client.MarkRead(ctx, "lore", []string{second.NoticeID}, "", ""); err != nil {
@@ -236,13 +236,13 @@ func TestTheClientAndHandler(t *testing.T) {
 	if err := client.MarkRead(ctx, "lore", nil, "", "den-1"); err != nil {
 		t.Fatal(err)
 	}
-	if inbox, _ := client.Notices(ctx, "lore", true, 10); inbox.Unread != 1 || inbox.Notices[0].ID != fourth.NoticeID || third.NoticeID == "" {
+	if inbox, _ := client.Notices(ctx, "lore", true, "", 10); inbox.Unread != 1 || inbox.Notices[0].ID != fourth.NoticeID || third.NoticeID == "" {
 		t.Fatalf("after marking group den-1: %+v", inbox)
 	}
 	if err := client.MarkRead(ctx, "lore", nil, "", "den-9"); err != nil {
 		t.Fatal(err)
 	}
-	if inbox, _ := client.Notices(ctx, "lore", false, 10); inbox.Unread != 0 || len(inbox.Notices) != 4 {
+	if inbox, _ := client.Notices(ctx, "lore", false, "", 10); inbox.Unread != 0 || len(inbox.Notices) != 4 {
 		t.Fatalf("after marking all: %+v", inbox)
 	}
 }

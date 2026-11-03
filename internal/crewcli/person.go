@@ -106,3 +106,12 @@ func whoami(args []string, self string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stderr, "usage: whoami [--person NAME]")
 	return 2
 }
+
+func firstOf(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}

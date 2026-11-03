@@ -495,9 +495,14 @@ func (n *Notifier) personNotice(ctx context.Context, notice Notice) (PersonNotic
 	if len([]rune(title)) > 190 {
 		title = string([]rune(title)[:189]) + "…"
 	}
+	// The excerpt is bounded here, before the request is frozen: a post may
+	// be a megabyte, and crew-humans keeps 600 characters of it anyway.
 	text := strings.Join(strings.Fields(RenderForAgent(post.Body, false)), " ")
 	if n.cfg.Site != "" && post.Site != n.cfg.Site {
 		text = "(from site " + post.Site + ") " + text
+	}
+	if runes := []rune(text); len(runes) > personExcerpt {
+		text = string(runes[:personExcerpt-1]) + "…"
 	}
 	link := ""
 	if n.cfg.WebURL != "" {
@@ -505,6 +510,10 @@ func (n *Notifier) personNotice(ctx context.Context, notice Notice) (PersonNotic
 	}
 	return PersonNotice{Person: notice.Recipient.Address, Key: "crew-board/notice/" + notice.ID, Title: title, Text: text, Link: link, Reason: notice.Reason, Group: thread.ID, Urgent: notice.Urgent}, nil
 }
+
+// personExcerpt is how much of a post a person's notice quotes, in
+// characters: crew-humans' own limit.
+const personExcerpt = 600
 
 // personAuthor is a post's author as a person reads it: a seat or session
 // with its runtime, a person by name.

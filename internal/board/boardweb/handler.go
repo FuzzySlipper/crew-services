@@ -40,7 +40,8 @@ type Handler struct {
 // Inbox is a person's notices in crew-humans (docs/crew-humans.md), shown
 // on the pages' notifications page and as the bell's count.
 type Inbox interface {
-	Notices(ctx context.Context, person string, unreadOnly bool, limit int) (humansclient.Inbox, error)
+	Notices(ctx context.Context, person string, unreadOnly bool, before string, limit int) (humansclient.Inbox, error)
+	Notice(ctx context.Context, id string) (humansclient.Notice, error)
 	MarkRead(ctx context.Context, person string, ids []string, through, group string) error
 }
 
@@ -287,7 +288,7 @@ func (h *Handler) nav(ctx context.Context, person, boardName, thread string) *na
 	}
 	nav := &navData{Board: boardName, Current: thread, Inbox: h.inbox != nil}
 	if h.inbox != nil {
-		if inbox, err := h.inbox.Notices(ctx, person, true, 1); err == nil {
+		if inbox, err := h.inbox.Notices(ctx, person, true, "", 1); err == nil {
 			nav.Notices = inbox.Unread
 		}
 	}
@@ -670,12 +671,44 @@ func (h *Handler) notices(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	inbox, err := h.inbox.Notices(r.Context(), person, false, 100)
+	// Unread notices come first, all of them, so the bell's count can always
+	// be found; then a page of everything, which pages back with ?before=.
+	before := r.URL.Query().Get("before")
+	var unread []humansclient.Notice
+	if before == "" {
+		for cursor := ""; ; {
+			page, err := h.inbox.Notices(r.Context(), person, true, cursor, noticesPage)
+			if err != nil {
+				h.fail(w, r, fmt.Errorf("crew-humans: %w", err))
+				return
+			}
+			unread = append(unread, page.Notices...)
+			if len(page.Notices) < noticesPage || len(unread) >= maxUnreadShown {
+				break
+			}
+			cursor = page.Notices[len(page.Notices)-1].ID
+		}
+	}
+	inbox, err := h.inbox.Notices(r.Context(), person, false, before, noticesPage)
 	if err != nil {
 		h.fail(w, r, fmt.Errorf("crew-humans: %w", err))
 		return
 	}
-	h.render(w, "notices", page{Title: "Notifications", Person: person, Nav: h.nav(r.Context(), person, "", ""), Data: inbox}, http.StatusOK)
+	older := ""
+	if len(inbox.Notices) == noticesPage {
+		older = inbox.Notices[len(inbox.Notices)-1].ID
+	}
+	var earlier []humansclient.Notice
+	for _, n := range inbox.Notices {
+		if n.ReadAt != nil {
+			earlier = append(earlier, n)
+		}
+	}
+	newest := ""
+	if len(unread) > 0 {
+		newest = unread[0].ID
+	}
+	h.render(w, "notices", page{Title: "Notifications", Person: person, Nav: h.nav(r.Context(), person, "", ""), Data: map[string]any{"Unread": unread, "Read": earlier, "Newest": newest, "Older": older, "Paged": before != ""}}, http.StatusOK)
 }
 
 // openNotice marks one notice read and follows its link: to the post when
@@ -685,23 +718,23 @@ func (h *Handler) openNotice(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id := r.PathValue("id")
-	inbox, err := h.inbox.Notices(r.Context(), person, false, 200)
-	if err != nil {
-		h.fail(w, r, fmt.Errorf("crew-humans: %w", err))
-		return
-	}
 	target := "/notices"
-	for _, n := range inbox.Notices {
-		if n.ID == id {
-			_ = h.inbox.MarkRead(r.Context(), person, []string{id}, "", "")
-			if local := localLink(n.Link); local != "" {
-				target = local
-			}
+	// Only the reader's own notice is opened; anyone else's is left alone.
+	if n, err := h.inbox.Notice(r.Context(), r.PathValue("id")); err == nil && n.Person == person {
+		_ = h.inbox.MarkRead(r.Context(), person, []string{n.ID}, "", "")
+		if local := localLink(n.Link); local != "" {
+			target = local
 		}
 	}
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
+
+// noticesPage is how many notices the notifications page shows at a time;
+// maxUnreadShown bounds the unread list above it.
+const (
+	noticesPage    = 100
+	maxUnreadShown = 1000
+)
 
 // localLink is the path of a link to these pages (/t/...), or "".
 func localLink(link string) string {

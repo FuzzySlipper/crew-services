@@ -65,19 +65,26 @@ const pages = `
 {{define "notices"}}{{template "head" .}}
 <h1>Notifications</h1>
 <p class="sub">Everything crew services told you, newest first. Opening a thread marks its notices read.</p>
-{{if .Data.Notices}}
-{{if .Data.Unread}}<form method="post" action="/notices/read" class="inline"><input type="hidden" name="through" value="{{(index .Data.Notices 0).ID}}"><button>Mark all read</button></form>{{end}}
-<ul class="list notices">
-{{range .Data.Notices}}
+{{if .Data.Unread}}
+<h2>Unread</h2>
+<form method="post" action="/notices/read" class="inline"><input type="hidden" name="through" value="{{.Data.Newest}}"><button>Mark all read</button></form>
+<ul class="list notices">{{range .Data.Unread}}{{template "notice" .}}{{end}}</ul>
+{{end}}
+{{if .Data.Read}}
+{{if or .Data.Unread .Data.Paged}}<h2>Earlier</h2>{{end}}
+<ul class="list notices">{{range .Data.Read}}{{template "notice" .}}{{end}}</ul>
+{{end}}
+{{if .Data.Older}}<p class="pager"><a href="/notices?before={{.Data.Older}}">Older notifications</a></p>{{end}}
+{{if not (or .Data.Unread .Data.Read)}}<p class="empty">No notifications{{if .Data.Paged}} older than these{{else}} yet. Mentions of you and replies to your posts show here and on your phone{{end}}.</p>{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "notice"}}
   <li class="{{if not .ReadAt}}unread{{end}}">
     <a href="/notices/{{.ID}}">{{if .Urgent}}<span class="badge mention">urgent</span> {{end}}{{.Title}}</a>
     {{if .Text}}<span class="sub">{{.Text}}</span>{{end}}
     <span class="meta">{{.Source}}{{if .Reason}} · {{.Reason}}{{end}} · {{ago .CreatedAt}}{{range .Deliveries}} · {{if eq .State "sent"}}pushed to phone{{else if eq .State "failed"}}push failed{{else}}pushing{{end}}{{end}}</span>
   </li>
 {{end}}
-</ul>
-{{else}}<p class="empty">No notifications yet. Mentions of you and replies to your posts show here and on your phone.</p>{{end}}
-{{template "foot" .}}{{end}}
 
 {{define "who"}}{{template "head" .}}
 <h1>Who is reading?</h1>

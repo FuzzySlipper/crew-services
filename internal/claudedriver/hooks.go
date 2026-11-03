@@ -137,7 +137,7 @@ func RunHook(ctx context.Context, driverURL, event string, in HookInput, env Hoo
 			return nil
 		}
 		text := fmt.Sprintf("Your crew messaging address is %s. Crew services (for example crew-review, when a review check gate fails) send messages to this session there; pass it as notify_address where a tool accepts one.", out.Address)
-		return hookOutput("SessionStart", map[string]any{"additionalContext": text + crewcli.BoardContext("crew-claude") + crewcli.SeatContext("crew-claude", out.Seats) + crewcli.PersonContext(crewcli.PersonFor(""))})
+		return hookOutput("SessionStart", map[string]any{"additionalContext": text + crewcli.BoardContext("crew-claude") + crewcli.SeatContext("crew-claude", out.Seats) + crewcli.PersonContext(crewcli.PersonFor(in.SessionID))})
 	case "busy", "step":
 		// UserPromptSubmit (busy) and PostToolUse (step) run only inside an
 		// active turn, so context they return can never start one. The call

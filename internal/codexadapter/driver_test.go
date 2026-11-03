@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -1007,6 +1008,29 @@ func TestSeatDispatchIsSettledAfterAHandoverToAnotherDriver(t *testing.T) {
 	for _, r := range fabric.claimReqs {
 		if r.RecipientAddress == seat {
 			t.Fatalf("claimed the seat it no longer holds: %+v", r)
+		}
+	}
+}
+
+// The session-start text names the session's own person: its whoami
+// setting when it has one, the machine's default otherwise.
+func TestSessionStartNamesTheSessionsPerson(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CREW_PERSON", "")
+	for path, name := range map[string]string{".config/crew/person": "patch", ".local/state/crew/person/thread-2": "lore"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(home, path)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, path), []byte(name+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fabric, native := newFakeFabric(), newFakeNative()
+	server := httptestServer(t, Handler(testDriver(t, fabric, native)))
+	for thread, want := range map[string]string{"thread-1": "You work for Patch", "thread-2": "You work for Lore"} {
+		if out := string(RunHook(context.Background(), server, "session-start", HookInput{SessionID: thread})); !strings.Contains(out, want) {
+			t.Errorf("%s: %s", thread, out)
 		}
 	}
 }

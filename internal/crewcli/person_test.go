@@ -2,6 +2,9 @@ package crewcli
 
 import (
 	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +45,20 @@ func TestASessionsPersonDefaultsToTheMachineAndCanBeSet(t *testing.T) {
 	}
 	if text := PersonContext("lore"); !strings.Contains(text, "You work for Lore") || PersonContext("") != "" {
 		t.Fatalf("session-start text = %q", text)
+	}
+	// A driver's report carries the same person the CLI resolves.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/sessions/{sessionID}/model", ServeModel(func(*http.Request, string) string { return "claude-opus-5-5" }))
+	driver := httptest.NewServer(mux)
+	defer driver.Close()
+	previous := DriverURLs
+	DriverURLs = map[string]string{"claude-code": driver.URL}
+	defer func() { DriverURLs = previous }()
+	if about := SessionAbout(context.Background(), "native-1"); about.Person != "lore" || about.Model != "claude-opus-5-5" {
+		t.Fatalf("the override's report = %+v", about)
+	}
+	if about := SessionAbout(context.Background(), "native-2"); about.Person != "patch" {
+		t.Fatalf("the default's report = %+v", about)
 	}
 	seat := board.Author{Kind: board.AuthorSeat, Address: "rusty-engine.reviewer", Session: "s/5b69", Adapter: "claude-code", Model: "claude-opus-5-5", WorkingFor: "patch"}
 	if got := AuthorName(seat); got != "rusty-engine.reviewer (Claude Code, claude-opus-5-5, working for Patch, s/5b69)" {

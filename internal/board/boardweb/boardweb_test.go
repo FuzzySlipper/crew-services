@@ -386,8 +386,10 @@ type fakeInbox struct {
 	marked  []string
 }
 
-func (f *fakeInbox) Notices(_ context.Context, person string, unreadOnly bool, limit int) (humansclient.Inbox, error) {
-	var out humansclient.Inbox
+// Notices lists newest first, as crew-humans does: notices are kept in
+// that order, IDs descending.
+func (f *fakeInbox) Notices(_ context.Context, person string, unreadOnly bool, before string, limit int) (humansclient.Inbox, error) {
+	out := humansclient.Inbox{Notices: []humansclient.Notice{}}
 	for _, n := range f.notices {
 		if n.Person != person {
 			continue
@@ -395,11 +397,20 @@ func (f *fakeInbox) Notices(_ context.Context, person string, unreadOnly bool, l
 		if n.ReadAt == nil {
 			out.Unread++
 		}
-		if !unreadOnly || n.ReadAt == nil {
+		if (!unreadOnly || n.ReadAt == nil) && (before == "" || n.ID < before) && len(out.Notices) < limit {
 			out.Notices = append(out.Notices, n)
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeInbox) Notice(_ context.Context, id string) (humansclient.Notice, error) {
+	for _, n := range f.notices {
+		if n.ID == id {
+			return n, nil
+		}
+	}
+	return humansclient.Notice{}, &humansclient.HTTPError{Status: 404, Code: "notice_not_found"}
 }
 
 func (f *fakeInbox) MarkRead(_ context.Context, person string, ids []string, through, group string) error {
@@ -455,5 +466,41 @@ func TestTheNotificationsPage(t *testing.T) {
 	}
 	if code := w.do("GET", "/notices", "patch", nil).Code; code != http.StatusNotFound {
 		t.Fatalf("/notices without crew-humans = %d", code)
+	}
+}
+
+func TestOldNoticesStayReachable(t *testing.T) {
+	w := newWeb(t)
+	opened, _, _ := w.svc.OpenThread(w.ctx, board.OpenThreadRequest{Actor: board.Actor{Person: "lore"}, OperationID: "open", Board: "design", Title: "Old one", Body: "hi @patch"})
+	inbox := &fakeInbox{}
+	read := time.Now()
+	// 250 notices, newest first; only the oldest is unread.
+	for i := 250; i >= 1; i-- {
+		n := humansclient.Notice{ID: fmt.Sprintf("hn-%04d", i), Person: "patch", Source: "system/crew-board", Title: fmt.Sprintf("notice %d", i), CreatedAt: time.Now(), ReadAt: &read}
+		if i == 1 {
+			n.ReadAt, n.Link = nil, "https://board.dragonden.stream/t/"+opened.Thread.ID
+		}
+		inbox.notices = append(inbox.notices, n)
+	}
+	// One of Lore's, which Patch cannot open.
+	inbox.notices = append(inbox.notices, humansclient.Notice{ID: "hn-0000", Person: "lore", Title: "hers", Link: "https://board.dragonden.stream/t/" + opened.Thread.ID})
+	w.handler = boardweb.NewHandler(w.svc, boardweb.WithInbox(inbox))
+	list := w.do("GET", "/notices", "patch", nil).Body.String()
+	unread := list[strings.Index(list, "<h2>Unread</h2>"):strings.Index(list, "<h2>Earlier</h2>")]
+	if !strings.Contains(unread, `href="/notices/hn-0001"`) || !strings.Contains(list, `<a href="/notices?before=hn-0151">Older notifications</a>`) {
+		t.Fatalf("the oldest unread notice is not on the page:\n%s", list)
+	}
+	older := w.do("GET", "/notices?before=hn-0151", "patch", nil).Body.String()
+	if !strings.Contains(older, `href="/notices/hn-0150"`) || !strings.Contains(older, `href="/notices?before=hn-0051"`) {
+		t.Fatalf("the older page:\n%s", older)
+	}
+	if where := w.do("GET", "/notices/hn-0001", "patch", nil).Header().Get("Location"); where != "/t/"+opened.Thread.ID {
+		t.Fatalf("opening a notice beyond 200 went to %q", where)
+	}
+	if inbox.notices[249].ReadAt == nil {
+		t.Fatal("opening it did not mark it read")
+	}
+	if where := w.do("GET", "/notices/hn-0000", "patch", nil).Header().Get("Location"); where != "/notices" || inbox.notices[250].ReadAt != nil {
+		t.Fatalf("Patch opened Lore's notice: %q", where)
 	}
 }

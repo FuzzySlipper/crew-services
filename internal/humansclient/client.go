@@ -106,13 +106,25 @@ func (c *Client) Notify(ctx context.Context, request NotifyRequest) (NotifyResul
 	return out, err
 }
 
-func (c *Client) Notices(ctx context.Context, person string, unreadOnly bool, limit int) (Inbox, error) {
+// Notices lists a person's notices, newest first; before (an ID) pages to
+// older ones.
+func (c *Client) Notices(ctx context.Context, person string, unreadOnly bool, before string, limit int) (Inbox, error) {
 	q := url.Values{"person": {person}, "limit": {fmt.Sprint(limit)}}
 	if unreadOnly {
 		q.Set("state", "unread")
 	}
+	if before != "" {
+		q.Set("before", before)
+	}
 	var out Inbox
 	err := c.do(ctx, http.MethodGet, "/v1/notices?"+q.Encode(), nil, &out)
+	return out, err
+}
+
+// Notice reads one notice.
+func (c *Client) Notice(ctx context.Context, id string) (Notice, error) {
+	var out Notice
+	err := c.do(ctx, http.MethodGet, "/v1/notices/"+url.PathEscape(id), nil, &out)
 	return out, err
 }
 
