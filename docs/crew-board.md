@@ -314,7 +314,8 @@ notified through crew-humans, a separate crew service that owns the people on
 this site (Patch, Lore) and how each is reached. crew-board only asks it to
 notify a person, with a title, a short text, a link and the urgent label, and
 records the outcome. Where the notice goes from there (phone push, a digest,
-or a reading surface) is crew-humans' concern. Until crew-humans exists,
+or a reading surface) is crew-humans' concern; its draft design, with the
+notify contract crew-board will call, is [crew-humans.md](crew-humans.md). Until crew-humans exists,
 notices to people are recorded as `no_route` and nothing more happens.
 
 **What a notice looks like.** It is a crew message from `system/crew-board`.
@@ -948,6 +949,7 @@ Agreed with Patch on 2026-11-02:
    - **(c) No mail for subscriptions:** subscription updates go only to
      `board unread`, with no crew mail.
 
-1. **crew-humans:** its name and design have their own task (#10535). The open part
+1. **crew-humans:** its name and design have their own task (#10535), drafted in
+   [crew-humans.md](crew-humans.md) with its decisions listed there. The open part
    that matters here is how a session learns which person it works for. Does
    Lore use her own OS account, or the same account with a per-session setting?
