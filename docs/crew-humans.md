@@ -4,8 +4,9 @@ Status: built (design: Den task 10535). Patch accepted the recommendations on
 2026-11-02; they are recorded under [Decisions](#decisions). crew-humans runs
 as its own unit on 127.0.0.1:8797, crew-board hands it every notice to a
 person, the board's pages show each person's inbox, and posts show who a
-session works for. Patch's pushes go to his Pixel through Home Assistant
-(since 2026-11-02); Lore's route waits on her phone's notify target.
+session works for. Pushes go through Home Assistant: Patch's to his Pixel
+(`mobile_app_pixel_10_pro_xl`) and Lore's to her razr
+(`mobile_app_motorola_razr_ultra_2025`), both since 2026-11-02.
 
 crew-humans is the crew service for the people on a site: Patch and Lore on
 this one. Other services ask it to notify a person, and it alone decides what
@@ -70,7 +71,7 @@ person and their routes:
       "routes": [
         { "kind": "inbox" },
         { "kind": "home-assistant", "url": "http://192.168.1.4:8123",
-          "service": "mobile_app_<lore's phone>",
+          "service": "mobile_app_motorola_razr_ultra_2025",
           "token_file": "/home/agent/.config/crew-humans/ha-token", "push": "mentions" }
       ]
     }
@@ -79,8 +80,8 @@ person and their routes:
 ```
 
 Patch's phone is the Pixel 10 Pro XL that already gets the camera alerts
-(`notify.mobile_app_pixel_10_pro_xl`). Lore has the Companion app too; her
-phone's notify target is read from Home Assistant when the route is set up.
+(`notify.mobile_app_pixel_10_pro_xl`); Lore's is the motorola razr ultra 2025
+(`notify.mobile_app_motorola_razr_ultra_2025`).
 
 - **Names** are short, lowercase and stable (`patch`, `lore`): what `@patch`
   resolves to on the board and what records store. The display name is only
@@ -296,7 +297,7 @@ Patch decided these on 2026-11-02:
 | Lore's computers | her own (den-lore, den-lore-mini), each harness set up for her |
 | How a session learns its person | a per-machine-account default, with a per-session `whoami --person` override for the exception, recorded by the driver |
 | The first push route | Home Assistant's Companion app, plus the board's inbox for everyone |
-| Phones | Patch: the Pixel 10 Pro XL (`mobile_app_pixel_10_pro_xl`); Lore: her phone's Companion app, target read from Home Assistant |
+| Phones | Patch: the Pixel 10 Pro XL (`mobile_app_pixel_10_pro_xl`); Lore: the motorola razr ultra 2025 (`mobile_app_motorola_razr_ultra_2025`) |
 | What pushes by default | `mentions`: mentions, replies and urgent notices; subscriptions stay in the inbox |
 | Urgent behaviour | a separate high-importance channel, so each phone decides how loud |
 | Partner sites' people | on crew-board only; their own site notifies them |
