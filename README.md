@@ -299,6 +299,28 @@ learns why no reviewer started even without a `notify_address`. A Den failure
 backs that row off like an unregistered recipient. The Den post itself is not
 idempotent, so a crash between the post and marking it sent can repeat it.
 
+Verdicts write notices too (#10559), in the same transaction that stores
+Den's receipt, so a verdict is never recorded without them and a retried
+finalization never notifies twice (`operation_id = job/<id>/<kind>[/<address>]`):
+
+- **`changes_requested`** goes to the submission's `notify_address` as
+  `next_turn`, so it wakes the submitting session. It lists the findings and
+  says what to do next, including the review-loop cap from
+  `_global/den-operating-contract`. Its fallback is the project's lead seat,
+  `<project>.lead`. With no `notify_address` the notice goes straight to that
+  seat. When the fabric no longer knows the address (the session ended), the
+  outbox moves the notice to the seat once and sends it again at once. A seat
+  that was never created (`seat_not_found`) is a permanent refusal, so a
+  project without a lead seat gets no notice.
+- **`looks_good`** wakes nobody by default. crew-review reads the project's
+  `crew_notify.on_done` list from Den's `get_project` (den-services #10560)
+  and sends each listed address a short `passed` notice. The policy is
+  `no_wake`, or `next_turn` when the entry asks for it. A Den without the
+  setting gives no notices.
+
+Each notice carries its own activation policy. Failure notices keep
+`next_step`.
+
 Den Web's contextual manual action uses
 `GET /v1/projects/{project_id}/tasks/{task_id}/manual-review` to read a
 server-evaluated capability and `POST` to the same path to admit it. The

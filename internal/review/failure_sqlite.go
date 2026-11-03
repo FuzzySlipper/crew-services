@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -46,8 +47,7 @@ func (s *SQLiteStore) FailWithNotices(ctx context.Context, id, why string, notic
 		if rows != 1 {
 			break
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO crew_review_notices(operation_id,submission_id,kind,recipient,body,state,created_at,updated_at,next_attempt_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(operation_id) DO NOTHING`,
-			notice.OperationID, notice.SubmissionID, notice.Kind, notice.Recipient, notice.Body, NoticePending, now, now, noticeStamp(s.clock.Now())); err != nil {
+		if err := insertNotice(ctx, tx, notice, now, s.clock.Now()); err != nil {
 			return Job{}, false, fmt.Errorf("record review failure notice: %w", err)
 		}
 	}
@@ -71,3 +71,41 @@ var (
 	_ FailureNoticeStore  = (*SQLiteStore)(nil)
 	_ DelayedRequeueStore = (*SQLiteStore)(nil)
 )
+
+// CompleteWithNotices stores a job's Den receipt and records its verdict
+// notices in one transaction. Only the transition out of finalizing records
+// them, so a retried finalization never notifies twice.
+func (s *SQLiteStore) CompleteWithNotices(ctx context.Context, id string, r Receipt, notices []*Notice) (Job, error) {
+	for _, notice := range notices {
+		if notice == nil || notice.OperationID == "" || notice.Recipient == "" || notice.Body == "" {
+			return Job{}, errors.New("invalid review verdict notice")
+		}
+	}
+	receipt, err := json.Marshal(r)
+	if err != nil {
+		return Job{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Job{}, err
+	}
+	defer tx.Rollback()
+	now := stamp(s.clock.Now())
+	result, err := tx.ExecContext(ctx, `UPDATE crew_review_jobs SET state=?,finalizing_claim=0,receipt_json=?,updated_at=? WHERE id=? AND state=?`, Succeeded, string(receipt), now, id, Finalizing)
+	if err != nil {
+		return Job{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return Job{}, err
+	} else if rows == 1 {
+		for _, notice := range notices {
+			if err := insertNotice(ctx, tx, notice, now, s.clock.Now()); err != nil {
+				return Job{}, fmt.Errorf("record review verdict notice: %w", err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Job{}, err
+	}
+	return s.Get(ctx, id)
+}

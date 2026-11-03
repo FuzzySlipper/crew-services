@@ -845,3 +845,28 @@ func boundedText(data []byte, limit int) string {
 	}
 	return text
 }
+
+// DoneNotifyTargets reads the crew addresses a Den project asks to be told
+// when one of its tasks passes review: get_project's project.crew_notify
+// on_done (den-services task 10560). A Den without the setting, or a project
+// that has none, gives none.
+func (c *Client) DoneNotifyTargets(ctx context.Context, projectID string) ([]review.CrewNotifyTarget, error) {
+	raw, err := c.call(ctx, "get_project", map[string]any{"project_id": projectID})
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Project struct {
+			CrewNotify *struct {
+				OnDone []review.CrewNotifyTarget `json:"on_done"`
+			} `json:"crew_notify"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("decode Den get_project: %w", err)
+	}
+	if out.Project.CrewNotify == nil {
+		return nil, nil
+	}
+	return out.Project.CrewNotify.OnDone, nil
+}

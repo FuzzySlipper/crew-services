@@ -136,6 +136,21 @@ func OpenSQLite(ctx context.Context, path string, clock Clock, capacity int) (*S
 		db.Close()
 		return nil, fmt.Errorf("migrate crew review notice schedule index: %w", err)
 	}
+	// policy is a notice's activation policy ('' means NoticeActivationPolicy)
+	// and fallback the recipient it moves to when the fabric no longer knows
+	// its first one (verdict notices fall back to the project's lead seat).
+	for _, column := range []string{"policy", "fallback"} {
+		if err = db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('crew_review_notices') WHERE name=?`, column).Scan(&columns); err != nil {
+			db.Close()
+			return nil, err
+		}
+		if columns == 0 {
+			if _, err = db.ExecContext(ctx, `ALTER TABLE crew_review_notices ADD COLUMN `+column+` TEXT NOT NULL DEFAULT ''`); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("migrate crew review notice %s: %w", column, err)
+			}
+		}
+	}
 	if err = s.Recover(ctx); err != nil {
 		db.Close()
 		return nil, err

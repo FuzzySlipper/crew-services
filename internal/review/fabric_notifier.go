@@ -83,6 +83,10 @@ func (n *FabricNotifier) Notify(ctx context.Context, notice Notice) (string, err
 	if err := n.ensureOrigin(ctx); err != nil {
 		return "", err
 	}
+	policy := notice.Policy
+	if policy == "" {
+		policy = NoticeActivationPolicy
+	}
 	result, err := n.client.Submit(ctx, fabricclient.MessageRequest{
 		ProducerID:       n.cfg.AdapterID,
 		LeaseToken:       n.lease.LeaseToken,
@@ -90,7 +94,7 @@ func (n *FabricNotifier) Notify(ctx context.Context, notice Notice) (string, err
 		SenderAddress:    n.cfg.Address,
 		RecipientAddress: notice.Recipient,
 		Body:             notice.Body,
-		ActivationPolicy: NoticeActivationPolicy,
+		ActivationPolicy: policy,
 		TTL:              NoticeTTL.String(),
 	})
 	if err == nil {
@@ -103,7 +107,9 @@ func (n *FabricNotifier) Notify(ctx context.Context, notice Notice) (string, err
 	case "adapter_mismatch":
 		// The origin was rebound away from crew-review; check it next time.
 		n.bound = false
-	case "invalid_request", "operation_conflict":
+	case "invalid_request", "operation_conflict", "seat_not_found":
+		// A seat that was never created (a project with no lead seat) is
+		// refused for good, like a malformed request.
 		return "", fmt.Errorf("%w: %v", ErrNoticeRejected, err)
 	case "not_found", "not_bound":
 		// The recipient has no live binding. The session may register its

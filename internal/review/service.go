@@ -478,7 +478,7 @@ func (s *Service) reconcile(ctx context.Context, j Job) error {
 		_ = s.store.DeferFinalization(ctx, j.ID, s.clock.Now().Add(finalizeRetryDelay(j.FinalizeAttempts)))
 		return e
 	}
-	completed, e := s.store.Complete(ctx, j.ID, r)
+	completed, e := s.complete(ctx, j, r)
 	if e == nil && s.finalized != nil {
 		s.finalized.Finalized(completed)
 	}

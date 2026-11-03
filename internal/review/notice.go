@@ -9,9 +9,8 @@ import (
 	"time"
 )
 
-// NoticeKind names the submission outcome a notice reports. Only gate
-// failures and final gate timeouts are produced today; source_missing, stale
-// and changes_requested are expected to reuse the same outbox.
+// NoticeKind names the submission outcome a notice reports: gate failures and
+// final gate timeouts, failed reviewer jobs, and verdicts (verdict.go).
 type NoticeKind string
 
 const (
@@ -78,6 +77,17 @@ type Notice struct {
 	SentAt       time.Time
 	// NextAttemptAt is when a pending notice is next due for a send.
 	NextAttemptAt time.Time
+	// Policy is the notice's activation policy; "" means
+	// NoticeActivationPolicy.
+	Policy string
+	// Fallback is the recipient the notice moves to, once, when the fabric
+	// no longer knows Recipient.
+	Fallback string
+}
+
+// NoticeRetargeter moves a pending notice to its fallback recipient.
+type NoticeRetargeter interface {
+	RetargetNotice(ctx context.Context, operationID string) error
 }
 
 // NoticeStore is the outbox. Notices are inserted only through
@@ -187,6 +197,16 @@ func (s *Service) SendNotices(ctx context.Context) (bool, error) {
 				return true, markErr
 			}
 			continue
+		}
+		if errors.Is(err, ErrRecipientUnavailable) && notice.Fallback != "" && notice.Fallback != notice.Recipient {
+			// The session it was for is gone: the notice moves to its
+			// fallback (the project's lead seat) and is due again at once.
+			if retargeter, ok := store.(NoticeRetargeter); ok {
+				if markErr := retargeter.RetargetNotice(ctx, notice.OperationID); markErr != nil {
+					return true, markErr
+				}
+				continue
+			}
 		}
 		if errors.Is(err, ErrRecipientUnavailable) {
 			// Never schedule past the expiry, so the notice is still listed

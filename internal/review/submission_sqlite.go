@@ -262,8 +262,8 @@ func (s *SQLiteStore) TransitionSubmission(ctx context.Context, id string, expec
 		}
 		// A notice for the same operation (the same failed gate) is kept as
 		// it is: it may already be sent.
-		if _, err := tx.ExecContext(ctx, `INSERT INTO crew_review_notices(operation_id,submission_id,kind,recipient,body,state,created_at,updated_at,next_attempt_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(operation_id) DO NOTHING`,
-			notice.OperationID, id, notice.Kind, notice.Recipient, notice.Body, NoticePending, now, now, noticeStamp(s.clock.Now())); err != nil {
+		notice.SubmissionID = id
+		if err := insertNotice(ctx, tx, notice, now, s.clock.Now()); err != nil {
 			return SubmissionRecord{}, fmt.Errorf("record review submission notice: %w", err)
 		}
 	}
@@ -304,7 +304,23 @@ func (s *SQLiteStore) SetSubmissionNotifyAddress(ctx context.Context, id, addres
 	return s.GetSubmission(ctx, id)
 }
 
-const noticeColumns = `operation_id,submission_id,kind,recipient,body,state,attempts,last_error,message_id,created_at,updated_at,sent_at,next_attempt_at`
+const noticeColumns = `operation_id,submission_id,kind,recipient,body,state,attempts,last_error,message_id,created_at,updated_at,sent_at,next_attempt_at,policy,fallback`
+
+// insertNotice records a pending notice in tx. A notice for an operation
+// already recorded is kept as it is: it may already be sent.
+func insertNotice(ctx context.Context, tx *sql.Tx, notice *Notice, now string, due time.Time) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO crew_review_notices(operation_id,submission_id,kind,recipient,body,state,created_at,updated_at,next_attempt_at,policy,fallback) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(operation_id) DO NOTHING`,
+		notice.OperationID, notice.SubmissionID, notice.Kind, notice.Recipient, notice.Body, NoticePending, now, now, noticeStamp(due), notice.Policy, notice.Fallback)
+	return err
+}
+
+// RetargetNotice moves a pending notice to its fallback recipient, due at
+// once, and clears the fallback so it moves only once.
+func (s *SQLiteStore) RetargetNotice(ctx context.Context, operationID string) error {
+	now := s.clock.Now()
+	_, err := s.db.ExecContext(ctx, `UPDATE crew_review_notices SET recipient=fallback, fallback='', next_attempt_at=?, updated_at=? WHERE operation_id=? AND state=? AND fallback<>''`, noticeStamp(now), stamp(now), operationID, NoticePending)
+	return err
+}
 
 // noticeStamp is a fixed-width UTC timestamp, so next_attempt_at compares in
 // time order as text. parse reads it like any RFC 3339 stamp.
@@ -334,7 +350,7 @@ func (s *SQLiteStore) queryNotices(ctx context.Context, query string, args ...an
 	for rows.Next() {
 		var notice Notice
 		var kind, state, createdAt, updatedAt, sentAt, nextAttemptAt string
-		if err := rows.Scan(&notice.OperationID, &notice.SubmissionID, &kind, &notice.Recipient, &notice.Body, &state, &notice.Attempts, &notice.LastError, &notice.MessageID, &createdAt, &updatedAt, &sentAt, &nextAttemptAt); err != nil {
+		if err := rows.Scan(&notice.OperationID, &notice.SubmissionID, &kind, &notice.Recipient, &notice.Body, &state, &notice.Attempts, &notice.LastError, &notice.MessageID, &createdAt, &updatedAt, &sentAt, &nextAttemptAt, &notice.Policy, &notice.Fallback); err != nil {
 			return nil, err
 		}
 		notice.Kind, notice.State = NoticeKind(kind), NoticeState(state)

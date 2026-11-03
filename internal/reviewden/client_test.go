@@ -563,3 +563,36 @@ func TestTaskContextRejectsUnavailableLifecycleAuthority(t *testing.T) {
 		})
 	}
 }
+
+func TestDoneNotifyTargetsReadsTheProjectSetting(t *testing.T) {
+	projects := map[string]any{
+		"with":    map[string]any{"project": map[string]any{"id": "with", "crew_notify": map[string]any{"on_done": []map[string]any{{"address": "with.lead", "policy": "no_wake"}, {"address": "with.deploy", "policy": "next_turn"}}}}},
+		"without": map[string]any{"project": map[string]any{"id": "without"}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params struct {
+				Name      string `json:"name"`
+				Arguments struct {
+					ProjectID string `json:"project_id"`
+				} `json:"arguments"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Params.Name != "get_project" {
+			t.Fatalf("request = %+v, %v", request, err)
+		}
+		writeToolResult(w, projects[request.Params.Arguments.ProjectID])
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.DoneNotifyTargets(context.Background(), "with")
+	if err != nil || len(got) != 2 || got[0] != (review.CrewNotifyTarget{Address: "with.lead", Policy: "no_wake"}) || got[1].Policy != "next_turn" {
+		t.Fatalf("with = %+v, %v", got, err)
+	}
+	if got, err := client.DoneNotifyTargets(context.Background(), "without"); err != nil || got != nil {
+		t.Fatalf("without = %+v, %v", got, err)
+	}
+}
