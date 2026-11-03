@@ -37,7 +37,7 @@ func main() {
 		hook(os.Args[2:])
 		return
 	}
-	if len(os.Args) > 1 && (os.Args[1] == "send" || os.Args[1] == "who" || os.Args[1] == "seat" || os.Args[1] == "board") {
+	if len(os.Args) > 1 && (os.Args[1] == "send" || os.Args[1] == "who" || os.Args[1] == "whoami" || os.Args[1] == "seat" || os.Args[1] == "board") {
 		os.Exit(crewcli.Main(context.Background(), os.Args[1:], os.Getenv("CODEX_THREAD_ID"), driverURL(), os.Stdin, os.Stdout, os.Stderr))
 	}
 	args := os.Args[1:]

@@ -195,7 +195,7 @@ func call(ctx context.Context, method, url string, body, target any) error {
 // session); ownURL is the calling runtime's driver.
 func Main(ctx context.Context, args []string, self, ownURL string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: send [--policy next_turn|next_step|no_wake] [--as SEAT] --to ADDRESS TEXT... | who | seat COMMAND | board COMMAND")
+		fmt.Fprintln(stderr, "usage: send [--policy next_turn|next_step|no_wake] [--as SEAT] --to ADDRESS TEXT... | who | whoami [--person NAME] | seat COMMAND | board COMMAND")
 		return 2
 	}
 	switch args[0] {
@@ -203,6 +203,8 @@ func Main(ctx context.Context, args []string, self, ownURL string, stdin io.Read
 		sessions, skipped := Who(ctx, DriverURLs)
 		PrintWho(stdout, sessions, self, skipped, SeatsByHolder(ctx, FabricURL()))
 		return 0
+	case "whoami":
+		return whoami(args[1:], self, stdout, stderr)
 	case "send":
 		return send(ctx, args[1:], self, ownURL, stdin, stdout, stderr)
 	case "seat":

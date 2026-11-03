@@ -31,6 +31,7 @@ import (
 	"crew-services/internal/board/network"
 	"crew-services/internal/crewcli"
 	"crew-services/internal/fabricclient"
+	"crew-services/internal/humansclient"
 )
 
 func main() {
@@ -52,7 +53,9 @@ func serve(args []string) error {
 	listen := fs.String("listen", "127.0.0.1:8794", "loopback address to serve on")
 	dbPath := fs.String("db", filepath.Join(home, ".local/state/crew-board/board.sqlite"), "SQLite database")
 	site := fs.String("site", "den", "this site's name, the prefix of every ID it makes")
-	people := fs.String("people", "patch,lore", "the people on this site, comma-separated (until crew-humans owns this list)")
+	people := fs.String("people", "patch,lore", "the people on this site, comma-separated, used when -humans is empty or crew-humans cannot be reached at start")
+	humansURL := fs.String("humans", "", "crew-humans, which lists this site's people and notifies them (for example http://127.0.0.1:8797); empty records notices to people as no_route")
+	webURL := fs.String("web-url", "", "the people's pages as a phone reaches them (for example https://board.dragonden.stream), linked from notices to people")
 	fabricURL := fs.String("fabric", "http://127.0.0.1:8787", "the crew messaging fabric")
 	noticeTTL := fs.Duration("notice-ttl", 24*time.Hour, "how long a sent notice waits in the fabric (at most the fabric's own TTL cap)")
 	noticeRetry := fs.Duration("notice-retry", time.Hour, "how long a notice is retried while the fabric cannot be reached")
@@ -98,12 +101,23 @@ func serve(args []string) error {
 			return err
 		}
 	}
+	var humans *humansclient.Client
+	if *humansURL != "" {
+		if humans, err = humansclient.New(*humansURL); err != nil {
+			return err
+		}
+		if listed, err := peopleFrom(ctx, humans, *site); err != nil {
+			fmt.Fprintf(os.Stderr, "crew-board: crew-humans: %v; using -people %s until a restart reaches it\n", err, *people)
+		} else {
+			names = listed
+		}
+	}
 	var infos []board.NetworkInfo
 	for _, n := range networks {
 		infos = append(infos, n.Info())
 	}
 	dir := board.FabricDirectory{Fabric: fabric}
-	svc, err := board.New(store, dir, time.Now, board.Config{Site: *site, People: names, NoticeRetry: *noticeRetry, Networks: infos})
+	svc, err := board.New(store, dir, time.Now, board.Config{Site: *site, People: names, PeopleRouted: humans != nil, NoticeRetry: *noticeRetry, Networks: infos})
 	if err != nil {
 		return err
 	}
@@ -130,7 +144,13 @@ func serve(args []string) error {
 		return err
 	}
 	svc.UseMedia(ingester, store)
-	notifier := board.NewNotifier(store, dir, fabric, time.Now, board.NotifierConfig{InstanceID: "crew-board-" + *site, Site: *site, TTL: *noticeTTL})
+	notifierConfig := board.NotifierConfig{InstanceID: "crew-board-" + *site, Site: *site, TTL: *noticeTTL, WebURL: *webURL}
+	var webOptions []boardweb.Option
+	if humans != nil {
+		notifierConfig.People = peopleNotifier{humans}
+		webOptions = append(webOptions, boardweb.WithInbox(humans))
+	}
+	notifier := board.NewNotifier(store, dir, fabric, time.Now, notifierConfig)
 	svc.OnNotices(notifier.Poke)
 	go notifier.Run(ctx, 5*time.Second)
 	reindex := map[string]boardhttp.Reindexer{}
@@ -140,7 +160,7 @@ func serve(args []string) error {
 	server := &http.Server{Addr: *listen, Handler: boardhttp.NewHandler(svc, boardhttp.WithNetworks(reindex, store)), ReadHeaderTimeout: 10 * time.Second}
 	servers := []*http.Server{server}
 	if *webListen != "" {
-		web := &http.Server{Addr: *webListen, Handler: boardweb.NewHandler(svc), ReadHeaderTimeout: 10 * time.Second}
+		web := &http.Server{Addr: *webListen, Handler: boardweb.NewHandler(svc, webOptions...), ReadHeaderTimeout: 10 * time.Second}
 		servers = append(servers, web)
 		go func() {
 			fmt.Fprintf(os.Stderr, "crew-board: pages on %s\n", *webListen)
@@ -162,4 +182,45 @@ func serve(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// peopleFrom reads this site's people from crew-humans, trying for a little
+// while in case it is starting alongside crew-board.
+func peopleFrom(ctx context.Context, humans *humansclient.Client, site string) ([]string, error) {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		var listed []humansclient.Person
+		var theirs string
+		if theirs, listed, err = humans.People(ctx); err == nil {
+			if theirs != site {
+				return nil, fmt.Errorf("it serves site %s, not %s", theirs, site)
+			}
+			names := make([]string, 0, len(listed))
+			for _, p := range listed {
+				names = append(names, p.Name)
+			}
+			return names, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return nil, err
+}
+
+// peopleNotifier hands crew-board's notices to people to crew-humans.
+type peopleNotifier struct{ humans *humansclient.Client }
+
+func (p peopleNotifier) NotifyPerson(ctx context.Context, n board.PersonNotice) (string, error) {
+	result, err := p.humans.Notify(ctx, humansclient.NotifyRequest{Person: n.Person, Source: "system/crew-board", IdempotencyKey: n.Key, Title: n.Title, Text: n.Text, Link: n.Link, Reason: n.Reason, Group: n.Group, Urgent: n.Urgent})
+	var refused *humansclient.HTTPError
+	if errors.As(err, &refused) && refused.Status >= 400 && refused.Status < 500 {
+		return "", fmt.Errorf("%w: %s", board.ErrPersonRefused, refused.Error())
+	}
+	if err != nil {
+		return "", err
+	}
+	return result.NoticeID, nil
 }

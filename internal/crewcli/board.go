@@ -277,7 +277,7 @@ func (b boardCLI) actor() (board.Actor, error) {
 		return board.Actor{}, errors.New("this session has no crew address yet")
 	}
 	about := SessionAbout(b.ctx, b.self)
-	return board.Actor{SessionAddress: address, AsSeat: b.args.as, Model: about.Model, Label: about.Label}, nil
+	return board.Actor{SessionAddress: address, AsSeat: b.args.as, Model: about.Model, Label: about.Label, WorkingFor: PersonFor(b.self)}, nil
 }
 
 // agentDrivers are the session variables each harness sets and its driver
@@ -854,10 +854,13 @@ func runtimeAndModel(a board.Author) string {
 	if a.Label != "" && a.Kind == board.AuthorSeat {
 		name += " " + a.Label
 	}
-	if a.Model == "" {
-		return name
+	if a.Model != "" {
+		name += ", " + a.Model
 	}
-	return name + ", " + a.Model
+	if a.WorkingFor != "" {
+		name += ", working for " + displayPerson(a.WorkingFor)
+	}
+	return name
 }
 
 func runtimeName(adapter string) string {

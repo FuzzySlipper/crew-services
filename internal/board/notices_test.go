@@ -457,3 +457,78 @@ func TestPurgedSentNoticesDoNotStarveNewOnes(t *testing.T) {
 		t.Fatalf("a new notice behind purged ones = %+v", g)
 	}
 }
+
+// fakePeople stands in for crew-humans: it records each request, and fails
+// the first failures of them as an unreachable service does.
+type fakePeople struct {
+	requests []board.PersonNotice
+	failures int
+	refuse   bool
+}
+
+func (f *fakePeople) NotifyPerson(_ context.Context, n board.PersonNotice) (string, error) {
+	f.requests = append(f.requests, n)
+	switch {
+	case f.refuse:
+		return "", errors.Join(board.ErrPersonRefused, errors.New("unknown_person"))
+	case len(f.requests) <= f.failures:
+		return "", errors.New("connection refused")
+	}
+	return "hn-1", nil
+}
+
+func TestNoticesToPeopleGoToCrewHumans(t *testing.T) {
+	w := newWorld(t)
+	svc, err := board.New(w.store, board.FabricDirectory{Fabric: w.fabric}, func() time.Time { return w.now }, board.Config{Site: "den", People: []string{"patch", "lore"}, PeopleRouted: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.svc = svc
+	w.newBoard("rusty-engine")
+	people := &fakePeople{failures: 1}
+	n := board.NewNotifier(w.store, board.FabricDirectory{Fabric: w.fabric}, w.fabric, func() time.Time { return w.now }, board.NotifierConfig{InstanceID: "test", Site: "den", People: people, WebURL: "https://board.dragonden.stream/"})
+	opened := w.thread(board.Actor{SessionAddress: w.a}, "Task requests", "Please file this. @patch\n\n<details><summary>Logs</summary>\nlong\n</details>")
+	n.Pass(w.ctx)
+	got := noticesByRecipient(t, w)["patch/"+opened.Post.ID]
+	if got.State != board.NoticePending || got.LastError != "connection refused" || len(people.requests) != 1 {
+		t.Fatalf("after an unreachable crew-humans: %+v", got)
+	}
+	w.now = w.now.Add(time.Minute)
+	n.Pass(w.ctx)
+	got = noticesByRecipient(t, w)["patch/"+opened.Post.ID]
+	if got.State != board.NoticeDelivered || got.MessageID != "hn-1" || len(people.requests) != 2 {
+		t.Fatalf("after crew-humans answered: %+v", got)
+	}
+	// The retry asked for exactly what the first attempt did.
+	first, second := people.requests[0], people.requests[1]
+	if first != second {
+		t.Fatalf("the retry changed the request: %+v then %+v", first, second)
+	}
+	want := board.PersonNotice{Person: "patch", Key: "crew-board/notice/" + got.ID, Title: w.a + ` mentioned you in "Task requests"`, Link: "https://board.dragonden.stream/t/" + opened.Thread.ID + "?post=" + opened.Post.ID + "#" + opened.Post.ID, Reason: board.ReasonMention, Group: opened.Thread.ID}
+	if first.Person != want.Person || first.Key != want.Key || first.Title != want.Title || first.Link != want.Link || first.Reason != want.Reason || first.Group != want.Group || !strings.HasPrefix(first.Text, "Please file this. @patch") || strings.Contains(first.Text, "long") {
+		t.Fatalf("request = %+v", first)
+	}
+	if mail := w.mail(w.a); len(mail) != 0 {
+		t.Fatalf("a person's notice went to the fabric: %q", mail)
+	}
+	// A refusal is final.
+	people.refuse = true
+	reply := w.reply(board.Actor{SessionAddress: w.b}, opened.Thread.ID, "", "Also @lore")
+	n.Pass(w.ctx)
+	if got := noticesByRecipient(t, w)["lore/"+reply.Post.ID]; got.State != board.NoticeFailed || !strings.Contains(got.LastError, "unknown_person") {
+		t.Fatalf("a refused notice = %+v", got)
+	}
+}
+
+func TestTheSessionsPersonIsKeptOnlyForThisSitesPeople(t *testing.T) {
+	w := newWorld(t)
+	w.newBoard("rusty-engine")
+	opened := w.thread(board.Actor{SessionAddress: w.a, WorkingFor: "lore"}, "For Lore", "hello")
+	if opened.Post.Author.WorkingFor != "lore" {
+		t.Fatalf("author = %+v", opened.Post.Author)
+	}
+	other := w.reply(board.Actor{SessionAddress: w.b, WorkingFor: "kate"}, opened.Thread.ID, "", "hi")
+	if other.Post.Author.WorkingFor != "" {
+		t.Fatalf("a person from elsewhere was kept: %+v", other.Post.Author)
+	}
+}

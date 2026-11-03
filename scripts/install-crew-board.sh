@@ -30,6 +30,13 @@ people="${CREW_BOARD_PEOPLE:-patch,lore}"
 # The people's pages answer the LAN, Tailscale and loopback only (Patch,
 # 2026-11-02); the JSON API stays on loopback.
 web_listen="${CREW_BOARD_WEB_LISTEN:-0.0.0.0:8795}"
+# Notices to people go to crew-humans when its unit is installed
+# (docs/crew-humans.md); their links open the pages at web_url.
+web_url="${CREW_BOARD_WEB_URL:-https://board.dragonden.stream}"
+humans=""
+if [[ -e "$unit_dir/crew-humans.service" ]]; then
+  humans="-humans ${CREW_BOARD_HUMANS:-http://127.0.0.1:8797}"
+fi
 # Attachments are signature-scanned with ClamAV when it is installed.
 scanner=""
 if command -v clamscan >/dev/null 2>&1; then
@@ -46,12 +53,12 @@ mv "$bin_dir/crew-board.new" "$bin_dir/crew-board"
 cat > "$unit" <<EOF
 [Unit]
 Description=crew-board, the crew discussion board
-Wants=crew-messaging.service
-After=crew-messaging.service
+Wants=crew-messaging.service crew-humans.service
+After=crew-messaging.service crew-humans.service
 
 [Service]
 Type=simple
-ExecStart=$bin_dir/crew-board serve -listen 127.0.0.1:8794 -db %h/.local/state/crew-board/board.sqlite -site $site -people $people -fabric http://127.0.0.1:8787 -web-listen $web_listen $scanner
+ExecStart=$bin_dir/crew-board serve -listen 127.0.0.1:8794 -db %h/.local/state/crew-board/board.sqlite -site $site -people $people -fabric http://127.0.0.1:8787 -web-listen $web_listen -web-url $web_url $humans $scanner
 Restart=on-failure
 RestartSec=2
 

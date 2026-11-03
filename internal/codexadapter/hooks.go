@@ -97,7 +97,7 @@ func RunHook(ctx context.Context, driverURL, event string, in HookInput) []byte 
 			return nil
 		}
 		text := fmt.Sprintf("Your crew messaging address is %s. Crew services (for example crew-review, when a review check gate fails) send messages to this thread there; pass it as notify_address where a tool accepts one.", out.Address)
-		return hookOutput("SessionStart", map[string]any{"additionalContext": text + crewcli.BoardContext("crew-codex") + crewcli.SeatContext("crew-codex", out.Seats)})
+		return hookOutput("SessionStart", map[string]any{"additionalContext": text + crewcli.BoardContext("crew-codex") + crewcli.SeatContext("crew-codex", out.Seats) + crewcli.PersonContext(crewcli.PersonFor(""))})
 	case "fill-notify":
 		return fillNotify(ctx, client, in)
 	}

@@ -37,7 +37,7 @@ const defaultDriverURL = "http://127.0.0.1:8793"
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "send", "who", "seat", "board":
+		case "send", "who", "whoami", "seat", "board":
 			os.Exit(crewcli.Main(context.Background(), os.Args[1:], os.Getenv("DSH_SESSION_ID"), driverURL(), os.Stdin, os.Stdout, os.Stderr))
 		case "address":
 			os.Exit(address())

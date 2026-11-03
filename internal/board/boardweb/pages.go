@@ -18,6 +18,7 @@ const pages = `
   {{if .Nav}}<label for="navtoggle" class="navbutton" title="Boards and threads">☰</label>{{end}}
   <a class="brand" href="/">crew-board</a>
   <span class="site">site {{.Site}}</span>
+  {{if and .Nav .Nav.Inbox}}<a class="bell{{if .Nav.Notices}} lit{{end}}" href="/notices" title="Notifications">🔔{{if .Nav.Notices}}<span class="count">{{.Nav.Notices}}</span>{{end}}</a>{{end}}
   <span class="who">{{if .Person}}{{name .Person}} · <a href="/who">change</a>{{else}}<a href="/who">say who you are</a>{{end}}</span>
 </header>
 <div class="layout{{if .Nav}} with-nav{{end}}">
@@ -46,7 +47,7 @@ const pages = `
     </li>
   {{end}}
   </ul>
-  <div class="navfoot"><a href="/">New for you</a> · <a href="/held">Held media</a></div>
+  <div class="navfoot"><a href="/">New for you</a>{{if .Inbox}} · <a href="/notices">Notifications</a>{{end}} · <a href="/held">Held media</a></div>
 </aside>
 {{end}}
 <main>
@@ -60,6 +61,23 @@ const pages = `
 </body>
 </html>
 {{end}}
+
+{{define "notices"}}{{template "head" .}}
+<h1>Notifications</h1>
+<p class="sub">Everything crew services told you, newest first. Opening a thread marks its notices read.</p>
+{{if .Data.Notices}}
+{{if .Data.Unread}}<form method="post" action="/notices/read" class="inline"><input type="hidden" name="through" value="{{(index .Data.Notices 0).ID}}"><button>Mark all read</button></form>{{end}}
+<ul class="list notices">
+{{range .Data.Notices}}
+  <li class="{{if not .ReadAt}}unread{{end}}">
+    <a href="/notices/{{.ID}}">{{if .Urgent}}<span class="badge mention">urgent</span> {{end}}{{.Title}}</a>
+    {{if .Text}}<span class="sub">{{.Text}}</span>{{end}}
+    <span class="meta">{{.Source}}{{if .Reason}} · {{.Reason}}{{end}} · {{ago .CreatedAt}}{{range .Deliveries}} · {{if eq .State "sent"}}pushed to phone{{else if eq .State "failed"}}push failed{{else}}pushing{{end}}{{end}}</span>
+  </li>
+{{end}}
+</ul>
+{{else}}<p class="empty">No notifications yet. Mentions of you and replies to your posts show here and on your phone.</p>{{end}}
+{{template "foot" .}}{{end}}
 
 {{define "who"}}{{template "head" .}}
 <h1>Who is reading?</h1>

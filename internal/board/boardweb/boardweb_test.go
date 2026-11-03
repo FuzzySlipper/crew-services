@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"crew-services/internal/board"
 	"crew-services/internal/board/boardsqlite"
 	"crew-services/internal/board/boardweb"
+	"crew-services/internal/humansclient"
 )
 
 // nobody is a directory with no sessions or seats: these pages are for
@@ -375,5 +377,83 @@ func TestThreadPagesOfferToCopyIDs(t *testing.T) {
 	}
 	if js := w.do("GET", "/static/app.js", "", nil).Body.String(); !strings.Contains(js, "button.copy") {
 		t.Error("app.js does not handle the copy buttons")
+	}
+}
+
+// fakeInbox stands in for crew-humans' notices.
+type fakeInbox struct {
+	notices []humansclient.Notice
+	marked  []string
+}
+
+func (f *fakeInbox) Notices(_ context.Context, person string, unreadOnly bool, limit int) (humansclient.Inbox, error) {
+	var out humansclient.Inbox
+	for _, n := range f.notices {
+		if n.Person != person {
+			continue
+		}
+		if n.ReadAt == nil {
+			out.Unread++
+		}
+		if !unreadOnly || n.ReadAt == nil {
+			out.Notices = append(out.Notices, n)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeInbox) MarkRead(_ context.Context, person string, ids []string, through, group string) error {
+	f.marked = append(f.marked, fmt.Sprintf("%s ids=%v through=%s group=%s", person, ids, through, group))
+	now := time.Now()
+	for i, n := range f.notices {
+		if n.Person == person && (slices.Contains(ids, n.ID) || through != "" && n.ID <= through || group != "" && strings.Contains(n.Link, "/t/"+group)) {
+			f.notices[i].ReadAt = &now
+		}
+	}
+	return nil
+}
+
+func TestTheNotificationsPage(t *testing.T) {
+	w := newWeb(t)
+	opened, _, _ := w.svc.OpenThread(w.ctx, board.OpenThreadRequest{Actor: board.Actor{Person: "lore"}, OperationID: "open", Board: "design", Title: "Bell check", Body: "hi @patch"})
+	thread, post := opened.Thread.ID, opened.Post.ID
+	inbox := &fakeInbox{notices: []humansclient.Notice{
+		{ID: "hn-2", Person: "patch", Source: "system/crew-board", Title: `Lore mentioned you in "Bell check"`, Text: "hi @patch", Link: "https://board.dragonden.stream/t/" + thread + "?post=" + post + "#" + post, Reason: "mention", CreatedAt: time.Now(), Deliveries: []humansclient.Delivery{{Kind: "home-assistant", State: "sent"}}},
+		{ID: "hn-1", Person: "patch", Source: "system/crew-review", Title: "Review passed", Reason: "passed", CreatedAt: time.Now()},
+	}}
+	w.handler = boardweb.NewHandler(w.svc, boardweb.WithInbox(inbox))
+	home := w.do("GET", "/", "patch", nil).Body.String()
+	if !strings.Contains(home, `<a class="bell lit" href="/notices" title="Notifications">🔔<span class="count">2</span></a>`) {
+		t.Fatalf("the bell does not show two unread:\n%s", home)
+	}
+	list := w.do("GET", "/notices", "patch", nil).Body.String()
+	if !strings.Contains(list, `<a href="/notices/hn-2">Lore mentioned you in &#34;Bell check&#34;</a>`) || !strings.Contains(list, "pushed to phone") || !strings.Contains(list, "system/crew-review") {
+		t.Fatalf("notifications page:\n%s", list)
+	}
+	// Opening a notice marks it read and goes to the post on these pages.
+	rec := w.do("GET", "/notices/hn-2", "patch", nil)
+	if where := rec.Header().Get("Location"); where != "/t/"+thread+"?post="+post+"#"+post {
+		t.Fatalf("opening the notice went to %q", where)
+	}
+	// Opening the thread marks its notices read too.
+	w.do("GET", "/t/"+thread+"?post="+post, "patch", nil)
+	if last := inbox.marked[len(inbox.marked)-1]; last != "patch ids=[] through= group="+thread {
+		t.Fatalf("the thread page marked %q", last)
+	}
+	// A notice with no link to these pages opens the list; mark all read.
+	if where := w.do("GET", "/notices/hn-1", "patch", nil).Header().Get("Location"); where != "/notices" {
+		t.Fatalf("a linkless notice went to %q", where)
+	}
+	w.do("POST", "/notices/read", "patch", url.Values{"through": {"hn-2"}})
+	if home := w.do("GET", "/", "patch", nil).Body.String(); !strings.Contains(home, `<a class="bell" href="/notices"`) {
+		t.Fatalf("the bell is still lit:\n%s", home)
+	}
+	// Without crew-humans there is no bell and no page.
+	w.handler = boardweb.NewHandler(w.svc)
+	if home := w.do("GET", "/", "patch", nil).Body.String(); strings.Contains(home, "bell") {
+		t.Fatal("a bell without crew-humans")
+	}
+	if code := w.do("GET", "/notices", "patch", nil).Code; code != http.StatusNotFound {
+		t.Fatalf("/notices without crew-humans = %d", code)
 	}
 }

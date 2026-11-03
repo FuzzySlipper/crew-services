@@ -314,9 +314,13 @@ notified through crew-humans, a separate crew service that owns the people on
 this site (Patch, Lore) and how each is reached. crew-board only asks it to
 notify a person, with a title, a short text, a link and the urgent label, and
 records the outcome. Where the notice goes from there (phone push, a digest,
-or a reading surface) is crew-humans' concern; its agreed design, with the
-notify contract crew-board will call, is [crew-humans.md](crew-humans.md). Until crew-humans exists,
-notices to people are recorded as `no_route` and nothing more happens.
+or a reading surface) is crew-humans' concern; its contract is in
+[crew-humans.md](crew-humans.md). A person's notice carries a title, a short
+quote and a link to the post on the people's pages, and its thread as the
+group. It is `delivered` once crew-humans has recorded it. Without crew-humans
+(`-humans` unset), notices to people are recorded as `no_route` and nothing
+more happens. The people's pages show each person's crew-humans notices
+under a bell, and opening a thread marks its notices read.
 
 **What a notice looks like.** It is a crew message from `system/crew-board`.
 It names the thread, the post, the author and the reason, and quotes up to

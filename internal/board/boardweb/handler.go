@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"crew-services/internal/board"
+	"crew-services/internal/humansclient"
 )
 
 //go:embed static
@@ -30,16 +31,33 @@ const personCookie = "crew_board_person"
 
 // Handler serves the pages.
 type Handler struct {
-	svc  *board.Service
-	tmpl *template.Template
-	mux  *http.ServeMux
+	svc   *board.Service
+	inbox Inbox
+	tmpl  *template.Template
+	mux   *http.ServeMux
 }
+
+// Inbox is a person's notices in crew-humans (docs/crew-humans.md), shown
+// on the pages' notifications page and as the bell's count.
+type Inbox interface {
+	Notices(ctx context.Context, person string, unreadOnly bool, limit int) (humansclient.Inbox, error)
+	MarkRead(ctx context.Context, person string, ids []string, through, group string) error
+}
+
+// Option configures the pages.
+type Option func(*Handler)
+
+// WithInbox shows each person's crew-humans notices.
+func WithInbox(inbox Inbox) Option { return func(h *Handler) { h.inbox = inbox } }
 
 // NewHandler serves crew-board's pages. Requests from outside private
 // networks (the LAN, Tailscale's 100.64.0.0/10, loopback) are refused, and a
 // form is accepted only from the page's own origin.
-func NewHandler(svc *board.Service) http.Handler {
+func NewHandler(svc *board.Service, opts ...Option) http.Handler {
 	h := &Handler{svc: svc, mux: http.NewServeMux()}
+	for _, opt := range opts {
+		opt(h)
+	}
 	h.tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 		"render":  RenderPost,
 		"name":    displayName,
@@ -62,6 +80,11 @@ func NewHandler(svc *board.Service) http.Handler {
 	h.mux.HandleFunc("GET /blob/{ref}", h.blob)
 	h.mux.HandleFunc("GET /held", h.held)
 	h.mux.HandleFunc("POST /held/{ref}/{op}", h.release)
+	if h.inbox != nil {
+		h.mux.HandleFunc("GET /notices", h.notices)
+		h.mux.HandleFunc("GET /notices/{id}", h.openNotice)
+		h.mux.HandleFunc("POST /notices/read", h.readNotices)
+	}
 	return h
 }
 
@@ -142,6 +165,14 @@ func displayName(person string) string {
 }
 
 func authorName(a board.Author) string {
+	name := agentName(a)
+	if a.WorkingFor != "" && a.Kind != board.AuthorPerson {
+		name += " · for " + displayName(a.WorkingFor)
+	}
+	return name
+}
+
+func agentName(a board.Author) string {
 	switch a.Kind {
 	case board.AuthorPerson:
 		return displayName(a.Address)
@@ -217,6 +248,9 @@ type page struct {
 // navData is the left panel every page for a known person shows: the
 // boards, and the open board's threads.
 type navData struct {
+	// Inbox says the bell is shown; Notices is its unread count.
+	Inbox   bool
+	Notices int
 	Boards  []navBoard
 	Board   string
 	Threads []navThread
@@ -251,7 +285,12 @@ func (h *Handler) nav(ctx context.Context, person, boardName, thread string) *na
 	for _, u := range unread {
 		perBoard[u.Thread.Board] += u.Posts
 	}
-	nav := &navData{Board: boardName, Current: thread}
+	nav := &navData{Board: boardName, Current: thread, Inbox: h.inbox != nil}
+	if h.inbox != nil {
+		if inbox, err := h.inbox.Notices(ctx, person, true, 1); err == nil {
+			nav.Notices = inbox.Unread
+		}
+	}
 	for _, b := range boards {
 		nav.Boards = append(nav.Boards, navBoard{Name: b.Name, Network: b.Network, Unread: perBoard[b.Name]})
 	}
@@ -432,6 +471,11 @@ func (h *Handler) thread(w http.ResponseWriter, r *http.Request) {
 	if firstUnread >= 0 {
 		number = firstUnread/threadPage + 1
 	}
+	if post := r.URL.Query().Get("post"); post != "" {
+		if n := h.pageOf(all, post); n > 0 {
+			number = n
+		}
+	}
 	switch asked := r.URL.Query().Get("page"); asked {
 	case "", "new":
 	case "last":
@@ -453,6 +497,11 @@ func (h *Handler) thread(w http.ResponseWriter, r *http.Request) {
 	// Reading a page marks it read; the cursor never moves back.
 	if to > from {
 		_ = h.svc.MarkRead(r.Context(), board.MarkReadRequest{Actor: actor, Thread: read.Thread.ID, Post: all[to-1].ID})
+	}
+	// Opening the thread is reading its notices too, so the bell does not
+	// keep counting a post already read from a push.
+	if h.inbox != nil {
+		_ = h.inbox.MarkRead(r.Context(), person, nil, "", read.Thread.ID)
 	}
 	var numbers []int
 	if pages > 1 {
@@ -613,4 +662,74 @@ func (h *Handler) release(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/held", http.StatusSeeOther)
+}
+
+// notices lists the person's notices in crew-humans, newest first.
+func (h *Handler) notices(w http.ResponseWriter, r *http.Request) {
+	person, ok := h.needPerson(w, r)
+	if !ok {
+		return
+	}
+	inbox, err := h.inbox.Notices(r.Context(), person, false, 100)
+	if err != nil {
+		h.fail(w, r, fmt.Errorf("crew-humans: %w", err))
+		return
+	}
+	h.render(w, "notices", page{Title: "Notifications", Person: person, Nav: h.nav(r.Context(), person, "", ""), Data: inbox}, http.StatusOK)
+}
+
+// openNotice marks one notice read and follows its link: to the post when
+// it is on these pages, back to the list otherwise.
+func (h *Handler) openNotice(w http.ResponseWriter, r *http.Request) {
+	person, ok := h.needPerson(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	inbox, err := h.inbox.Notices(r.Context(), person, false, 200)
+	if err != nil {
+		h.fail(w, r, fmt.Errorf("crew-humans: %w", err))
+		return
+	}
+	target := "/notices"
+	for _, n := range inbox.Notices {
+		if n.ID == id {
+			_ = h.inbox.MarkRead(r.Context(), person, []string{id}, "", "")
+			if local := localLink(n.Link); local != "" {
+				target = local
+			}
+		}
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// localLink is the path of a link to these pages (/t/...), or "".
+func localLink(link string) string {
+	u, err := url.Parse(link)
+	if err != nil || !strings.HasPrefix(u.Path, "/t/") {
+		return ""
+	}
+	out := u.Path
+	if u.RawQuery != "" {
+		out += "?" + u.RawQuery
+	}
+	if u.Fragment != "" {
+		out += "#" + u.Fragment
+	}
+	return out
+}
+
+// readNotices marks every notice up to the newest shown read.
+func (h *Handler) readNotices(w http.ResponseWriter, r *http.Request) {
+	person, ok := h.needPerson(w, r)
+	if !ok {
+		return
+	}
+	if through := r.FormValue("through"); through != "" {
+		if err := h.inbox.MarkRead(r.Context(), person, nil, through, ""); err != nil {
+			h.fail(w, r, fmt.Errorf("crew-humans: %w", err))
+			return
+		}
+	}
+	http.Redirect(w, r, "/notices", http.StatusSeeOther)
 }

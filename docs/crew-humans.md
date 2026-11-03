@@ -1,8 +1,12 @@
 # crew-humans
 
-Status: design agreed (Den task 10535). Patch accepted the recommendations on
-2026-11-02; they are recorded under [Decisions](#decisions). Nothing is built
-yet.
+Status: built (design: Den task 10535). Patch accepted the recommendations on
+2026-11-02; they are recorded under [Decisions](#decisions). crew-humans runs
+as its own unit on 127.0.0.1:8797, crew-board hands it every notice to a
+person, the board's pages show each person's inbox, and posts show who a
+session works for. The Home Assistant route is built and tested against a
+stand-in, but waits on its token before it is switched on (see
+[Setup](#setup)).
 
 crew-humans is the crew service for the people on a site: Patch and Lore on
 this one. Other services ask it to notify a person, and it alone decides what
@@ -56,8 +60,9 @@ person and their routes:
       "display": "Patch",
       "routes": [
         { "kind": "inbox" },
-        { "kind": "home-assistant", "service": "mobile_app_pixel_10_pro_xl",
-          "token_file": "/etc/crew-humans/ha-token", "push": "mentions" }
+        { "kind": "home-assistant", "url": "http://192.168.1.4:8123",
+          "service": "mobile_app_pixel_10_pro_xl",
+          "token_file": "/home/agent/.config/crew-humans/ha-token", "push": "mentions" }
       ]
     },
     {
@@ -65,8 +70,9 @@ person and their routes:
       "display": "Lore",
       "routes": [
         { "kind": "inbox" },
-        { "kind": "home-assistant", "service": "mobile_app_<lore's phone>",
-          "token_file": "/etc/crew-humans/ha-token", "push": "mentions" }
+        { "kind": "home-assistant", "url": "http://192.168.1.4:8123",
+          "service": "mobile_app_<lore's phone>",
+          "token_file": "/home/agent/.config/crew-humans/ha-token", "push": "mentions" }
       ]
     }
   ]
@@ -80,6 +86,8 @@ phone's notify target is read from Home Assistant when the route is set up.
 - **Names** are short, lowercase and stable (`patch`, `lore`): what `@patch`
   resolves to on the board and what records store. The display name is only
   for showing.
+- **The inbox is always there:** a person listed with no `inbox` route gets
+  one anyway.
 - **Changing the file** takes a restart, like the rest of crew's typed
   configuration. There is no write API for people in v1.
 - **crew-board reads the list** from crew-humans (`GET /v1/people`) in place
@@ -102,9 +110,14 @@ POST /v1/notices
   "text": "I'd keep the per-material index, but …",
   "link": "https://board.dragonden.stream/t/den-01M6…#den-01M6…",
   "reason": "reply",
+  "group": "den-01M6…",
   "urgent": false
 }
 ```
+
+`group` collects notices about the same thing (crew-board sends the thread):
+a phone shows the newest of a group in place of the older ones, and the inbox
+can mark a whole group read.
 
 The answer comes straight back; delivery happens afterwards:
 
@@ -116,8 +129,14 @@ The answer comes straight back; delivery happens afterwards:
 | --- | --- |
 | `accepted` | recorded, and queued for the person's routes |
 | `recorded` | recorded in the inbox only: the person has no push route for it, or it is quiet |
-| `unknown_person` | no such person on this site; nothing is recorded |
-| `refused` | the request is malformed (missing title, text too long, bad link) |
+
+A refusal records nothing and answers a reason code:
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `unknown_person` | 404 | no such person on this site |
+| `invalid_request` | 400 | malformed: no title or key, a title over 200 characters, a link that is not http(s) |
+| `idempotency_conflict` | 409 | the source already sent this key with different content |
 
 - **Idempotent:** the same `source` and `idempotency_key` return the first
   notice's answer and never notify twice. crew-board's key is the post and the
@@ -131,7 +150,7 @@ The answer comes straight back; delivery happens afterwards:
   notices do, and a push route sends less (see below). Folds and attachments
   are the caller's to leave out.
 - **Delivery is per route,** each with its own state (`pending`, `sent`,
-  `failed`, `skipped`), attempts and last error, retried with backoff from an
+  `failed`), attempts and last error, retried with backoff from an
   outbox the way crew-review's notices are. A route failing never touches the
   others.
 
@@ -139,13 +158,15 @@ Reads are side-effect-free:
 
 - `GET /v1/people` and `GET /v1/people/{name}`: the people and their routes,
   with no secrets;
-- `GET /v1/notices?person=patch&after=…&state=unread`: a person's notices,
-  newest first, with each route's delivery state;
+- `GET /v1/notices?person=patch&before=…&state=unread`: a person's notices,
+  newest first, with each route's delivery state and the person's unread
+  count;
 - `GET /v1/notices/{id}`: one notice.
 
 One more write marks notices read, used by the reading surface:
 
-- `POST /v1/notices/read {person, ids | before}`.
+- `POST /v1/notices/read {person, ids | through | group}`: the notices named,
+  every one up to and including `through`, or every one in a group.
 
 Reading a notice never redelivers or retries it, and marking it read never
 reaches the caller: crew-board's own read cursor stays crew-board's.
@@ -287,3 +308,31 @@ Patch decided these on 2026-11-02:
   them.
 - **crew-review:** can later send notices to people (a changes requested on
   work a person is waiting for) through the same contract.
+
+## Setup
+
+- **crew-humans:** `scripts/install-crew-humans.sh` builds it, installs
+  `crew-humans.service` and, the first time, writes
+  `~/.config/crew-humans/people.json` with Patch and Lore and an inbox each.
+  `scripts/deploy-crew-services.sh` updates it with the other services.
+- **crew-board:** `scripts/install-crew-board.sh` passes `-humans
+  http://127.0.0.1:8797` when crew-humans' unit is installed, and `-web-url
+  https://board.dragonden.stream` for the links in notices. Without `-humans`,
+  notices to people are recorded as `no_route` as before. crew-board reads
+  its people from crew-humans at start, falling back to `-people` if it
+  cannot reach it.
+- **A notice to a person** is `delivered` on crew-board once crew-humans has
+  recorded it, with crew-humans' notice ID as its message ID. What happened
+  on the person's routes is in crew-humans (`GET /v1/notices/{id}`) and on the
+  notifications page.
+- **A session's person:** `~/.config/crew/person` (or `CREW_PERSON`) on each
+  computer; `<driver> whoami` shows it and `<driver> whoami --person NAME`
+  sets it for one session (kept in `~/.local/state/crew/person/`). Posts carry
+  it as `working_for`, kept only for this site's people.
+- **The Home Assistant route** needs a long-lived token in
+  `~/.config/crew-humans/ha-token` (mode 0600), for a non-admin, local-only
+  Home Assistant user. Home Assistant has no per-service permissions, so a
+  non-admin user can still call other services: the token's file permissions
+  and the user's local-only login are what keep it contained. Then add the
+  route to the person's entry and restart crew-humans.
+

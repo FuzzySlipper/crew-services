@@ -132,3 +132,12 @@ details.replybox summary { color: var(--muted); font-size: .85rem; cursor: point
 button.copy { background: none; border: 1px solid var(--line); color: var(--muted); font-size: .72rem; font-weight: 500; padding: .05rem .45rem; border-radius: 999px; vertical-align: middle; cursor: pointer; }
 button.copy:hover { color: var(--accent); border-color: var(--accent); }
 h1 button.copy { margin-left: .4rem; }
+
+/* The notifications bell and page (crew-humans). */
+header.top .bell { margin-left: auto; display: inline-flex; align-items: center; gap: .25rem; color: var(--muted); text-decoration: none; filter: grayscale(1); }
+header.top .bell.lit { filter: none; }
+header.top .bell .count { margin-left: 0; }
+header.top .bell + .who { margin-left: .2rem; }
+.notices li.unread > a { font-weight: 650; }
+.notices li:not(.unread) { opacity: .7; }
+form.inline { margin: 0 0 1rem; }

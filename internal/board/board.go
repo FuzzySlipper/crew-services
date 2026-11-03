@@ -153,7 +153,10 @@ type Author struct {
 	// Label names the agent where its runtime has a name for it (a Hermes
 	// profile), as its driver reported it: display only, like Model.
 	Label string `json:"label,omitempty"`
-	Site  string `json:"site"`
+	// WorkingFor is the person the session works for, as its driver
+	// reported it: display only, like Model.
+	WorkingFor string `json:"working_for,omitempty"`
+	Site       string `json:"site"`
 }
 
 // Participant is anyone who can be notified or keep read state: a seat, a
@@ -242,6 +245,10 @@ type Actor struct {
 	// Label is the agent's name in its runtime (a Hermes profile), reported
 	// by the driver; recorded like Model.
 	Label string `json:"label,omitempty"`
+	// WorkingFor is the person the session works for, as its driver
+	// reported it; recorded like Model, and kept only when it names one of
+	// this site's people.
+	WorkingFor string `json:"working_for,omitempty"`
 }
 
 // ErrorCode is a stable reason code (docs/crew-board.md, Reason codes).

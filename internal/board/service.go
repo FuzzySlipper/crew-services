@@ -140,9 +140,12 @@ type Directory interface {
 type Config struct {
 	// Site is this site's name, the prefix of every ID it makes.
 	Site string
-	// People are the people on this site, by short name. crew-humans will own
-	// this list (#10535); until then it is configured here.
+	// People are the people on this site, by short name, from crew-humans
+	// when it runs, or from crew-board's own config when it does not.
 	People []string
+	// PeopleRouted says crew-humans takes notices to people; without it they
+	// are recorded as no_route and go nowhere.
+	PeopleRouted bool
 	// NoticeRetry is how long a notice is retried while the fabric cannot be
 	// reached before it is marked failed.
 	NoticeRetry time.Duration
@@ -241,7 +244,7 @@ func (s *Service) author(ctx context.Context, actor Actor) (Author, error) {
 		return Author{}, refuse(CodeSessionUnbound, "%s is not a bound session address", actor.SessionAddress)
 	}
 	if actor.AsSeat == "" {
-		return Author{Kind: AuthorSession, Address: actor.SessionAddress, Adapter: adapter, Model: cleanModel(actor.Model), Label: cleanLabel(actor.Label), Site: s.cfg.Site}, nil
+		return Author{Kind: AuthorSession, Address: actor.SessionAddress, Adapter: adapter, Model: cleanModel(actor.Model), Label: cleanLabel(actor.Label), WorkingFor: s.workingFor(actor.WorkingFor), Site: s.cfg.Site}, nil
 	}
 	if !seatForm.MatchString(actor.AsSeat) {
 		return Author{}, refuse(CodeInvalid, "as_seat must be a seat address, scope.name")
@@ -253,7 +256,7 @@ func (s *Service) author(ctx context.Context, actor Actor) (Author, error) {
 	if !exists || holder != actor.SessionAddress {
 		return Author{}, &Error{Code: CodeNotHolder, Err: errors.New(actor.SessionAddress + " does not hold " + actor.AsSeat), Detail: map[string]any{"holder": holder}}
 	}
-	return Author{Kind: AuthorSeat, Address: actor.AsSeat, Session: actor.SessionAddress, Adapter: adapter, Model: cleanModel(actor.Model), Label: cleanLabel(actor.Label), Site: s.cfg.Site}, nil
+	return Author{Kind: AuthorSeat, Address: actor.AsSeat, Session: actor.SessionAddress, Adapter: adapter, Model: cleanModel(actor.Model), Label: cleanLabel(actor.Label), WorkingFor: s.workingFor(actor.WorkingFor), Site: s.cfg.Site}, nil
 }
 
 // sameParticipant reports whether the caller is the post's author: the same
@@ -891,6 +894,15 @@ func editorModel(actor Actor) string {
 		return ""
 	}
 	return cleanModel(actor.Model)
+}
+
+// workingFor keeps a session's reported person only when it is one of this
+// site's people; anything else is dropped, never refused.
+func (s *Service) workingFor(person string) string {
+	if slices.Contains(s.cfg.People, person) {
+		return person
+	}
+	return ""
 }
 
 // cleanLabel keeps a reported agent label (a Hermes profile name) only when

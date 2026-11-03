@@ -2,8 +2,10 @@ package board
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -98,10 +100,10 @@ func (s *Service) isSelf(author Author, p Participant) bool {
 
 func (s *Service) notice(now time.Time, thread Thread, post Post, p Participant, reason string) *Notice {
 	n := &Notice{ID: NewID(s.cfg.Site, now), PostID: post.ID, ThreadID: thread.ID, Recipient: p, Reason: reason, Policy: activation(reason), Urgent: post.Urgent, State: NoticePending, NextAttemptAt: now, CreatedAt: now, GiveUpAt: now.Add(s.cfg.NoticeRetry)}
-	if p.Kind == AuthorPerson {
-		// crew-humans (#10535) will route notices to people; until then they
-		// are recorded and nothing more happens. Read state still sees them.
-		n.State, n.LastError = NoticeNoRoute, "no route to people yet (crew-humans)"
+	if p.Kind == AuthorPerson && !s.cfg.PeopleRouted {
+		// Without crew-humans, notices to people are recorded and nothing
+		// more happens. Read state still sees them.
+		n.State, n.LastError = NoticeNoRoute, "no route to people (crew-humans is not configured)"
 	}
 	return n
 }
@@ -231,6 +233,34 @@ type NotifierConfig struct {
 	// TTL is how long a sent notice waits in the fabric, for example for a
 	// vacant seat's next holder. It must not exceed the fabric's own cap.
 	TTL time.Duration
+	// People takes notices to people (crew-humans); WebURL is the people's
+	// pages, which a person's notice links to.
+	People PeopleNotifier
+	WebURL string
+}
+
+// PeopleNotifier hands a notice for a person to crew-humans, and returns the
+// notice's ID there. An error wrapping ErrPersonRefused is a definite answer;
+// any other is retried.
+type PeopleNotifier interface {
+	NotifyPerson(ctx context.Context, n PersonNotice) (string, error)
+}
+
+// ErrPersonRefused is crew-humans refusing a notice (an unknown person, a
+// malformed request): retrying cannot help.
+var ErrPersonRefused = errors.New("crew-humans refused the notice")
+
+// PersonNotice is what crew-board asks crew-humans to tell a person. It is
+// fixed before the first attempt, so a retry asks for exactly the same.
+type PersonNotice struct {
+	Person string `json:"person"`
+	Key    string `json:"key"`
+	Title  string `json:"title"`
+	Text   string `json:"text"`
+	Link   string `json:"link,omitempty"`
+	Reason string `json:"reason"`
+	Group  string `json:"group"`
+	Urgent bool   `json:"urgent,omitempty"`
 }
 
 // Notifier sends queued notices to the fabric. Whatever happens to a notice
@@ -362,6 +392,9 @@ func (n *Notifier) send(ctx context.Context, notice Notice) bool {
 		_ = n.store.UpdateNotice(ctx, notice)
 		return true
 	}
+	if notice.Recipient.Kind == AuthorPerson {
+		return n.sendPerson(ctx, notice, now)
+	}
 	if notice.Body == "" {
 		// The text is fixed before the first attempt, so a retry after a lost
 		// response submits the same request and the fabric replays it,
@@ -393,6 +426,103 @@ func (n *Notifier) send(ctx context.Context, notice Notice) bool {
 	}
 	_ = n.store.UpdateNotice(ctx, notice)
 	return notice.State != NoticePending
+}
+
+// sendPerson hands a person's notice to crew-humans. Once crew-humans has
+// recorded it the notice is delivered: what happens on the person's routes
+// is crew-humans' to record.
+func (n *Notifier) sendPerson(ctx context.Context, notice Notice, now time.Time) bool {
+	if n.cfg.People == nil {
+		notice.State, notice.LastError = NoticeNoRoute, "no route to people (crew-humans is not configured)"
+		_ = n.store.UpdateNotice(ctx, notice)
+		return true
+	}
+	var request PersonNotice
+	if notice.Body == "" {
+		var err error
+		if request, err = n.personNotice(ctx, notice); err != nil {
+			notice.State, notice.LastError = NoticeFailed, err.Error()
+			_ = n.store.UpdateNotice(ctx, notice)
+			return true
+		}
+		body, _ := json.Marshal(request)
+		notice.Body = string(body)
+		if err := n.store.UpdateNotice(ctx, notice); err != nil {
+			return false
+		}
+	} else if err := json.Unmarshal([]byte(notice.Body), &request); err != nil {
+		notice.State, notice.LastError = NoticeFailed, "the stored notice is unreadable: "+err.Error()
+		_ = n.store.UpdateNotice(ctx, notice)
+		return true
+	}
+	id, err := n.cfg.People.NotifyPerson(ctx, request)
+	switch {
+	case err == nil:
+		notice.State, notice.MessageID, notice.SentAt, notice.LastError = NoticeDelivered, id, now, ""
+	case errors.Is(err, ErrPersonRefused):
+		notice.State, notice.LastError = NoticeFailed, err.Error()
+	case !now.Before(notice.GiveUpAt):
+		notice.State, notice.LastError = NoticeFailed, "crew-humans could not be reached before the notice gave up: "+err.Error()
+	default:
+		notice.LastError = err.Error()
+		notice.NextAttemptAt = now.Add(backoff(notice.Attempts))
+	}
+	_ = n.store.UpdateNotice(ctx, notice)
+	return notice.State != NoticePending
+}
+
+// personNotice is a person's notice: who wrote what where, a short quote,
+// and a link to the post on the people's pages.
+func (n *Notifier) personNotice(ctx context.Context, notice Notice) (PersonNotice, error) {
+	post, err := n.store.GetPost(ctx, notice.PostID)
+	if err != nil {
+		return PersonNotice{}, err
+	}
+	thread, err := n.store.GetThread(ctx, notice.ThreadID)
+	if err != nil {
+		return PersonNotice{}, err
+	}
+	who := personAuthor(post.Author)
+	var title string
+	switch notice.Reason {
+	case ReasonMention:
+		title = fmt.Sprintf("%s mentioned you in %q", who, thread.Title)
+	case ReasonReply:
+		title = fmt.Sprintf("%s replied in %q", who, thread.Title)
+	default:
+		title = fmt.Sprintf("New in %q, from %s", thread.Title, who)
+	}
+	if len([]rune(title)) > 190 {
+		title = string([]rune(title)[:189]) + "…"
+	}
+	text := strings.Join(strings.Fields(RenderForAgent(post.Body, false)), " ")
+	if n.cfg.Site != "" && post.Site != n.cfg.Site {
+		text = "(from site " + post.Site + ") " + text
+	}
+	link := ""
+	if n.cfg.WebURL != "" {
+		link = strings.TrimRight(n.cfg.WebURL, "/") + "/t/" + url.PathEscape(thread.ID) + "?post=" + url.QueryEscape(post.ID) + "#" + post.ID
+	}
+	return PersonNotice{Person: notice.Recipient.Address, Key: "crew-board/notice/" + notice.ID, Title: title, Text: text, Link: link, Reason: notice.Reason, Group: thread.ID, Urgent: notice.Urgent}, nil
+}
+
+// personAuthor is a post's author as a person reads it: a seat or session
+// with its runtime, a person by name.
+func personAuthor(a Author) string {
+	if a.Kind == AuthorPerson {
+		return displayPerson(a.Address)
+	}
+	if a.Kind == AuthorSession && a.Label != "" {
+		return a.Label
+	}
+	return a.Address
+}
+
+func displayPerson(name string) string {
+	if name == "" {
+		return name
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
 }
 
 func backoff(attempts int) time.Duration {
@@ -611,6 +741,9 @@ func displayAuthor(a Author) string {
 	}
 	if a.Model != "" {
 		runtime += ", " + a.Model
+	}
+	if a.WorkingFor != "" {
+		runtime += ", working for " + displayPerson(a.WorkingFor)
 	}
 	switch a.Kind {
 	case AuthorSeat:

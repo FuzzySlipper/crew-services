@@ -46,7 +46,7 @@ func main() {
 	crewcli.DriverURLs = map[string]string{"hermes": driverURL()}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "send", "who", "seat", "board":
+		case "send", "who", "whoami", "seat", "board":
 			os.Exit(crewcli.Main(context.Background(), os.Args[1:], profile(), driverURL(), os.Stdin, os.Stdout, os.Stderr))
 		case "address":
 			os.Exit(address())
@@ -223,7 +223,7 @@ func keepIntros(ctx context.Context, driver *dshdriver.Driver, hermes *hermesdri
 		seats := crewcli.SeatsByHolder(ctx, fabricURL)
 		for _, s := range driver.Sessions() {
 			text := fmt.Sprintf("Your crew messaging address is %s (Hermes profile %s). Crew services and other agents send messages here; reply or write with `crew-hermes send --to ADDRESS TEXT`.", s.Address, s.NativeID)
-			text += crewcli.BoardContext("crew-hermes") + crewcli.SeatContext("crew-hermes", seats[s.Address])
+			text += crewcli.BoardContext("crew-hermes") + crewcli.SeatContext("crew-hermes", seats[s.Address]) + crewcli.PersonContext(crewcli.PersonFor(""))
 			if err := hermes.WriteIntro(s.NativeID, text); err != nil {
 				log.Warn("write profile intro", "profile", s.NativeID, "error", err)
 			}
