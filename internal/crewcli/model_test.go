@@ -1,6 +1,7 @@
 package crewcli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,5 +52,34 @@ func TestALabelledAgentIsKnownByItsLabel(t *testing.T) {
 	seat := board.Author{Kind: board.AuthorSeat, Address: "crew.check", Session: "s/74fc", Adapter: "crew-hermes", Model: "claude-opus-5-5", Label: "librarian"}
 	if got := AuthorName(seat); got != "crew.check (Hermes librarian, claude-opus-5-5, s/74fc)" {
 		t.Errorf("seat = %q", got)
+	}
+}
+
+func TestLastModelFindsAModelBeforeALongTurn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString(`{"type":"turn_context","model":"gpt-6-astra"}` + "\n")
+	// More than 4 MiB of output after the model, in lines that straddle the
+	// reader's chunk boundaries.
+	line := `{"type":"event","output":"` + strings.Repeat("x", 300_000) + `"}` + "\n"
+	for written := 0; written < 5<<20; written += len(line) {
+		_, _ = f.WriteString(line)
+	}
+	f.Close()
+	extract := func(line []byte) string {
+		var entry struct {
+			Type  string `json:"type"`
+			Model string `json:"model"`
+		}
+		if json.Unmarshal(line, &entry) == nil && entry.Type == "turn_context" {
+			return entry.Model
+		}
+		return ""
+	}
+	if got := LastModel(path, extract); got != "gpt-6-astra" {
+		t.Fatalf("model = %q", got)
 	}
 }

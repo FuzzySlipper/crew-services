@@ -4,18 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 )
 
-// modelTail is how much of a transcript's end LastModel reads: every turn
-// names its model, so the newest one is near the end.
-const modelTail = 4 << 20
+// modelChunk is how much of a transcript LastModel reads at a time, walking
+// back from the end until it finds a recognized line.
+const modelChunk = 1 << 20
 
 // LastModel is the model the newest recognized line of a JSONL transcript
-// names, or "" when there is none. extract returns a line's model, or "".
+// names, or "" when there is none. extract returns a line's model, or "". It
+// reads the file backward in bounded chunks, so a model named before a long
+// turn's output (a Codex turn_context ahead of megabytes of tool results) is
+// still found.
 func LastModel(path string, extract func(line []byte) string) string {
 	if path == "" {
 		return ""
@@ -29,16 +33,29 @@ func LastModel(path string, extract func(line []byte) string) string {
 	if err != nil {
 		return ""
 	}
-	start := max(info.Size()-modelTail, 0)
-	data, err := io.ReadAll(io.NewSectionReader(f, start, info.Size()-start))
-	if err != nil {
-		return ""
-	}
-	lines := bytes.Split(data, []byte("\n"))
-	for i := len(lines) - 1; i >= 0; i-- {
-		if model := extract(lines[i]); model != "" {
-			return model
+	// carry is the start of a line whose beginning is in an earlier chunk.
+	var carry []byte
+	for end := info.Size(); end > 0; {
+		start := max(end-modelChunk, 0)
+		chunk := make([]byte, end-start)
+		if _, err := f.ReadAt(chunk, start); err != nil && !errors.Is(err, io.EOF) {
+			return ""
 		}
+		data := append(chunk, carry...)
+		lines := bytes.Split(data, []byte("\n"))
+		// The first piece may be the end of a line that began before start;
+		// it is finished with the next chunk, unless this is the file's start.
+		first := 0
+		if start > 0 {
+			first = 1
+			carry = append([]byte(nil), lines[0]...)
+		}
+		for i := len(lines) - 1; i >= first; i-- {
+			if model := extract(lines[i]); model != "" {
+				return model
+			}
+		}
+		end = start
 	}
 	return ""
 }
