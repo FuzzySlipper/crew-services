@@ -4,9 +4,8 @@ Status: built (design: Den task 10535). Patch accepted the recommendations on
 2026-11-02; they are recorded under [Decisions](#decisions). crew-humans runs
 as its own unit on 127.0.0.1:8797, crew-board hands it every notice to a
 person, the board's pages show each person's inbox, and posts show who a
-session works for. The Home Assistant route is built and tested against a
-stand-in, but waits on its token before it is switched on (see
-[Setup](#setup)).
+session works for. Patch's pushes go to his Pixel through Home Assistant
+(since 2026-11-02); Lore's route waits on her phone's notify target.
 
 crew-humans is the crew service for the people on a site: Patch and Lore on
 this one. Other services ask it to notify a person, and it alone decides what
@@ -334,7 +333,9 @@ Patch decided these on 2026-11-02:
   it as `working_for`, kept only for this site's people.
 - **The Home Assistant route** needs a long-lived token in
   `~/.config/crew-humans/ha-token` (mode 0600), for a non-admin, local-only
-  Home Assistant user. Home Assistant has no per-service permissions, so a
+  Home Assistant user. On this site that user is `crew-humans`, created with
+  Patch's approval on 2026-11-02 (its password was random and never kept;
+  the token is the only credential). Home Assistant has no per-service permissions, so a
   non-admin user can still call other services: the token's file permissions
   and the user's local-only login are what keep it contained. Then add the
   route to the person's entry and restart crew-humans.

@@ -24,7 +24,18 @@
 
 ![Notifications on a phone](crew-humans/phone-notices.png)
 
-Not yet checked live: a push through Home Assistant. The route is tested
-against a stand-in for Home Assistant's REST API (path, bearer token, title,
-140-character message, link, per-thread tag, urgent channel, retry and
-refusal), but it needs its token before it is switched on.
+## The Home Assistant push
+
+With Patch's approval, a non-admin, local-only Home Assistant user
+`crew-humans` was created and its long-lived token written to
+`~/.config/crew-humans/ha-token` (0600). Patch's route
+(`notify.mobile_app_pixel_10_pro_xl`, push `mentions`) was added to the people
+file and crew-humans restarted. A reply on the live-check thread mentioning
+`@patch` (post den-01M6G2AAVQ1FMGMGGW5PTE5T01) was recorded and its
+`home-assistant` delivery went `sent` on the first attempt: Home Assistant
+answered 200 for the notify call. Whether it showed on the phone is Patch's
+to confirm.
+
+Before that, the route was tested against a stand-in for Home Assistant's REST
+API (path, bearer token, title, 140-character message, link, per-thread tag,
+urgent channel, retry and refusal).
