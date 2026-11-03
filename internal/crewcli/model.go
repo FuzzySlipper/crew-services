@@ -78,7 +78,7 @@ func SessionAbout(ctx context.Context, self string) About {
 	}
 	for _, base := range DriverURLs {
 		var out About
-		if call(ctx, http.MethodGet, base+"/v1/sessions/"+url.PathEscape(self)+"/model", nil, &out) == nil && (out.Model != "" || out.Label != "" || out.Person != "") {
+		if call(ctx, http.MethodGet, base+"/v1/sessions/"+url.PathEscape(self)+"/model", nil, &out) == nil && (out.Model != "" || out.Label != "") {
 			return out
 		}
 	}
@@ -90,14 +90,16 @@ func ServeModel(model func(r *http.Request, sessionID string) string) http.Handl
 	return ServeAbout(func(r *http.Request, id string) About { return About{Model: model(r, id)} })
 }
 
-// ServeAbout answers GET /v1/sessions/{sessionID}/model from about, with the
-// session's person resolved as the CLI resolves it (PersonFor) when about
-// does not say.
+// ServeAbout answers GET /v1/sessions/{sessionID}/model from about. When the
+// driver knows the session (about reports a model or a label), the report
+// also names the session's person, resolved as the CLI resolves it
+// (PersonFor). A driver that does not know the session reports nothing, so
+// SessionAbout keeps asking until the owning driver answers.
 func ServeAbout(about func(r *http.Request, sessionID string) About) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("sessionID")
 		out := about(r, id)
-		if out.Person == "" {
+		if out.Person == "" && (out.Model != "" || out.Label != "") {
 			out.Person = PersonFor(id)
 		}
 		w.Header().Set("Content-Type", "application/json")

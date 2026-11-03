@@ -671,8 +671,9 @@ func (h *Handler) notices(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Unread notices come first, all of them, so the bell's count can always
-	// be found; then a page of everything, which pages back with ?before=.
+	// The first page leads with the newest unread notices, up to a cap; then
+	// comes a page of everything, read or not, which pages back with
+	// ?before=, so an unread notice past the cap is still on an older page.
 	before := r.URL.Query().Get("before")
 	var unread []humansclient.Notice
 	if before == "" {
@@ -698,9 +699,15 @@ func (h *Handler) notices(w http.ResponseWriter, r *http.Request) {
 	if len(inbox.Notices) == noticesPage {
 		older = inbox.Notices[len(inbox.Notices)-1].ID
 	}
+	// On the first page, unread notices already listed above are not
+	// repeated; older pages list everything.
+	listed := map[string]bool{}
+	for _, n := range unread {
+		listed[n.ID] = true
+	}
 	var earlier []humansclient.Notice
 	for _, n := range inbox.Notices {
-		if n.ReadAt != nil {
+		if !listed[n.ID] {
 			earlier = append(earlier, n)
 		}
 	}
@@ -708,7 +715,7 @@ func (h *Handler) notices(w http.ResponseWriter, r *http.Request) {
 	if len(unread) > 0 {
 		newest = unread[0].ID
 	}
-	h.render(w, "notices", page{Title: "Notifications", Person: person, Nav: h.nav(r.Context(), person, "", ""), Data: map[string]any{"Unread": unread, "Read": earlier, "Newest": newest, "Older": older, "Paged": before != ""}}, http.StatusOK)
+	h.render(w, "notices", page{Title: "Notifications", Person: person, Nav: h.nav(r.Context(), person, "", ""), Data: map[string]any{"Unread": unread, "Capped": len(unread) >= maxUnreadShown, "Read": earlier, "Newest": newest, "Older": older, "Paged": before != ""}}, http.StatusOK)
 }
 
 // openNotice marks one notice read and follows its link: to the post when

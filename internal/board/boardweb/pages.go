@@ -67,11 +67,12 @@ const pages = `
 <p class="sub">Everything crew services told you, newest first. Opening a thread marks its notices read.</p>
 {{if .Data.Unread}}
 <h2>Unread</h2>
+{{if .Data.Capped}}<p class="sub">The newest {{len .Data.Unread}} unread are shown here; older unread ones are on the older pages below.</p>{{end}}
 <form method="post" action="/notices/read" class="inline"><input type="hidden" name="through" value="{{.Data.Newest}}"><button>Mark all read</button></form>
 <ul class="list notices">{{range .Data.Unread}}{{template "notice" .}}{{end}}</ul>
 {{end}}
 {{if .Data.Read}}
-{{if or .Data.Unread .Data.Paged}}<h2>Earlier</h2>{{end}}
+{{if .Data.Unread}}<h2>Earlier</h2>{{end}}
 <ul class="list notices">{{range .Data.Read}}{{template "notice" .}}{{end}}</ul>
 {{end}}
 {{if .Data.Older}}<p class="pager"><a href="/notices?before={{.Data.Older}}">Older notifications</a></p>{{end}}

@@ -65,3 +65,31 @@ func TestASessionsPersonDefaultsToTheMachineAndCanBeSet(t *testing.T) {
 		t.Fatalf("author = %q", got)
 	}
 }
+
+// A driver that does not know a session reports nothing for it, so the
+// owning driver's report wins whichever driver is asked first.
+func TestOnlyTheOwningDriversReportCounts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CREW_PERSON", "patch")
+	serve := func(known string) *httptest.Server {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /v1/sessions/{sessionID}/model", ServeModel(func(_ *http.Request, id string) string {
+			if id == known {
+				return "gpt-6-astra"
+			}
+			return ""
+		}))
+		return httptest.NewServer(mux)
+	}
+	claude, codex := serve("someone-else"), serve("thread-9")
+	defer claude.Close()
+	defer codex.Close()
+	previous := DriverURLs
+	DriverURLs = map[string]string{"claude-code": claude.URL, "crew-codex": codex.URL}
+	defer func() { DriverURLs = previous }()
+	for i := 0; i < 20; i++ {
+		if about := SessionAbout(context.Background(), "thread-9"); about.Model != "gpt-6-astra" || about.Person != "patch" {
+			t.Fatalf("attempt %d: %+v", i, about)
+		}
+	}
+}

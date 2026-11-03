@@ -504,3 +504,37 @@ func TestOldNoticesStayReachable(t *testing.T) {
 		t.Fatalf("Patch opened Lore's notice: %q", where)
 	}
 }
+
+func TestAnUnreadNoticePastTheCapIsOnAnOlderPage(t *testing.T) {
+	w := newWeb(t)
+	inbox := &fakeInbox{}
+	for i := 1100; i >= 1; i-- {
+		inbox.notices = append(inbox.notices, humansclient.Notice{ID: fmt.Sprintf("hn-%05d", i), Person: "patch", Title: fmt.Sprintf("notice %d", i), CreatedAt: time.Now()})
+	}
+	w.handler = boardweb.NewHandler(w.svc, boardweb.WithInbox(inbox))
+	path := "/notices"
+	first := w.do("GET", path, "patch", nil).Body.String()
+	if strings.Contains(first, `href="/notices/hn-00001"`) || !strings.Contains(first, "older unread ones are on the older pages") {
+		t.Fatal("the first page should hold only the newest unread, and say so")
+	}
+	// Following the older links alone, nothing marked read, reaches it.
+	for hops := 0; hops < 20; hops++ {
+		body := w.do("GET", path, "patch", nil).Body.String()
+		if strings.Contains(body, `href="/notices/hn-00001"`) {
+			if inbox.notices[1099].ReadAt != nil {
+				t.Fatal("paging marked it read")
+			}
+			w.do("GET", "/notices/hn-00001", "patch", nil)
+			if inbox.notices[1099].ReadAt == nil {
+				t.Fatal("opening it did not mark it read")
+			}
+			return
+		}
+		m := regexp.MustCompile(`href="(/notices\?before=[^"]+)"`).FindStringSubmatch(body)
+		if m == nil {
+			t.Fatalf("no older link after %d hops and no hn-00001", hops)
+		}
+		path = m[1]
+	}
+	t.Fatal("never reached the oldest unread notice")
+}
