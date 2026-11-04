@@ -43,7 +43,7 @@ After=crew-messaging.service $dsh_unit
 
 [Service]
 Type=simple
-ExecStart=$bin_dir/crew-dsh -fabric-url http://127.0.0.1:8787 -control-listen 127.0.0.1:8793 -dsh-unit $dsh_unit
+ExecStart=$bin_dir/crew-dsh serve -fabric-url http://127.0.0.1:8787 -control-listen 127.0.0.1:8793 -dsh-unit $dsh_unit
 Restart=on-failure
 RestartSec=2
 

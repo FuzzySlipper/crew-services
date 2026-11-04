@@ -2,7 +2,7 @@
 // sessions through the `dsh web` host's session API. It never starts, stops
 // or restarts DSH; the host resumes a cold session itself when prompted.
 //
-//	crew-dsh [serve] [flags]   run the driver
+//	crew-dsh serve [flags]     run the driver (alone, the command prints usage)
 //	crew-dsh send [--policy P] [--as SEAT] --to ADDRESS TEXT...
 //	                           send a crew message from this DSH session
 //	crew-dsh who               list the sessions with crew addresses
@@ -34,6 +34,16 @@ import (
 
 const defaultDriverURL = "http://127.0.0.1:8793"
 
+const usage = `usage:
+  crew-dsh send [--policy P] [--as SEAT] --to ADDRESS TEXT...
+  crew-dsh who                  list sessions with crew addresses
+  crew-dsh whoami [--person NAME]
+  crew-dsh seat COMMAND         take, leave, relieve or read crew seats
+  crew-dsh board COMMAND        read and write crew-board threads
+  crew-dsh address              print this DSH session's crew address
+  crew-dsh serve [flags]        run the driver, which a user unit already does
+`
+
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -43,9 +53,9 @@ func main() {
 			os.Exit(address())
 		}
 	}
-	args := os.Args[1:]
-	if len(args) > 0 && args[0] == "serve" {
-		args = args[1:]
+	args, code, ok := crewcli.ServeArgs(os.Args[1:], usage, os.Stdout, os.Stderr)
+	if !ok {
+		os.Exit(code)
 	}
 	if err := serve(args); err != nil {
 		fmt.Fprintln(os.Stderr, "crew-dsh:", err)
@@ -97,6 +107,11 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	listener, err := crewcli.Listen(cfg.ControlListen)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
 	fabric, err := fabricclient.New(cfg.FabricURL)
 	if err != nil {
 		return err
@@ -126,7 +141,7 @@ func serve(args []string) error {
 		_ = server.Shutdown(shutdown)
 	}()
 	go func() {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("control API stopped", "error", err)
 			stop()
 		}

@@ -2,7 +2,7 @@
 // Codex app-server daemon. It connects to the daemon's control socket and
 // never starts, stops or restarts Codex or its threads.
 //
-//	crew-codex [serve] [flags]   run the driver
+//	crew-codex serve [flags]     run the driver (alone, the command prints usage)
 //	crew-codex hook EVENT        run as a Codex hook (session-start, fill-notify)
 //	crew-codex send [--policy P] [--as SEAT] --to ADDRESS TEXT...
 //	                             send a crew message from this Codex thread
@@ -31,6 +31,16 @@ import (
 
 const defaultDriverURL = "http://127.0.0.1:8788"
 
+const usage = `usage:
+  crew-codex send [--policy P] [--as SEAT] --to ADDRESS TEXT...
+  crew-codex who                list sessions with crew addresses
+  crew-codex whoami [--person NAME]
+  crew-codex seat COMMAND       take, leave, relieve or read crew seats
+  crew-codex board COMMAND      read and write crew-board threads
+  crew-codex hook EVENT         run as a Codex hook
+  crew-codex serve [flags]      run the driver, which a user unit already does
+`
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "hook" {
 		// A hook must never break the thread: always exit 0.
@@ -40,9 +50,9 @@ func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "send" || os.Args[1] == "who" || os.Args[1] == "whoami" || os.Args[1] == "seat" || os.Args[1] == "board") {
 		os.Exit(crewcli.Main(context.Background(), os.Args[1:], os.Getenv("CODEX_THREAD_ID"), driverURL(), os.Stdin, os.Stdout, os.Stderr))
 	}
-	args := os.Args[1:]
-	if len(args) > 0 && args[0] == "serve" {
-		args = args[1:]
+	args, code, ok := crewcli.ServeArgs(os.Args[1:], usage, os.Stdout, os.Stderr)
+	if !ok {
+		os.Exit(code)
 	}
 	if err := serve(args); err != nil {
 		fmt.Fprintln(os.Stderr, "crew-codex:", err)
@@ -79,6 +89,11 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	listener, err := crewcli.Listen(cfg.ControlListen)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
 	fabric, err := fabricclient.New(cfg.FabricURL)
 	if err != nil {
 		return err
@@ -110,7 +125,7 @@ func serve(args []string) error {
 		_ = server.Shutdown(shutdown)
 	}()
 	go func() {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("hook API stopped", "error", err)
 			stop()
 		}

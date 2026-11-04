@@ -40,6 +40,17 @@ const (
 	defaultBoardURL  = "http://127.0.0.1:18794"
 )
 
+const usage = `usage:
+  crew-hermes send [--policy P] [--as SEAT] --to ADDRESS TEXT...
+  crew-hermes who               list sessions with crew addresses
+  crew-hermes whoami [--person NAME]
+  crew-hermes seat COMMAND      take, leave, relieve or read crew seats
+  crew-hermes board COMMAND     read and write crew-board threads
+  crew-hermes address           print this profile's crew address
+  crew-hermes install           write the delivery helper and each profile's crew plugin
+  crew-hermes serve [flags]     run the driver, which a user unit already does
+`
+
 func main() {
 	setDefault("CREW_FABRIC_URL", defaultFabricURL)
 	setDefault("CREW_BOARD_URL", defaultBoardURL)
@@ -54,9 +65,9 @@ func main() {
 			os.Exit(install())
 		}
 	}
-	args := os.Args[1:]
-	if len(args) > 0 && args[0] == "serve" {
-		args = args[1:]
+	args, code, ok := crewcli.ServeArgs(os.Args[1:], usage, os.Stdout, os.Stderr)
+	if !ok {
+		os.Exit(code)
 	}
 	if err := serve(args); err != nil {
 		fmt.Fprintln(os.Stderr, "crew-hermes:", err)
@@ -165,6 +176,11 @@ func serve(args []string) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	listener, err := crewcli.Listen(cfg.ControlListen)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
 	fabric, err := fabricclient.New(cfg.FabricURL)
 	if err != nil {
 		return err
@@ -206,7 +222,7 @@ func serve(args []string) error {
 		_ = server.Shutdown(shutdown)
 	}()
 	go func() {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("control API stopped", "error", err)
 			stop()
 		}

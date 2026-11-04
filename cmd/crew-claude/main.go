@@ -1,7 +1,7 @@
 // Command crew-claude delivers crew fabric messages into Claude Code sessions
 // through each session's own inbox socket.
 //
-//	crew-claude serve [flags]   run the driver
+//	crew-claude serve [flags]   run the driver (alone, the command prints usage)
 //	crew-claude hook EVENT      run as a Claude Code hook (session-start, busy, step, idle, fill-notify)
 //	crew-claude send [--policy P] [--as SEAT] --to ADDRESS TEXT...
 //	                            send a crew message from this Claude session
@@ -33,6 +33,16 @@ import (
 
 const defaultDriverURL = "http://127.0.0.1:8792"
 
+const usage = `usage:
+  crew-claude send [--policy P] [--as SEAT] --to ADDRESS TEXT...
+  crew-claude who               list sessions with crew addresses
+  crew-claude whoami [--person NAME]
+  crew-claude seat COMMAND      take, leave, relieve or read crew seats
+  crew-claude board COMMAND     read and write crew-board threads
+  crew-claude hook EVENT        run as a Claude Code hook
+  crew-claude serve [flags]     run the driver, which a user unit already does
+`
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "hook" {
 		// A hook must never break the session: always exit 0.
@@ -42,9 +52,9 @@ func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "send" || os.Args[1] == "who" || os.Args[1] == "whoami" || os.Args[1] == "seat" || os.Args[1] == "board") {
 		os.Exit(crewcli.Main(context.Background(), os.Args[1:], os.Getenv("CLAUDE_CODE_SESSION_ID"), driverURL(), os.Stdin, os.Stdout, os.Stderr))
 	}
-	args := os.Args[1:]
-	if len(args) > 0 && args[0] == "serve" {
-		args = args[1:]
+	args, code, ok := crewcli.ServeArgs(os.Args[1:], usage, os.Stdout, os.Stderr)
+	if !ok {
+		os.Exit(code)
 	}
 	if err := serve(args); err != nil {
 		fmt.Fprintln(os.Stderr, "crew-claude:", err)
@@ -102,6 +112,11 @@ func serve(args []string) error {
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
 		return errors.New("-listen must be a loopback address")
 	}
+	listener, err := crewcli.Listen(*listen)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
 	fabric, err := fabricclient.New(*fabricURL)
 	if err != nil {
 		return err
@@ -133,7 +148,7 @@ func serve(args []string) error {
 		_ = server.Shutdown(shutdown)
 	}()
 	go func() {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("hook API stopped", "error", err)
 			stop()
 		}

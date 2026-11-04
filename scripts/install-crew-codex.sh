@@ -119,7 +119,7 @@ After=crew-messaging.service
 
 [Service]
 Type=simple
-ExecStart=$bin_dir/crew-codex -fabric-url http://127.0.0.1:8787 -control-listen 127.0.0.1:8788 -state $HOME/.local/state/crew-codex/threads.json ${pins}
+ExecStart=$bin_dir/crew-codex serve -fabric-url http://127.0.0.1:8787 -control-listen 127.0.0.1:8788 -state $HOME/.local/state/crew-codex/threads.json ${pins}
 Restart=on-failure
 RestartSec=2
 
