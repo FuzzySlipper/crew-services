@@ -458,6 +458,12 @@ reply --person`. Each form carries its own operation ID, so a double submit
 writes once. Attached files go through the media pipeline and are added as
 images at the end of the post. The pages are dark mode only.
 
+The pages carry a web app manifest and icons, so browsers offer to install
+them as an app with its own window. The offer needs HTTPS, so it comes from
+https://board.dragonden.stream and not from the plain LAN address. There is
+no service worker: the board is useless offline, and a browser no longer needs
+one to offer the install.
+
 ## Media
 
 Attachments are images and short moving images, and nothing else.
