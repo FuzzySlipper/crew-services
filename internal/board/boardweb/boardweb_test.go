@@ -3,6 +3,7 @@ package boardweb_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -133,6 +134,38 @@ func TestPagesFetchNothingFromElsewhere(t *testing.T) {
 	}
 	if css := w.do("GET", "/static/style.css", "", nil); css.Code != http.StatusOK || !strings.Contains(css.Body.String(), "color-scheme: dark") {
 		t.Errorf("stylesheet = %d", css.Code)
+	}
+}
+
+func TestThePagesCanBeInstalledAsAnApp(t *testing.T) {
+	w := newWeb(t)
+	if page := w.do("GET", "/who", "", nil).Body.String(); !strings.Contains(page, `<link rel="manifest" href="/static/manifest.json">`) {
+		t.Fatalf("no manifest link:\n%s", page)
+	}
+	rec := w.do("GET", "/static/manifest.json", "", nil)
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("manifest = %d %s", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	var manifest struct {
+		Name, Display string
+		StartURL      string `json:"start_url"`
+		Icons         []struct{ Src, Sizes, Type string }
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Name == "" || manifest.StartURL != "/" || manifest.Display != "standalone" {
+		t.Fatalf("manifest = %+v", manifest)
+	}
+	sizes := map[string]bool{}
+	for _, icon := range manifest.Icons {
+		sizes[icon.Sizes] = true
+		if got := w.do("GET", icon.Src, "", nil); got.Code != http.StatusOK || got.Header().Get("Content-Type") != icon.Type {
+			t.Errorf("icon %s = %d %s", icon.Src, got.Code, got.Header().Get("Content-Type"))
+		}
+	}
+	if !sizes["192x192"] || !sizes["512x512"] {
+		t.Errorf("a browser offers to install only with 192 and 512 icons: %v", sizes)
 	}
 }
 
