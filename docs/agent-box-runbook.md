@@ -130,7 +130,7 @@ After=crew-messaging.service
 
 [Service]
 EnvironmentFile=/home/system/crew-services/crew-review.env
-ExecStart=%h/.local/bin/crew-review
+ExecStart=%h/.local/bin/crew-review serve
 Restart=on-failure
 RestartSec=2
 

@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"crew-services/internal/crewcli"
 	"crew-services/internal/fabricclient"
 	"crew-services/internal/review"
 	"crew-services/internal/reviewcodex"
@@ -25,6 +26,13 @@ import (
 )
 
 const defaultReviewProfile = "/home/system/crew-services/reviewer.md"
+
+const usage = `usage:
+  crew-review status [--limit N] [--json] [--url URL]
+                     show the review queue
+  crew-review serve [flags]
+                     run the service, which a user unit already does
+`
 
 type commandConfig struct {
 	listen         string
@@ -80,7 +88,11 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "status" {
 		os.Exit(status(context.Background(), os.Args[2:], os.Getenv, os.Stdout, os.Stderr))
 	}
-	if err := run(os.Args[1:]); err != nil {
+	args, code, ok := crewcli.ServeArgs(os.Args[1:], usage, os.Stdout, os.Stderr)
+	if !ok {
+		os.Exit(code)
+	}
+	if err := run(args); err != nil {
 		fmt.Fprintln(os.Stderr, "crew-review:", err)
 		os.Exit(1)
 	}
@@ -91,6 +103,13 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Bind first: a second copy must stop here, before it opens the database
+	// or starts claiming jobs from the running one.
+	listener, err := crewcli.Listen(cfg.listen)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -176,7 +195,7 @@ func run(args []string) error {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	serverErr := server.ListenAndServe()
+	serverErr := server.Serve(listener)
 	stop()
 	<-loopDone
 	<-submissionsDone
