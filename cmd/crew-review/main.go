@@ -77,6 +77,9 @@ func (s *repeatString) Set(value string) error {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "status" {
+		os.Exit(status(context.Background(), os.Args[2:], os.Getenv, os.Stdout, os.Stderr))
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "crew-review:", err)
 		os.Exit(1)

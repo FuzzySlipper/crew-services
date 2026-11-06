@@ -72,6 +72,18 @@ type ManualReviewSubmissionStore interface {
 	LatestReusableSubmission(context.Context, string, int64) (SubmissionRecord, bool, error)
 }
 
+// WaitingSubmission is an unfinished submission as the pool shows it.
+type WaitingSubmission struct {
+	ID            string          `json:"id"`
+	ProjectID     string          `json:"project_id"`
+	TaskID        int64           `json:"task_id"`
+	ReviewRoundID int64           `json:"review_round_id,omitempty"`
+	Phase         SubmissionPhase `json:"phase"`
+	Failure       string          `json:"failure,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
 type Snapshot struct {
 	Backend    string             `json:"backend"`
 	Capacity   int                `json:"capacity"`
@@ -81,6 +93,9 @@ type Snapshot struct {
 	Active     []Projection       `json:"active"`
 	Recent     []Projection       `json:"recent"`
 	Retained   []RetainedAffinity `json:"retained_affinities"`
+	// Waiting is the submissions not yet admitted as jobs: their checks, or
+	// their source in the review checkout, are still to come.
+	Waiting []WaitingSubmission `json:"waiting"`
 	// SubmissionLoop is the background submission pass heartbeat.
 	SubmissionLoop *SubmissionLoopHeartbeat `json:"submission_loop,omitempty"`
 }

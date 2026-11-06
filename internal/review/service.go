@@ -231,6 +231,16 @@ func (s *Service) Snapshot(ctx context.Context, n int) (Snapshot, error) {
 	if s.backend != "" {
 		v.Backend = s.backend
 	}
+	v.Waiting = []WaitingSubmission{}
+	if store, ok := s.store.(SubmissionAdvanceStore); ok {
+		records, err := store.ListUnfinishedSubmissions(ctx)
+		if err != nil {
+			return v, err
+		}
+		for _, r := range records {
+			v.Waiting = append(v.Waiting, WaitingSubmission{ID: r.ID, ProjectID: r.Request.ProjectID, TaskID: r.Request.TaskID, ReviewRoundID: r.ReviewRoundID, Phase: r.Phase, Failure: r.Failure, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt})
+		}
+	}
 	s.mu.Lock()
 	for key, value := range s.affinities {
 		v.Retained = append(v.Retained, RetainedAffinity{ProjectID: key.ProjectID, TaskID: key.TaskID, Workspace: value.workspace, ExpiresAt: value.expiresAt})

@@ -842,3 +842,24 @@ func TestResubmissionAfterLooksGoodStillReplays(t *testing.T) {
 		t.Fatalf("looks_good resubmission=%+v replayed=%v requests=%d err=%v", again, replayed, den.requestCalls, err)
 	}
 }
+
+func TestSnapshotListsSubmissionsWaitingOnTheirGate(t *testing.T) {
+	den := &submissionDen{watchGate: GateEvidence{Repository: "owner/repo", Ref: "main", CommitSHA: submissionTestSHA, Status: "pending", Handle: "41"}}
+	service, store, _ := submissionFixture(t, den)
+	defer store.Close()
+	receipt, _, err := service.SubmitTaskForReview(context.Background(), submissionRequestForTest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := service.Snapshot(context.Background(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Waiting) != 1 || snapshot.Queued != 0 {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+	waiting := snapshot.Waiting[0]
+	if waiting.ID != receipt.SubmissionID || waiting.ProjectID != "dsh-crew" || waiting.TaskID != 7416 || waiting.ReviewRoundID != 7 || waiting.Phase != SubmissionGatePending {
+		t.Fatalf("waiting=%+v", waiting)
+	}
+}

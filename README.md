@@ -211,6 +211,10 @@ and clears the failed attempt's finalization, receipt, and failure detail. It
 rejects missing, nonfailed, or busy-affinity jobs rather than replaying an
 admission or retrying automatically.
 
+`crew-review status` prints the queue from the running service: jobs active,
+submissions still waiting on checks or source, and recent results (`--limit N`,
+`--json`). It only reads `GET /v1/review-pool`.
+
 `POST /v1/review-pool/check` probes the reviewer runtime on request; nothing
 runs it on a schedule. With the Codex backend it runs `codex sandbox -c
 sandbox_mode="read-only" git rev-parse HEAD` in the most recent review's
