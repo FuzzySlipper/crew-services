@@ -244,6 +244,9 @@ func (d *Driver) Sessions() []crewcli.SessionInfo {
 			if info.State == "" {
 				info.State = thread.Status
 			}
+			if thread.Archived {
+				info.State = "archived"
+			}
 		}
 		out = append(out, info)
 	}
@@ -559,6 +562,9 @@ func (d *Driver) Pump(ctx context.Context) error {
 				continue
 			}
 			status = thread.Status
+			if thread.Archived {
+				status = "archived"
+			}
 			statuses[t.ThreadID] = status
 			d.mu.Lock()
 			d.read[t.ThreadID] = thread
@@ -626,7 +632,8 @@ func availabilityOf(status string) string {
 	case "notLoaded":
 		return "inactive"
 	}
-	// systemError or unknown: leave the work queued.
+	// archived, systemError or unknown: leave the work queued. An archived
+	// thread takes its mail if it is unarchived before the mail expires.
 	return ""
 }
 

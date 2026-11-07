@@ -496,7 +496,11 @@ which DSH sets for its shell tools (a subagent sends as its parent session).
 
 `who`, in every driver, lists running sessions, those that stopped in the last
 3 days, the caller's own, and any holding a seat. `who --all` lists every
-session. A session left out keeps its address and still takes messages.
+session. A session left out keeps its address and still takes messages. An
+archived Codex thread shows as `archived` and leaves the default list at once;
+its messages wait in the fabric and arrive if it is unarchived before they
+expire. Claude Code gives no such signal, so an archived session there is just
+`exited`.
 
 Known limits:
 - No SessionStart context: DSH's hook bridge is not in the web profile, so an

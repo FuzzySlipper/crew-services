@@ -22,13 +22,14 @@ func TestCurrentKeepsRunningRecentOwnAndSeated(t *testing.T) {
 		{Address: "s/old-exit", NativeID: "old-exit", State: "exited", SeenAt: old},
 		{Address: "s/old-unloaded", NativeID: "old-unloaded", State: "not loaded", SeenAt: old},
 		{Address: "codex/pinned", NativeID: "pinned", State: "not loaded"},
+		{Address: "s/archived-today", NativeID: "archived-today", State: "archived", SeenAt: now.Add(-time.Hour)},
 	}
 	seats := map[string][]string{"s/seated": {"project.lead"}}
 
 	current, hidden := Current(sessions, "self", seats, now)
 
-	if hidden != 3 {
-		t.Fatalf("hidden = %d, want 3: %+v", hidden, current)
+	if hidden != 4 {
+		t.Fatalf("hidden = %d, want 4: %+v", hidden, current)
 	}
 	got := []string{}
 	for _, s := range current {

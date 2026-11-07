@@ -460,6 +460,57 @@ func TestNotLoadedThreadIsQueuedThenResumed(t *testing.T) {
 	}
 }
 
+func TestArchivedThreadHoldsItsMailUntilUnarchived(t *testing.T) {
+	fabric, native := newFakeFabric(), newFakeNative()
+	d := testDriver(t, fabric, native)
+	if _, err := d.RegisterThread(context.Background(), "thread-1"); err != nil {
+		t.Fatal(err)
+	}
+	address, _ := d.Address("thread-1")
+	native.threads["thread-1"] = NativeThread{ID: "thread-1", Status: "notLoaded", AcceptsInput: true, Archived: true}
+	fabric.claims[address] = []fabricclient.Claim{claimFor(address, "d1", "wake_then_deliver")}
+	if err := d.Pump(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fabric.claimReqs) != 0 || len(fabric.unknown) != 0 {
+		t.Fatalf("claimed mail for an archived thread: %v, unknown %v", fabric.claimReqs, fabric.unknown)
+	}
+	for _, call := range native.calls {
+		if strings.HasPrefix(call, "queue ") || strings.HasPrefix(call, "resume") {
+			t.Fatalf("touched an archived thread: %v", native.calls)
+		}
+	}
+	if sessions := d.Sessions(); len(sessions) != 1 || sessions[0].State != "archived" {
+		t.Fatalf("sessions = %+v", sessions)
+	}
+
+	native.threads["thread-1"] = NativeThread{ID: "thread-1", Status: "notLoaded", AcceptsInput: true}
+	for i := 0; i < notLoadedEvery; i++ {
+		if err := d.Pump(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !slices.Equal(fabric.acked, []string{"d1"}) {
+		t.Fatalf("acked %v after unarchiving", fabric.acked)
+	}
+	if sessions := d.Sessions(); sessions[0].State == "archived" {
+		t.Fatalf("still archived: %+v", sessions)
+	}
+}
+
+func TestThreadIsArchivedWhenItsRolloutIsInTheArchive(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/home/a/.codex/archived_sessions/rollout-x.jsonl":     true,
+		"/home/a/.codex/sessions/2026/11/05/rollout-x.jsonl":   false,
+		"/home/a/archived_sessions/sessions/1/rollout-x.jsonl": false,
+		"": false,
+	} {
+		if got := (nativeThreadWire{Path: path}).native().Archived; got != want {
+			t.Errorf("%q: archived = %v", path, got)
+		}
+	}
+}
+
 func TestAmbiguousQueueAddIsReconciledFromTheNativeQueue(t *testing.T) {
 	fabric, native := newFakeFabric(), newFakeNative()
 	d := testDriver(t, fabric, native)

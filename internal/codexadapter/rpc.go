@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,8 @@ type NativeThread struct {
 	// AcceptsInput is false for threads such as subagents that refuse direct
 	// user input.
 	AcceptsInput bool
+	// Archived threads refuse input until they are unarchived.
+	Archived bool
 }
 
 // QueuedSubmission is Codex's receipt for one queued turn. The app-server
@@ -872,6 +875,7 @@ type nativeThreadWire struct {
 	ID                   string  `json:"id"`
 	Name                 *string `json:"name"`
 	CWD                  string  `json:"cwd"`
+	Path                 string  `json:"path"`
 	Ephemeral            bool    `json:"ephemeral"`
 	CanAcceptDirectInput *bool   `json:"canAcceptDirectInput"`
 	Status               struct {
@@ -885,5 +889,8 @@ func (v nativeThreadWire) native() NativeThread {
 		name = *v.Name
 	}
 	accepts := v.CanAcceptDirectInput == nil || *v.CanAcceptDirectInput
-	return NativeThread{ID: v.ID, Name: name, CWD: v.CWD, Status: v.Status.Type, Ephemeral: v.Ephemeral, AcceptsInput: accepts}
+	// Codex marks a thread archived only by moving its rollout, and its archived
+	// list takes tens of seconds to read, so the path is the signal to use.
+	archived := filepath.Base(filepath.Dir(v.Path)) == "archived_sessions"
+	return NativeThread{ID: v.ID, Name: name, CWD: v.CWD, Status: v.Status.Type, Ephemeral: v.Ephemeral, AcceptsInput: accepts, Archived: archived}
 }

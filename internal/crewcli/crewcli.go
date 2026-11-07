@@ -122,14 +122,16 @@ func Send(ctx context.Context, url string, request SendRequest) (SendResult, err
 const recentFor = 3 * 24 * time.Hour
 
 // Current picks the sessions worth showing by default: those running, those
-// that stopped within recentFor, the caller's own, and any holding a seat. It
-// returns them with the number left out. Only the listing narrows; a session
+// that stopped within recentFor unless they were archived, the caller's own,
+// and any holding a seat. It returns them with the number left out. Only the listing narrows; a session
 // left out still resolves and still takes messages.
 func Current(sessions []SessionInfo, self string, seats map[string][]string, now time.Time) ([]SessionInfo, int) {
 	current := make([]SessionInfo, 0, len(sessions))
 	for _, s := range sessions {
 		stopped := s.State == "exited" || s.State == "not loaded"
-		if !stopped || now.Sub(s.SeenAt) < recentFor || s.NativeID == self || len(seats[s.Address]) > 0 {
+		recent := now.Sub(s.SeenAt) < recentFor
+		running := !stopped && s.State != "archived"
+		if running || (stopped && recent) || s.NativeID == self || len(seats[s.Address]) > 0 {
 			current = append(current, s)
 		}
 	}
@@ -153,7 +155,7 @@ func who(ctx context.Context, args []string, self string, stdout, stderr io.Writ
 	}
 	PrintWho(stdout, sessions, self, skipped, seats)
 	if hidden > 0 {
-		fmt.Fprintf(stdout, "%d stopped sessions not seen for %d days are not shown; who --all lists them\n", hidden, int(recentFor.Hours()/24))
+		fmt.Fprintf(stdout, "%d archived sessions, or stopped ones not seen for %d days, are not shown; who --all lists them\n", hidden, int(recentFor.Hours()/24))
 	}
 	return 0
 }
