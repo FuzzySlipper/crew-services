@@ -494,6 +494,10 @@ and `crew-dsh address`; the commands read the session from `DSH_SESSION_ID`,
 which DSH sets for its shell tools (a subagent sends as its parent session).
 `dsh-web.service` has `~/.local/bin` on its `PATH`.
 
+`who`, in every driver, lists running sessions, those that stopped in the last
+3 days, the caller's own, and any holding a seat. `who --all` lists every
+session. A session left out keeps its address and still takes messages.
+
 Known limits:
 - No SessionStart context: DSH's hook bridge is not in the web profile, so an
   agent learns its address with `crew-dsh address` rather than from context.

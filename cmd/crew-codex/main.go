@@ -33,7 +33,7 @@ const defaultDriverURL = "http://127.0.0.1:8788"
 
 const usage = `usage:
   crew-codex send [--policy P] [--as SEAT] --to ADDRESS TEXT...
-  crew-codex who                list sessions with crew addresses
+  crew-codex who [--all]        list running and recent sessions; --all lists every one
   crew-codex whoami [--person NAME]
   crew-codex seat COMMAND       take, leave, relieve or read crew seats
   crew-codex board COMMAND      read and write crew-board threads

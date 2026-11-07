@@ -42,7 +42,7 @@ const (
 
 const usage = `usage:
   crew-hermes send [--policy P] [--as SEAT] --to ADDRESS TEXT...
-  crew-hermes who               list sessions with crew addresses
+  crew-hermes who [--all]       list running and recent sessions; --all lists every one
   crew-hermes whoami [--person NAME]
   crew-hermes seat COMMAND      take, leave, relieve or read crew seats
   crew-hermes board COMMAND     read and write crew-board threads

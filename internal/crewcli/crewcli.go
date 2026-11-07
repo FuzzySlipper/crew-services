@@ -118,6 +118,46 @@ func Send(ctx context.Context, url string, request SendRequest) (SendResult, err
 	return result, err
 }
 
+// recentFor is how long who keeps listing a session that has stopped running.
+const recentFor = 3 * 24 * time.Hour
+
+// Current picks the sessions worth showing by default: those running, those
+// that stopped within recentFor, the caller's own, and any holding a seat. It
+// returns them with the number left out. Only the listing narrows; a session
+// left out still resolves and still takes messages.
+func Current(sessions []SessionInfo, self string, seats map[string][]string, now time.Time) ([]SessionInfo, int) {
+	current := make([]SessionInfo, 0, len(sessions))
+	for _, s := range sessions {
+		stopped := s.State == "exited" || s.State == "not loaded"
+		if !stopped || now.Sub(s.SeenAt) < recentFor || s.NativeID == self || len(seats[s.Address]) > 0 {
+			current = append(current, s)
+		}
+	}
+	return current, len(sessions) - len(current)
+}
+
+func who(ctx context.Context, args []string, self string, stdout, stderr io.Writer) int {
+	all := false
+	for _, a := range args {
+		if a != "--all" {
+			fmt.Fprintf(stderr, "unknown who option %q; usage: who [--all]\n", a)
+			return 2
+		}
+		all = true
+	}
+	sessions, skipped := Who(ctx, DriverURLs)
+	seats := SeatsByHolder(ctx, FabricURL())
+	hidden := 0
+	if !all {
+		sessions, hidden = Current(sessions, self, seats, time.Now())
+	}
+	PrintWho(stdout, sessions, self, skipped, seats)
+	if hidden > 0 {
+		fmt.Fprintf(stdout, "%d stopped sessions not seen for %d days are not shown; who --all lists them\n", hidden, int(recentFor.Hours()/24))
+	}
+	return 0
+}
+
 // PrintWho writes the session list as a table. seats maps a session address
 // to the seats it holds.
 func PrintWho(w io.Writer, sessions []SessionInfo, self string, skipped []string, seats map[string][]string) {
@@ -195,14 +235,12 @@ func call(ctx context.Context, method, url string, body, target any) error {
 // session); ownURL is the calling runtime's driver.
 func Main(ctx context.Context, args []string, self, ownURL string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: send [--policy next_turn|next_step|no_wake] [--as SEAT] --to ADDRESS TEXT... | who | whoami [--person NAME] | seat COMMAND | board COMMAND")
+		fmt.Fprintln(stderr, "usage: send [--policy next_turn|next_step|no_wake] [--as SEAT] --to ADDRESS TEXT... | who [--all] | whoami [--person NAME] | seat COMMAND | board COMMAND")
 		return 2
 	}
 	switch args[0] {
 	case "who":
-		sessions, skipped := Who(ctx, DriverURLs)
-		PrintWho(stdout, sessions, self, skipped, SeatsByHolder(ctx, FabricURL()))
-		return 0
+		return who(ctx, args[1:], self, stdout, stderr)
 	case "whoami":
 		return whoami(args[1:], self, stdout, stderr)
 	case "send":
