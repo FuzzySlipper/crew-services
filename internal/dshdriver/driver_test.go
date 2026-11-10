@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -948,6 +950,21 @@ func TestHostRestartReconnectsWithTheNewToken(t *testing.T) {
 	h.pump(t)
 	if len(h.fabric.acked) != 1 || len(h.host.promptCalls()) != 1 {
 		t.Fatalf("acked %v prompts %v", h.fabric.acked, h.host.promptCalls())
+	}
+}
+
+func TestLogTokensReadsTheLastLaunchLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "host.log")
+	log := "dsh web: http://127.0.0.1:3081/?token=old\nother output\ndsh web: http://127.0.0.1:3081/?token=new-1_2\n"
+	if err := os.WriteFile(path, []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	creds, err := LogTokens(path, "")(context.Background())
+	if err != nil || creds.Token != "new-1_2" || creds.BaseURL != "http://127.0.0.1:3081" {
+		t.Fatalf("creds = %+v, %v", creds, err)
+	}
+	if _, err := LogTokens(filepath.Join(t.TempDir(), "missing.log"), "")(context.Background()); err == nil {
+		t.Fatal("a missing log gave credentials")
 	}
 }
 

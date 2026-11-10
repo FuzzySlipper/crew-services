@@ -22,6 +22,9 @@ type Config struct {
 	// DSHUnit is the systemd user unit running `dsh web`; its journal holds
 	// the launch token.
 	DSHUnit string
+	// DSHLog, when set, is a file `dsh web`'s output goes to; the launch token
+	// is read from it instead of the journal (a host without systemd).
+	DSHLog string
 	// DSHURL overrides the web host URL logged with the token.
 	DSHURL string
 	// ReconcileWait is how long the driver waits after an ambiguous prompt
@@ -66,6 +69,7 @@ func Parse(args []string) (Config, error) {
 	flags.DurationVar(&cfg.ClaimDuration, "claim-duration", cfg.ClaimDuration, "fabric delivery claim duration")
 	flags.StringVar(&cfg.ControlListen, "control-listen", cfg.ControlListen, "loopback address of the send/who API")
 	flags.StringVar(&cfg.DSHUnit, "dsh-unit", cfg.DSHUnit, "systemd user unit running dsh web (its journal holds the launch token)")
+	flags.StringVar(&cfg.DSHLog, "dsh-log", cfg.DSHLog, "file dsh web logs to, read for the launch token instead of the journal")
 	flags.StringVar(&cfg.DSHURL, "dsh-url", cfg.DSHURL, "web host URL (default: the one dsh web logged)")
 	flags.DurationVar(&cfg.ReconcileWait, "reconcile-wait", cfg.ReconcileWait, "wait after an ambiguous prompt before checking the session for it")
 	flags.DurationVar(&cfg.Recent, "recent", cfg.Recent, "give addresses to sessions updated within this window")

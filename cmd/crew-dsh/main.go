@@ -117,7 +117,11 @@ func serve(args []string) error {
 		return err
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	host := dshdriver.NewWebHost(dshdriver.JournalTokens(cfg.DSHUnit, cfg.DSHURL))
+	tokens := dshdriver.JournalTokens(cfg.DSHUnit, cfg.DSHURL)
+	if cfg.DSHLog != "" {
+		tokens = dshdriver.LogTokens(cfg.DSHLog, cfg.DSHURL)
+	}
+	host := dshdriver.NewWebHost(tokens)
 	driver := dshdriver.NewDriver(fabric, host, time.Now, cfg, log)
 	driver.Lookup = crewcli.Lookup
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

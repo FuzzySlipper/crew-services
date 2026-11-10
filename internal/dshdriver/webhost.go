@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -151,6 +152,36 @@ func JournalTokens(unit, baseURL string) TokenSource {
 		creds, ok := ParseLaunchLine(string(out))
 		if !ok {
 			return Credentials{}, fmt.Errorf("no dsh web launch token in the %s journal", unit)
+		}
+		if baseURL != "" {
+			creds.BaseURL = strings.TrimRight(baseURL, "/")
+		}
+		return creds, nil
+	}
+}
+
+// LogTokens reads the launch URL from the end of the file `dsh web`'s output
+// is written to, for a host whose web host does not run under systemd.
+func LogTokens(path, baseURL string) TokenSource {
+	return func(ctx context.Context) (Credentials, error) {
+		f, err := os.Open(path)
+		if err != nil {
+			return Credentials{}, fmt.Errorf("read dsh web log: %w", err)
+		}
+		defer f.Close()
+		const tail = 1 << 20
+		if info, err := f.Stat(); err == nil && info.Size() > tail {
+			if _, err := f.Seek(info.Size()-tail, io.SeekStart); err != nil {
+				return Credentials{}, fmt.Errorf("read dsh web log: %w", err)
+			}
+		}
+		data, err := io.ReadAll(f)
+		if err != nil {
+			return Credentials{}, fmt.Errorf("read dsh web log: %w", err)
+		}
+		creds, ok := ParseLaunchLine(string(data))
+		if !ok {
+			return Credentials{}, fmt.Errorf("no dsh web launch token in %s", path)
 		}
 		if baseURL != "" {
 			creds.BaseURL = strings.TrimRight(baseURL, "/")
