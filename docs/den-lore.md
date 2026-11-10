@@ -41,8 +41,12 @@ Each script restarts its process in a loop. The sources are in
   delivery; the crew-board and seat skills in `home\skills`.
 - **Opening it:** on den-lore, `C:\dev\DSH\open.ps1` opens the browser at the
   current launch URL. From the LAN or Tailscale it is
-  `https://dsh-lore.dragonden.stream/connect?token=TOKEN`, with the token from
-  `run\host.log` (it changes when the host restarts). **Restarting:**
+  `https://dsh-lore.dragonden.stream/?token=TOKEN`, with the token from
+  `run\host.log` (it changes when the host restarts). Not `/connect?token=`:
+  that is the sign-in for programs such as crew-dsh, and leads a browser to
+  `api/remote.mux`. Without the dsh-web-lan-access plugin (installed on
+  den-agents, not here) a page on a remote name gets memory-only settings, so
+  the Models page cannot save there; it works at 127.0.0.1 on den-lore. **Restarting:**
   `C:\dev\DSH\restart-host.ps1`.
 - **LAN access (Patch's request, 2026-11-10):** Caddy serves
   `https://dsh-lore.dragonden.stream` (LAN and Tailscale only, 403 otherwise,
