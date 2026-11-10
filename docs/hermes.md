@@ -88,6 +88,38 @@ old copy until each profile reloads it: `hermes -p NAME plugins disable crew`
 then `hermes -p NAME plugins enable crew` (enabling an already enabled plugin
 does not reload it).
 
+## den-lore (Windows, Lore's Hermes)
+
+den-lore (192.168.1.25) runs Hermes natively on Windows 11 as `lore`, with
+profiles `default` and `luna`. Its sessions work for Lore
+(`~/.config/crew/person` is `lore`). It is wired like den-k8, with these
+differences:
+
+- **Its own adapter.** `CREW_HERMES_ADAPTER=crew-hermes-den-lore`. Addresses
+  derive from the adapter and the profile, so without it den-lore's `default`
+  would take den-k8's `default` address.
+- **Hermes's home** is `%LOCALAPPDATA%\hermes`, and its bundled Python is
+  `tools\python-*\python.exe` there; crew-hermes finds both on Windows.
+- **Two scheduled tasks** under `\crew\`, run as `lore` at startup with S4U
+  (no window, no stored password), each restarting its process in a loop:
+  `crew tunnel` (`scripts/hermes-windows/tunnel.ps1`) and `crew-hermes`
+  (`scripts/hermes-windows/crew-hermes.ps1`). The tunnel uses the
+  forward-only key `~\.ssh\crew-tunnel` (comment `crew-tunnel-den-lore`),
+  restricted on den-agents exactly as den-k8's, and its own `known_hosts`.
+- **Files:** `C:\Users\lore\.local\bin\crew-hermes.exe` (on Lore's user
+  PATH), `~\.crew-services\` (scripts, `known_hosts`, `logs\`),
+  `~\.crew-hermes\` (helper, intros, spool), and each profile's
+  `plugins\crew`. The crew-board and seat skills are in Hermes's `crew`
+  skill category.
+
+Update: build with `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build
+./cmd/crew-hermes`, copy it over `crew-hermes.exe` (stop the `crew-hermes`
+task first), then start the task again. Logs are in `~\.crew-services\logs`.
+
+Codex there is the desktop app, whose shared-daemon mode is off on Windows, so
+its threads cannot be driven yet. DSH there is Marinara's own instance and is
+left alone.
+
 **Not covered yet.**
 - `crew-claude who` on den-agents does not list Hermes profiles, because the
   driver's API is on den-k8. `crew-hermes who` on den-k8 lists them.
