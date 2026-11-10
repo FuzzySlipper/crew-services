@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -108,8 +109,35 @@ func hermesRoot() string {
 	if root := os.Getenv("CREW_HERMES_ROOT"); root != "" {
 		return root
 	}
+	if runtime.GOOS == "windows" {
+		// Hermes for Windows keeps its home in the local app data folder.
+		return filepath.Join(os.Getenv("LOCALAPPDATA"), "hermes")
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".hermes")
+}
+
+// adapterID names this driver to the fabric. A profile's address derives from
+// it, so a second Hermes host needs its own (CREW_HERMES_ADAPTER), or its
+// profiles would take the first host's addresses.
+func adapterID() string {
+	if id := strings.TrimSpace(os.Getenv("CREW_HERMES_ADAPTER")); id != "" {
+		return id
+	}
+	return "crew-hermes"
+}
+
+// hermesPython finds the newest Python bundled with Hermes.
+func hermesPython() (string, error) {
+	pattern := filepath.Join(hermesRoot(), "tools", "python-*", "bin", "python3")
+	if runtime.GOOS == "windows" {
+		pattern = filepath.Join(hermesRoot(), "tools", "python-*", "python.exe")
+	}
+	matches, _ := filepath.Glob(pattern)
+	if len(matches) == 0 {
+		return "", fmt.Errorf("no Hermes Python under %s; pass -python", filepath.Join(hermesRoot(), "tools"))
+	}
+	return matches[len(matches)-1], nil
 }
 
 func stateDir() string {
@@ -151,27 +179,30 @@ func install() int {
 func serve(args []string) error {
 	cfg := dshdriver.Defaults()
 	cfg.FabricURL = os.Getenv("CREW_FABRIC_URL")
-	cfg.AdapterID = "crew-hermes"
+	cfg.AdapterID = adapterID()
 	host, _ := os.Hostname()
-	cfg.InstanceID = "crew-hermes-" + os.Getenv("USER") + "@" + host
+	user := os.Getenv("USER")
+	if user == "" {
+		user = os.Getenv("USERNAME")
+	}
+	cfg.InstanceID = cfg.AdapterID + "-" + user + "@" + host
 	cfg.ControlListen = strings.TrimPrefix(driverURL(), "http://")
 	cfg.ReplyCommand, cfg.Runtime = "crew-hermes", "hermes"
 	cfg.Recent = 100 * 365 * 24 * time.Hour
 	var python, agent string
+	var err error
 	flags := flag.NewFlagSet("crew-hermes", flag.ContinueOnError)
 	flags.StringVar(&cfg.FabricURL, "fabric-url", cfg.FabricURL, "crew-messaging base URL (the SSH tunnel's local end)")
 	flags.DurationVar(&cfg.PollInterval, "poll-interval", cfg.PollInterval, "delivery pass interval")
-	flags.StringVar(&python, "python", "", "Hermes's Python (default: the newest under ~/.hermes/tools)")
+	flags.StringVar(&python, "python", "", "Hermes's Python (default: the newest under the Hermes home's tools)")
 	flags.StringVar(&agent, "agent", filepath.Join(hermesRoot(), "hermes-agent"), "the hermes-agent checkout")
-	if err := flags.Parse(args); err != nil {
+	if err = flags.Parse(args); err != nil {
 		return err
 	}
 	if python == "" {
-		matches, _ := filepath.Glob(filepath.Join(hermesRoot(), "tools", "python-*", "bin", "python3"))
-		if len(matches) == 0 {
-			return errors.New("no Hermes Python under ~/.hermes/tools; pass -python")
+		if python, err = hermesPython(); err != nil {
+			return err
 		}
-		python = matches[len(matches)-1]
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
