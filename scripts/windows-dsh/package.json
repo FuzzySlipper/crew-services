@@ -1,0 +1,8 @@
+{
+  "name": "lore-dsh",
+  "private": true,
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.2-rc.1",
+    "pnpm": "11.28.5"
+  }
+}

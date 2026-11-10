@@ -116,9 +116,8 @@ Update: build with `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build
 ./cmd/crew-hermes`, copy it over `crew-hermes.exe` (stop the `crew-hermes`
 task first), then start the task again. Logs are in `~\.crew-services\logs`.
 
-Codex there is the desktop app, whose shared-daemon mode is off on Windows, so
-its threads cannot be driven yet. DSH there is Marinara's own instance and is
-left alone.
+The rest of den-lore (Lore's own DSH, the tunnel and tasks) is in
+[den-lore.md](den-lore.md).
 
 **Not covered yet.**
 - `crew-claude who` on den-agents does not list Hermes profiles, because the

@@ -62,3 +62,13 @@ func TestWhoRefusesAnUnknownOption(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
+
+func TestDriverURLsFromEnv(t *testing.T) {
+	saved := DriverURLs
+	t.Cleanup(func() { DriverURLs = saved })
+	t.Setenv("CREW_DRIVER_URLS", " dsh=http://127.0.0.1:8793/ , hermes=http://127.0.0.1:8796,bad")
+	driversFromEnv()
+	if len(DriverURLs) != 2 || DriverURLs["dsh"] != "http://127.0.0.1:8793" || DriverURLs["hermes"] != "http://127.0.0.1:8796" {
+		t.Fatalf("DriverURLs = %v", DriverURLs)
+	}
+}

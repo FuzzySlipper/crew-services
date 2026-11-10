@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -53,6 +54,26 @@ type SendResult struct {
 
 // DriverURLs are the loopback APIs of the drivers on this box.
 var DriverURLs = map[string]string{"claude-code": "http://127.0.0.1:8792", "codex": "http://127.0.0.1:8788", "dsh": "http://127.0.0.1:8793"}
+
+// driversFromEnv replaces DriverURLs with CREW_DRIVER_URLS when it is set:
+// comma-separated RUNTIME=URL pairs naming the drivers this host runs, so
+// `who` asks only those (a host without Claude Code or Codex, say).
+func driversFromEnv() {
+	value := strings.TrimSpace(os.Getenv("CREW_DRIVER_URLS"))
+	if value == "" {
+		return
+	}
+	urls := map[string]string{}
+	for _, pair := range strings.Split(value, ",") {
+		name, url, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if ok && strings.TrimSpace(name) != "" && strings.TrimSpace(url) != "" {
+			urls[strings.TrimSpace(name)] = strings.TrimRight(strings.TrimSpace(url), "/")
+		}
+	}
+	if len(urls) > 0 {
+		DriverURLs = urls
+	}
+}
 
 // Who lists the sessions every reachable driver knows. A driver that does not
 // answer is reported in skipped rather than failing the list.
@@ -240,6 +261,7 @@ func Main(ctx context.Context, args []string, self, ownURL string, stdin io.Read
 		fmt.Fprintln(stderr, "usage: send [--policy next_turn|next_step|no_wake] [--as SEAT] --to ADDRESS TEXT... | who [--all] | whoami [--person NAME] | seat COMMAND | board COMMAND")
 		return 2
 	}
+	driversFromEnv()
 	switch args[0] {
 	case "who":
 		return who(ctx, args[1:], self, stdout, stderr)
