@@ -129,3 +129,14 @@
     provider: deepseek-official
     model: deepseek-flash
     reasoningEffort: max
+# Browser access through Caddy (dsh-lore.dragonden.stream): dsh-web-lan-access
+# supplies the bootstrap that lets a remote page use Host-backed settings (the
+# Models page). Its own wildcard webserver row is dropped and the loopback
+# webserver kept, as on den-agents; the trust fence stays the --trusted-host list.
+- id: lan-webserver
+  disabled: true
+- id: webserver
+  disabled: false
+- id: connection
+  config:
+    trustedHosts: !!js ctx.webStartup.trustedHosts

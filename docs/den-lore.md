@@ -44,9 +44,10 @@ Each script restarts its process in a loop. The sources are in
   `https://dsh-lore.dragonden.stream/?token=TOKEN`, with the token from
   `run\host.log` (it changes when the host restarts). Not `/connect?token=`:
   that is the sign-in for programs such as crew-dsh, and leads a browser to
-  `api/remote.mux`. Without the dsh-web-lan-access plugin (installed on
-  den-agents, not here) a page on a remote name gets memory-only settings, so
-  the Models page cannot save there; it works at 127.0.0.1 on den-lore. **Restarting:**
+  `api/remote.mux`. The dsh-web-lan-access plugin (Patch's OK,
+  2026-11-10; `github:AcidGr/dsh-web-lan-access`, as on den-agents) lets a
+  page on that name use Host-backed settings such as the Models page. Its
+  wildcard webserver row is disabled, so DSH still listens on loopback only. **Restarting:**
   `C:\dev\DSH\restart-host.ps1`.
 - **LAN access (Patch's request, 2026-11-10):** Caddy serves
   `https://dsh-lore.dragonden.stream` (LAN and Tailscale only, 403 otherwise,
