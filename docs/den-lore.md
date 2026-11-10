@@ -39,8 +39,17 @@ Each script restarts its process in a loop. The sources are in
 - **Plugins and skills:** `dsh-crew-inject` (from `dsh-crew`, copied to
   `C:\dev\DSH\plugins\crew-inject`, built `lib` included) for `no_wake`
   delivery; the crew-board and seat skills in `home\skills`.
-- **Opening it:** `C:\dev\DSH\open.ps1` opens the browser at the current launch
-  URL. **Restarting:** `C:\dev\DSH\restart-host.ps1`.
+- **Opening it:** on den-lore, `C:\dev\DSH\open.ps1` opens the browser at the
+  current launch URL. From the LAN or Tailscale it is
+  `https://dsh-lore.dragonden.stream/connect?token=TOKEN`, with the token from
+  `run\host.log` (it changes when the host restarts). **Restarting:**
+  `C:\dev\DSH\restart-host.ps1`.
+- **LAN access (Patch's request, 2026-11-10):** Caddy serves
+  `https://dsh-lore.dragonden.stream` (LAN and Tailscale only, 403 otherwise,
+  like crew-board; no public DNS record). It proxies to `192.168.1.25:3081`, a
+  `netsh interface portproxy` to 127.0.0.1:3081, which the firewall rule
+  `crew dsh via Caddy` opens to Caddy (192.168.1.6) alone. The host trusts the
+  name with `--trusted-host dsh-lore.dragonden.stream`.
 - **Updating DSH:** change the version in `package.json`, `npm install`, then
   restart the host. After an update that changes plugin APIs, rebuild
   `dsh-crew-inject` on den-agents (`dsh-crew/update.sh` does) and copy its
