@@ -34,7 +34,9 @@ New-NetFirewallRule -Name crew-playtest-agent -DisplayName 'crew playtest agent 
 $action = New-ScheduledTaskAction -Execute "$bin\playtest-windows-agent.exe" -WorkingDirectory $bin
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:COMPUTERNAME\$env:USERNAME"
 $principal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\$env:USERNAME" -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries
+# Priority 4 is the Normal process class; the default 7 (BelowNormal) would be
+# inherited by every instance the agent starts.
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -Priority 4
 Register-ScheduledTask -Force -TaskName crew-playtest-agent -Action $action -Trigger $trigger -Principal $principal -Settings $settings | Out-Null
 Start-ScheduledTask crew-playtest-agent
 Start-Sleep 2

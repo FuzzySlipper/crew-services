@@ -37,7 +37,10 @@ Unregister-ScheduledTask -TaskName '$id' -Confirm:`$false -ErrorAction SilentlyC
 Set-Content -Encoding utf8 -Path $script -Value $body
 $action = New-ScheduledTaskAction -Execute powershell.exe -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$script`""
 $principal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\$env:USERNAME" -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -Force -TaskName $id -Action $action -Principal $principal | Out-Null
+# Task priority 4 is the Normal process class, as a launch from Explorer gets.
+# The default, 7, is BelowNormal, which everything the command starts inherits.
+$settings = New-ScheduledTaskSettingsSet -Priority 4
+Register-ScheduledTask -Force -TaskName $id -Action $action -Principal $principal -Settings $settings | Out-Null
 Start-ScheduledTask -TaskName $id
 if ($NoWait) {
     Write-Output "started $id; log $log"
