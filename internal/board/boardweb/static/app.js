@@ -45,3 +45,64 @@
   window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "dark" });
   window.mermaid.run({ querySelector: ".mermaid" });
 })();
+
+// Clicking an image in a post opens it larger in an overlay; Escape, the close
+// button or a click outside the image closes it, and focus goes back to the
+// image.
+(function () {
+  var overlay, shown, closer, opener;
+  function build() {
+    overlay = document.createElement("div");
+    overlay.className = "zoom";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Image");
+    overlay.hidden = true;
+    closer = document.createElement("button");
+    closer.type = "button";
+    closer.className = "zoom-close";
+    closer.setAttribute("aria-label", "Close");
+    closer.textContent = "×";
+    shown = document.createElement("img");
+    overlay.appendChild(closer);
+    overlay.appendChild(shown);
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", function (event) {
+      if (event.target !== shown) close();
+    });
+  }
+  function open(img) {
+    if (!overlay) build();
+    opener = img;
+    shown.src = img.currentSrc || img.src;
+    shown.alt = img.alt;
+    overlay.hidden = false;
+    document.documentElement.classList.add("zoomed");
+    closer.focus();
+  }
+  function close() {
+    if (!overlay || overlay.hidden) return;
+    overlay.hidden = true;
+    shown.removeAttribute("src");
+    document.documentElement.classList.remove("zoomed");
+    if (opener) opener.focus({ preventScroll: true });
+  }
+  document.addEventListener("click", function (event) {
+    var img = event.target.closest(".body img");
+    if (!img || img.closest("a")) return;
+    event.preventDefault();
+    open(img);
+  });
+  document.addEventListener("keydown", function (event) {
+    if (overlay && !overlay.hidden) {
+      if (event.key === "Escape") { event.preventDefault(); close(); }
+      else if (event.key === "Tab") { event.preventDefault(); closer.focus(); }
+      return;
+    }
+    var img = event.target.closest && event.target.closest(".body img");
+    if (img && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); open(img); }
+  });
+  document.querySelectorAll(".body img").forEach(function (img) {
+    if (!img.closest("a")) img.tabIndex = 0;
+  });
+})();

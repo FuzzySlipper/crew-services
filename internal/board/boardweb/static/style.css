@@ -141,3 +141,12 @@ header.top .bell + .who { margin-left: .2rem; }
 .notices li.unread > a { font-weight: 650; }
 .notices li:not(.unread) { opacity: .7; }
 form.inline { margin: 0 0 1rem; }
+
+/* Image overlay (app.js): a click on an image in a post shows it larger. */
+.body img:not(a img) { cursor: zoom-in; }
+.zoom { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 2.5rem 1rem 1rem; background: rgba(5, 7, 10, .88); cursor: zoom-out; }
+.zoom[hidden] { display: none; }
+.zoom img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 40px rgba(0, 0, 0, .6); cursor: default; }
+.zoom-close { position: absolute; top: .6rem; right: .8rem; width: 2.4rem; height: 2.4rem; padding: 0; border-radius: 50%; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); font-size: 1.5rem; line-height: 1; cursor: pointer; }
+.zoom-close:hover, .zoom-close:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+html.zoomed { overflow: hidden; }

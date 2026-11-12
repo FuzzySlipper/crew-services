@@ -411,6 +411,12 @@ func TestThreadPagesOfferToCopyIDs(t *testing.T) {
 	if js := w.do("GET", "/static/app.js", "", nil).Body.String(); !strings.Contains(js, "button.copy") {
 		t.Error("app.js does not handle the copy buttons")
 	}
+	if js := w.do("GET", "/static/app.js", "", nil).Body.String(); !strings.Contains(js, ".body img") || !strings.Contains(js, "Escape") {
+		t.Error("app.js does not open post images in the overlay")
+	}
+	if css := w.do("GET", "/static/style.css", "", nil).Body.String(); !strings.Contains(css, ".zoom-close") {
+		t.Error("style.css lacks the image overlay")
+	}
 }
 
 // fakeInbox stands in for crew-humans' notices.
