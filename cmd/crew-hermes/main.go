@@ -53,6 +53,7 @@ const usage = `usage:
 `
 
 func main() {
+	loadEnvDefaults()
 	setDefault("CREW_FABRIC_URL", defaultFabricURL)
 	setDefault("CREW_BOARD_URL", defaultBoardURL)
 	crewcli.DriverURLs = map[string]string{"hermes": driverURL()}
@@ -73,6 +74,30 @@ func main() {
 	if err := serve(args); err != nil {
 		fmt.Fprintln(os.Stderr, "crew-hermes:", err)
 		os.Exit(1)
+	}
+}
+
+// loadEnvDefaults reads ~/.config/crew/env, KEY=VALUE lines, for variables
+// not already set. A Hermes host with its own fabric (not reached through a
+// tunnel) names it there, since the gateway's agents inherit only the
+// gateway's environment.
+func loadEnvDefaults() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".config", "crew", "env"))
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if name, value, ok := strings.Cut(line, "="); ok {
+			setDefault(strings.TrimSpace(name), strings.Trim(strings.TrimSpace(value), `"'`))
+		}
 	}
 }
 
