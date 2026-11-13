@@ -44,8 +44,15 @@ webserver row disabled. Update DSH with `/data/dev/dsh-crew/update.sh` (or
 
 ## Shared boards
 
-interlake is meant to join network `hub` (`pixelphantasm/board-hub`). Its
-deploy key (`~/.ssh/crew-board-hub`) and signing key
-(`~/.ssh/crew-board-signing`) exist, and GitHub's host keys are pinned in its
-`known_hosts`. Not joined yet: the pixelphantasm organization has deploy keys
-turned off, so the key could not be added.
+interlake is on network `hub` (`pixelphantasm/board-hub`) since 2026-11-13,
+sharing `gamedev` and `rusty-engine` with den. It reaches the repo with its own
+write deploy key, `~/.ssh/crew-board-hub` ("crew-board interlake (m5)" on the
+repo; Patch turned deploy keys on for the pixelphantasm organization), and
+signs with `~/.ssh/crew-board-signing`. GitHub's host keys are pinned in its
+`known_hosts` from `api.github.com/meta`.
+
+Its `~/.config/crew-board/networks.json` pins den's signing key; den's pins
+interlake's (`networks.json.before-interlake-20261113` is den's earlier copy).
+Both use `wake: no_wake` for the other site. Verified: interlake pulled the
+hub to den's latest commit and accepted den's signed history. A post written
+at interlake has not been pushed yet, so that direction is untested.

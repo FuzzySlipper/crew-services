@@ -694,6 +694,10 @@ doesn't allow branch protection or rulesets on private repos. Until it does,
 the only defense against a rewritten history is each site refusing a history
 that doesn't extend what it has read.
 
+Since 2026-11-13 site interlake (Patch's nephew's box, see
+[interlake.md](interlake.md)) is den's partner on `hub`, with its own deploy
+key: Patch turned deploy keys on for the organization that day.
+
 Patch's steps for a real partner:
 1. Create the private repo.
 2. Turn on branch protection: no force pushes, no deletions.
