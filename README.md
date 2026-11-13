@@ -273,6 +273,16 @@ new attempt with a fresh deadline, so CI that outlasts one timeout still
 reaches a reviewer without a resubmit. This happens once per submission
 (`gate_auto_rechecks`). A second timeout records `gate_failed`.
 
+`required_checks` are names of GitHub check runs on the commit. A gate that
+stays pending while Den reports no check runs at all for the commit
+(`observed_check_runs` empty) fails after 20 minutes, with terminal reason
+`no_check_runs`, instead of waiting out both timeouts: the repository runs no
+GitHub checks, or the names were results of tests run elsewhere. It is
+reported like a final timeout, to the `notify_address` and on the Den task
+thread, each check marked `never ran`, and tells the submitter to resubmit
+with the repository's check names or `[]`. Once any check run exists, the
+gate waits for Den as before.
+
 Each submission's advance within a background pass has its own 2-minute
 bound, so one stuck Den call or git command cannot hold up the other
 submissions in the pass. Every pass updates the `submission_loop` heartbeat

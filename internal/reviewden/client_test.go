@@ -185,6 +185,7 @@ func TestRequestReviewAndGitHubGateMethodsMapDenAuthority(t *testing.T) {
 			writeToolResult(w, map[string]any{
 				"id": 44, "project_id": "dsh-crew", "task_id": 7416, "repository": "owner/repo",
 				"commit_sha": reviewDenTestSHA, "ref": "main", "status": "pending",
+				"observed_check_runs": nil,
 			})
 		case "get_github_check_gate":
 			writeToolResult(w, map[string]any{
@@ -228,6 +229,11 @@ func TestRequestReviewAndGitHubGateMethodsMapDenAuthority(t *testing.T) {
 	wantChecks := []review.GateCheck{{Name: "test", Conclusion: "failure", URL: "https://github.com/owner/repo/actions/runs/1/job/2"}, {Name: "lint", Conclusion: "missing"}}
 	if failed.Attempt != 2 || len(failed.FailedChecks) != len(wantChecks) || failed.FailedChecks[0] != wantChecks[0] || failed.FailedChecks[1] != wantChecks[1] {
 		t.Fatalf("failed gate checks=%+v attempt=%d", failed.FailedChecks, failed.Attempt)
+	}
+	// Den sends observed_check_runs null when GitHub had none; a response
+	// without the field says nothing about it.
+	if !pending.NoCheckRuns || failed.NoCheckRuns {
+		t.Fatalf("no check runs: pending=%v failed=%v", pending.NoCheckRuns, failed.NoCheckRuns)
 	}
 	if len(pending.FailedChecks) != 0 {
 		t.Fatalf("pending gate reported failed checks %+v", pending.FailedChecks)

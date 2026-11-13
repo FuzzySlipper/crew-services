@@ -212,3 +212,73 @@ func TestNotifyAddressCannotTargetDenTaskNotes(t *testing.T) {
 		t.Fatal("den-task notify address accepted")
 	}
 }
+
+func noRunsGate() GateEvidence {
+	gate := pendingGate(1)
+	gate.NoCheckRuns = true
+	return gate
+}
+
+// A gate whose commit has no GitHub check runs at all fails after the grace
+// period instead of waiting out Den's timeout twice, and says so on the task
+// thread even without a notify address: required_checks named results of
+// tests run elsewhere, or the repository runs no GitHub checks.
+func TestGateWithNoCheckRunsFailsAfterGraceAndNotesTheTask(t *testing.T) {
+	ctx := context.Background()
+	den := &notingDen{submissionDen: titledDen(&submissionDen{watchGate: noRunsGate()})}
+	service, store, fabric, clock := gateTimeoutFixture(t, den)
+	request := submissionRequestForTest()
+	request.RequiredChecks = []string{"dotnet test (3972 passed)"}
+	first, _, err := service.SubmitTaskForReview(ctx, request)
+	if err != nil || first.Phase != SubmissionGatePending {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+
+	clock.Advance(defaultNoCheckRunsGrace - time.Minute)
+	if _, err := service.AdvanceSubmissions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if record, _ := store.GetSubmission(ctx, first.SubmissionID); record.Phase != SubmissionGatePending {
+		t.Fatalf("failed inside the grace period: %+v", record)
+	}
+
+	clock.Advance(time.Minute)
+	if _, err := service.AdvanceSubmissions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.GetSubmission(ctx, first.SubmissionID)
+	if err != nil || record.Phase != SubmissionGateFailed || record.Gate.TerminalReason != NoCheckRunsReason {
+		t.Fatalf("record=%+v err=%v", record, err)
+	}
+	if _, err := service.SendNotices(ctx); err != nil {
+		t.Fatal(err)
+	}
+	notes := den.postedNotes()
+	if len(notes) != 1 || len(fabric.acceptedOperations()) != 0 {
+		t.Fatalf("notes=%q fabric=%v", notes, fabric.acceptedOperations())
+	}
+	for _, want := range []string{"dotnet test (3972 passed) (never ran)", "no check runs for this commit", "required_checks []"} {
+		if !strings.Contains(notes[0], want) {
+			t.Fatalf("task note lacks %q:\n%s", want, notes[0])
+		}
+	}
+}
+
+// Once GitHub has any check run for the commit, a pending gate waits for
+// Den: the checks may be queued or still running.
+func TestGateWithCheckRunsKeepsWaitingPastTheGrace(t *testing.T) {
+	ctx := context.Background()
+	den := &notingDen{submissionDen: titledDen(&submissionDen{watchGate: pendingGate(1)})}
+	service, store, _, clock := gateTimeoutFixture(t, den)
+	first, _, err := service.SubmitTaskForReview(ctx, submissionRequestForTest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(2 * defaultNoCheckRunsGrace)
+	if _, err := service.AdvanceSubmissions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if record, _ := store.GetSubmission(ctx, first.SubmissionID); record.Phase != SubmissionGatePending {
+		t.Fatalf("record=%+v", record)
+	}
+}

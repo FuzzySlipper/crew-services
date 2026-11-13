@@ -90,6 +90,10 @@ type GateEvidence struct {
 	// to their jobs. It is notice material only and is never part of a job
 	// admission.
 	FailedChecks []GateCheck `json:"failed_checks,omitempty"`
+	// NoCheckRuns reports that Den looked and GitHub had no check runs at
+	// all for the commit. A gate pending that way past the grace period
+	// waits on checks that will never run. Notice material only.
+	NoCheckRuns bool `json:"no_check_runs,omitempty"`
 }
 
 // GateCheck is one required check that kept a gate from passing.
@@ -112,6 +116,7 @@ func (g GateEvidence) failureHandle() string {
 func (g GateEvidence) admissionGate() GateEvidence {
 	g.Attempt = 0
 	g.FailedChecks = nil
+	g.NoCheckRuns = false
 	return g
 }
 

@@ -611,6 +611,9 @@ type gateResponse struct {
 		DetailsURL string `json:"details_url"`
 	} `json:"check_runs"`
 	MissingRequiredChecks []string `json:"missing_required_checks"`
+	// ObservedCheckRuns are every check run GitHub had for the commit. Den
+	// sends null when there were none, so its presence is read separately.
+	ObservedCheckRuns []json.RawMessage `json:"observed_check_runs"`
 }
 
 // failedChecks lists the required checks that kept a finished gate from
@@ -698,7 +701,11 @@ func parseGateResponse(data json.RawMessage, request review.GateRequest) (review
 	if response.ProjectID != "" && response.ProjectID != request.ProjectID || response.TaskID != 0 && response.TaskID != request.TaskID || response.Repository != "" && response.Repository != request.Repository || response.CommitSHA != "" && !strings.EqualFold(response.CommitSHA, request.CommitSHA) {
 		return review.GateEvidence{}, fmt.Errorf("%w: Den GitHub check gate identity does not match submission", review.ErrDenConflict)
 	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(data, &fields)
+	_, observed := fields["observed_check_runs"]
 	return review.GateEvidence{
+		NoCheckRuns:    observed && len(response.ObservedCheckRuns) == 0,
 		Repository:     request.Repository,
 		Ref:            request.Ref,
 		CommitSHA:      request.CommitSHA,

@@ -512,6 +512,11 @@ func (s *Service) advanceSubmission(ctx context.Context, store SubmissionStore, 
 		}
 	}
 
+	if gate.Status == "pending" && gate.NoCheckRuns && record.Phase == SubmissionGatePending &&
+		!s.clock.Now().Before(record.UpdatedAt.Add(s.noRunsGrace)) {
+		return s.submissionGateFailed(ctx, store, record, noCheckRunsGate(gate, record.Request, s.noRunsGrace), task.Title,
+			"github has no check runs for this commit after "+s.noRunsGrace.String())
+	}
 	if gate.Status == "pending" {
 		if record.Phase != SubmissionGatePending {
 			record, err = s.transitionSubmission(ctx, store, record, SubmissionTransition{Phase: SubmissionGatePending, Gate: &gate, Failure: emptyStringPtr()})
@@ -634,6 +639,29 @@ func noRequiredChecksGate(request SubmissionRequest) GateEvidence {
 
 // gatePhaseNotices attaches the gate-failure notices to whichever transition
 // first records a failed gate, so they are written atomically with it.
+// noCheckRunsGate is a gate still pending in Den after GitHub showed no check
+// runs at all for the commit for the whole grace period. required_checks are
+// GitHub check-run names, so none of them will arrive: a repository with no
+// GitHub checks submits with required_checks [], and a name copied from a
+// local test run never matches. The submission fails instead of waiting out
+// Den's timeout twice.
+func noCheckRunsGate(gate GateEvidence, request SubmissionRequest, grace time.Duration) GateEvidence {
+	gate.Status = "failed"
+	gate.TerminalReason = NoCheckRunsReason
+	gate.FailedChecks = nil
+	for _, name := range request.RequiredChecks {
+		gate.FailedChecks = append(gate.FailedChecks, GateCheck{Name: name, Conclusion: "never ran"})
+	}
+	gate.FailureSummary = "GitHub has had no check runs for this commit for " + grace.String() + ". " +
+		"required_checks must be names of GitHub check runs on the commit; results of tests run elsewhere are not checks. " +
+		"If the repository runs no GitHub checks, submit again with required_checks [] and give local results in review_summary_md."
+	return gate
+}
+
+// NoCheckRunsReason is the terminal reason of a gate crew-review failed
+// because GitHub never had a check run for the commit.
+const NoCheckRunsReason = "no_check_runs"
+
 func gatePhaseNotices(record SubmissionRecord, gate GateEvidence, taskTitle string) []*Notice {
 	if gatePhase(gate.Status) != SubmissionGateFailed {
 		return nil

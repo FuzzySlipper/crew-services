@@ -23,6 +23,9 @@ type Service struct {
 	// commit before a reviewer job is admitted.
 	source      SourceChecker
 	sourceGrace time.Duration
+	// noRunsGrace bounds how long a gate may stay pending while GitHub has
+	// no check runs at all for the commit.
+	noRunsGrace time.Duration
 
 	// finalized, when set, observes each job after Den's receipt is stored.
 	finalized FinalizedHook
@@ -116,6 +119,21 @@ type SourceChecker interface {
 
 const defaultSourceGrace = 15 * time.Minute
 
+// defaultNoCheckRunsGrace is how long a gate may wait while GitHub has no
+// check runs for the commit: long enough for a queued workflow to start, far
+// shorter than Den's gate timeout, which a repository without GitHub checks
+// would otherwise wait out twice.
+const defaultNoCheckRunsGrace = 20 * time.Minute
+
+// WithNoCheckRunsGrace overrides defaultNoCheckRunsGrace; zero keeps it.
+func WithNoCheckRunsGrace(grace time.Duration) Option {
+	return func(s *Service) {
+		if grace > 0 {
+			s.noRunsGrace = grace
+		}
+	}
+}
+
 // WithSourceChecker enables the checkout-has-commit check. grace bounds
 // how long a submission waits for the checkout before reporting
 // source_missing; zero keeps the default.
@@ -173,7 +191,7 @@ func New(store Store, den DenReviewClient, runtime ReviewerRuntime, profile stri
 	}
 	s := &Service{
 		store: store, den: den, runtime: runtime, profile: profile, clock: SystemClock{}, affinities: map[TaskKey]*affinity{},
-		sourceGrace: defaultSourceGrace, deadline: DefaultReviewDeadline,
+		sourceGrace: defaultSourceGrace, noRunsGrace: defaultNoCheckRunsGrace, deadline: DefaultReviewDeadline,
 	}
 	for _, option := range options {
 		option(s)

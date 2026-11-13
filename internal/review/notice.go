@@ -253,7 +253,7 @@ func gateFailedNotice(record SubmissionRecord, gate GateEvidence, taskTitle stri
 		kind = NoticeGateTimedOut
 	}
 	return &Notice{
-		OperationID:  "submission/" + record.ID + "/" + string(kind) + "/" + gate.failureHandle(),
+		OperationID:  "submission/" + record.ID + "/" + string(kind) + "/" + gate.failureHandle() + noCheckRunsSuffix(gate),
 		SubmissionID: record.ID,
 		Kind:         kind,
 		Recipient:    address,
@@ -263,18 +263,19 @@ func gateFailedNotice(record SubmissionRecord, gate GateEvidence, taskTitle stri
 }
 
 // gateTimedOutTaskNote returns the Den task-thread note for a final gate
-// timeout, so the task owner learns why no reviewer started even when the
-// submitter left no notify address. Other gate failures get none: Den's own
-// gate evidence on the thread already names the failed checks, and only a
-// timeout leaves the submission waiting on nobody.
+// timeout or a gate that never saw a check run, so the task owner learns why
+// no reviewer started even when the submitter left no notify address. Other
+// gate failures get none: Den's own gate evidence on the thread already
+// names the failed checks, and only these leave the submission waiting on
+// nobody.
 func gateTimedOutTaskNote(record SubmissionRecord, gate GateEvidence, taskTitle string) *Notice {
-	if gate.Status != "timed_out" || gate.Handle == "" {
+	if (gate.Status != "timed_out" && gate.TerminalReason != NoCheckRunsReason) || gate.Handle == "" {
 		return nil
 	}
 	return &Notice{
-		OperationID:  "submission/" + record.ID + "/" + string(NoticeGateTimedOut) + "/" + gate.failureHandle() + "/den-task",
+		OperationID:  "submission/" + record.ID + "/" + string(taskNoteKind(gate)) + "/" + gate.failureHandle() + noCheckRunsSuffix(gate) + "/den-task",
 		SubmissionID: record.ID,
-		Kind:         NoticeGateTimedOut,
+		Kind:         taskNoteKind(gate),
 		Recipient:    denTaskRecipientPrefix + record.Request.ProjectID + "/" + strconv.FormatInt(record.Request.TaskID, 10),
 		Body:         gateFailedBody(record, gate, taskTitle),
 		State:        NoticePending,
@@ -297,6 +298,23 @@ func denTaskNoteKey(recipient string) (key TaskKey, ok bool) {
 		return TaskKey{}, true
 	}
 	return TaskKey{ProjectID: rest[:slash], TaskID: taskID}, true
+}
+
+// taskNoteKind is the notice kind of a gate's Den task-thread note.
+func taskNoteKind(gate GateEvidence) NoticeKind {
+	if gate.Status == "timed_out" {
+		return NoticeGateTimedOut
+	}
+	return NoticeGateFailed
+}
+
+// noCheckRunsSuffix keeps a no-check-runs failure's operation IDs apart from
+// Den's own failure of the same gate attempt.
+func noCheckRunsSuffix(gate GateEvidence) string {
+	if gate.TerminalReason == NoCheckRunsReason {
+		return "/" + NoCheckRunsReason
+	}
+	return ""
 }
 
 func gateFailedBody(record SubmissionRecord, gate GateEvidence, taskTitle string) string {
@@ -324,11 +342,18 @@ func gateFailedBody(record SubmissionRecord, gate GateEvidence, taskTitle string
 			}
 			b.WriteString(line + "\n")
 		}
-	} else if summary := firstNonEmpty(gate.FailureSummary, gate.TerminalReason); summary != "" {
-		b.WriteString(summary + "\n")
+	}
+	if len(gate.FailedChecks) == 0 || gate.TerminalReason == NoCheckRunsReason {
+		if summary := firstNonEmpty(gate.FailureSummary, gate.TerminalReason); summary != "" {
+			b.WriteString(summary + "\n")
+		}
 	}
 	if status == "timed_out" && record.GateAutoRechecks > 0 {
 		b.WriteString("crew-review already re-registered this gate once after its first timeout, and it timed out again.\n")
+	}
+	if gate.TerminalReason == NoCheckRunsReason {
+		b.WriteString("Next: call submit_task_for_review again with required_checks set to the GitHub check names that run on this repository, or [] if it has none.")
+		return b.String()
 	}
 	b.WriteString("Next: fix the cause, or re-run the failed check if it was flaky. Then call submit_task_for_review again with the same arguments (with the new commit_sha if you pushed a fix).")
 	return b.String()
