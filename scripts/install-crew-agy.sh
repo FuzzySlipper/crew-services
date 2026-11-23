@@ -9,8 +9,8 @@
 #   scripts/install-crew-agy.sh --profile=FILE  also add the line that starts
 #                                               agy with the crew token to a
 #                                               shell profile (~/.bashrc, say)
-#   scripts/install-crew-agy.sh --uninstall     remove the plugin entry and the
-#                                               unit (the token file and any
+#   scripts/install-crew-agy.sh --uninstall     uninstall the plugin and remove
+#                                               the unit (the token file and any
 #                                               profile line stay)
 #
 # agy gives its language server's address and CSRF token only to the commands
@@ -35,8 +35,7 @@ repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 bin_dir="${CREW_BIN_DIR:-$HOME/.local/bin}"
 unit_dir="$HOME/.config/systemd/user"
 token_file="$HOME/.config/crew/agy-csrf-token"
-plugins_json="${AGY_PLUGINS_JSON:-$HOME/.gemini/config/plugins.json}"
-plugin_root="$repo_dir/antigravity/plugins"
+plugin_dir="$repo_dir/antigravity/plugins/crew"
 mode=install
 service_only=0
 profile=
@@ -49,36 +48,22 @@ for arg in "$@"; do
   esac
 done
 
-# edit_plugins adds or removes this repository's plugin folder in agy's
-# plugins.json, leaving every other entry as it is. agy reads the crew plugin
-# (hooks.json, skills) from the checkout, so a git pull updates it.
-edit_plugins() {
-  mkdir -p "$(dirname "$plugins_json")"
-  [[ -f "$plugins_json" ]] && cp "$plugins_json" "$plugins_json.bak-crew-agy-$(date +%Y%m%d%H%M%S)"
-  python3 -I - "$plugins_json" "$plugin_root" "$1" <<'PY'
-import json, os, sys
-path, root, mode = sys.argv[1], sys.argv[2], sys.argv[3]
-try:
-    with open(path) as f:
-        config = json.load(f)
-except FileNotFoundError:
-    config = {}
-entries = [e for e in config.get("entries", []) if os.path.realpath(os.path.expanduser(e.get("path", ""))) != os.path.realpath(root)]
-if mode == "install":
-    entries.append({"path": root, "include_only": ["crew"]})
-if entries:
-    config["entries"] = entries
-else:
-    config.pop("entries", None)
-with open(path + ".tmp", "w") as f:
-    json.dump(config, f, indent=2)
-    f.write("\n")
-os.replace(path + ".tmp", path)
-PY
+# install_plugin installs the crew plugin (hooks.json and the crew-board and
+# seat skills) into agy's user config with agy's own installer, which replaces
+# an earlier copy. agy loads neither a symlinked plugin folder nor a plugin
+# whose files link outside it, and the skills are links to codex/skills, so it
+# installs a dereferenced copy. Re-run this script after the plugin or the
+# skills change.
+install_plugin() {
+  local stage
+  stage=$(mktemp -d "${TMPDIR:-/tmp}/crew-agy-plugin.XXXXXX")
+  cp -rL "$plugin_dir" "$stage/crew"
+  agy plugin install "$stage/crew"
+  rm -rf -- "$stage"
 }
 
 if [[ "$mode" == uninstall ]]; then
-  [[ -f "$plugins_json" ]] && edit_plugins uninstall
+  command -v agy >/dev/null 2>&1 && agy plugin uninstall crew || true
   systemctl --user disable --now crew-agy.service 2>/dev/null || true
   rm -f "$unit_dir/crew-agy.service"
   systemctl --user daemon-reload
@@ -128,7 +113,8 @@ if [[ "$service_only" == 1 ]]; then
   echo "crew-agy service installed; run without --service-only to add the crew plugin to agy"
   exit 0
 fi
-edit_plugins install
+command -v agy >/dev/null 2>&1 || { echo "agy is not on PATH; install Antigravity CLI, then re-run" >&2; exit 1; }
+install_plugin
 echo "crew-agy installed; the crew plugin applies to agy sessions started from now on"
 if [[ -z "$profile" ]]; then
   echo "start agy with the crew token so crew messages can wake it, for example in ~/.bashrc:"
