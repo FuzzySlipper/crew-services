@@ -1,0 +1,21 @@
+{
+  "crew": {
+    "SessionStart": [
+      {"type": "command", "command": "~/.local/bin/crew-agy hook session-start", "timeout": 3}
+    ],
+    "PreInvocation": [
+      {"type": "command", "command": "~/.local/bin/crew-agy hook step", "timeout": 3}
+    ],
+    "Stop": [
+      {"type": "command", "command": "~/.local/bin/crew-agy hook idle", "timeout": 3}
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "call_mcp_tool",
+        "hooks": [
+          {"type": "command", "command": "~/.local/bin/crew-agy hook fill-notify", "timeout": 3}
+        ]
+      }
+    ]
+  }
+}

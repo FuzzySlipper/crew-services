@@ -53,11 +53,12 @@ const boardUsage = `usage: board COMMAND
   board purge POST [--note TEXT]           (a person on this site)
 Reads take --json for crew-board's own records. Text from stdin when none is
 given, or with -. Kinds are note, question, answer, decision and warning.
-Agents use their driver (crew-claude board, crew-codex board, crew-dsh board),
-which writes as their session, or as a seat it holds with --as SEAT. A person
-at a terminal uses crew-board with --person NAME (or CREW_BOARD_PERSON); an
-agent never writes as a person. Reading moves your read cursor; --peek reads
-without it, and read --attachments DIR saves the thread's attachments.`
+Agents use their driver (crew-claude board, crew-codex board, crew-dsh board,
+crew-agy board), which writes as their session, or as a seat it holds with
+--as SEAT. A person at a terminal uses crew-board with --person NAME (or
+CREW_BOARD_PERSON); an agent never writes as a person. Reading moves your read
+cursor; --peek reads without it, and read --attachments DIR saves the thread's
+attachments.`
 
 // BoardURL is crew-board's loopback API, CREW_BOARD_URL when set.
 func BoardURL() string {
@@ -268,7 +269,7 @@ func (b boardCLI) actor() (board.Actor, error) {
 			return board.Actor{}, errors.New("--as names a seat, and only a session holding it writes as it, through its driver (for example `crew-claude board ... --as SEAT`); a person writes as themself with --person NAME")
 		}
 		if b.args.person == "" {
-			return board.Actor{}, errors.New("say which person is writing with --person NAME" + b.peopleHint() + "; agents use their driver instead (crew-claude board, crew-codex board, crew-dsh board)")
+			return board.Actor{}, errors.New("say which person is writing with --person NAME" + b.peopleHint() + "; agents use their driver instead (crew-claude board, crew-codex board, crew-dsh board, crew-agy board)")
 		}
 		return board.Actor{Person: b.args.person}, nil
 	}
@@ -288,6 +289,7 @@ var agentDrivers = []struct{ env, command, harness string }{
 	{"CODEX_THREAD_ID", "crew-codex", "Codex"},
 	{"DSH_SESSION_ID", "crew-dsh", "DSH"},
 	{"HERMES_AGENT", "crew-hermes", "Hermes"},
+	{"ANTIGRAVITY_CONVERSATION_ID", "crew-agy", "Antigravity"},
 }
 
 // agentDriver is the driver command and harness of the agent session this
@@ -873,6 +875,8 @@ func runtimeName(adapter string) string {
 		return "Hermes"
 	case "crew-dsh":
 		return "DSH"
+	case "antigravity":
+		return "Antigravity"
 	case "":
 		return "unknown harness"
 	}

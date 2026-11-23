@@ -53,7 +53,7 @@ type SendResult struct {
 }
 
 // DriverURLs are the loopback APIs of the drivers on this box.
-var DriverURLs = map[string]string{"claude-code": "http://127.0.0.1:8792", "codex": "http://127.0.0.1:8788", "dsh": "http://127.0.0.1:8793"}
+var DriverURLs = map[string]string{"claude-code": "http://127.0.0.1:8792", "codex": "http://127.0.0.1:8788", "dsh": "http://127.0.0.1:8793", "antigravity": "http://127.0.0.1:8798"}
 
 // driversFromEnv replaces DriverURLs with CREW_DRIVER_URLS when it is set:
 // comma-separated RUNTIME=URL pairs naming the drivers this host runs, so
@@ -356,7 +356,7 @@ func Lookup(ctx context.Context, address string) (SessionInfo, bool) {
 	return SessionInfo{}, false
 }
 
-var runtimeNames = map[string]string{"claude-code": "Claude Code", "codex": "Codex", "dsh": "DeepSeek Harness"}
+var runtimeNames = map[string]string{"claude-code": "Claude Code", "codex": "Codex", "dsh": "DeepSeek Harness", "antigravity": "Antigravity"}
 
 // Describe names a sender session: its runtime and working directory.
 func Describe(s SessionInfo) string {

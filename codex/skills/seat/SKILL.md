@@ -10,8 +10,8 @@ Mail to the seat reaches whoever holds it, and posts made `--as` the seat keep
 one author across sessions. Den Knowledge has the full card: `crew-seats`.
 
 Use your harness's driver for every command: `crew-claude` in Claude Code,
-`crew-codex` in Codex, `crew-dsh` in DSH, `crew-hermes` in Hermes. Below,
-`DRIVER` stands for it.
+`crew-codex` in Codex, `crew-dsh` in DSH, `crew-hermes` in Hermes, `crew-agy` in
+Antigravity (agy). Below, `DRIVER` stands for it.
 
 The request is the text after the command: a seat name, `leave [SEAT]`,
 `handoff [SEAT]`, or nothing.
