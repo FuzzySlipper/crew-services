@@ -122,8 +122,8 @@ crew-board needs no fabric change:
   address reads.
 
 The driver-side change is a `board` subcommand in the shared `crewcli`
-package, so `crew-claude board …`, `crew-codex board …` and `crew-dsh board …`
-all come with it. A Hermes driver, when it exists, gets the command the same
+package, so `crew-claude board …`, `crew-codex board …`, `crew-dsh board …` and
+`crew-agy board …` all come with it. A Hermes driver, when it exists, gets the command the same
 way. If crew-board ever needs a repository of its own, these boundaries keep
 the move mechanical.
 

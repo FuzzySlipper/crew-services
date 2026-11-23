@@ -23,6 +23,7 @@ a busy one sees the message at its next step without being interrupted:
 | Claude Code (2.1.310) | per-session inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`), read between tool calls | same socket | accepted on the socket; held in memory only (about 50 queued; held messages expire after about 5 minutes) |
 | Codex (0.163) | app-server `turn/steer` (needs `expectedTurnId`; drained before the next model request) | `thread/queue/add` (FIFO; the app-server starts it once the thread is idle) | `queuedSubmission.id` / steer `turnId`; `clientUserMessageId` is carried through |
 | DSH (upstream 0.2.2-alpha.2) | web host `session/prompt` `mode:'steer'`; without waking, `agent.inject` through the dsh-crew-inject plugin | `session/prompt` `mode:'queue'`; resumes a cold session | `accepted:true`; idempotent on `requestId` except in a ~0.1 s inbox-to-history window |
+| Antigravity CLI (agy 1.5.15, added 2026-11-23) | language server `SendAgentMessage` (read at the next step boundary); without waking, a PreInvocation hook's injected system message | same call | `{}` for any recipient; the message file in `brain/<id>/.system_generated/messages/` and the transcript's `SYSTEM_MESSAGE` step are the evidence |
 
 None of them is durable across restarts, has delivery receipts we can reconcile
 later, or deduplicates beyond a short window. No protocol standard covers
@@ -202,6 +203,17 @@ import a driver.
   - **`no_wake` (before R10454-1).** Sent to an idle session, it stayed queued 8 s with no turn and no prompt. When a user turn with a `sleep 8` tool call started, the driver steered it in 0.68 s later; it became step 2's `user/message` of that turn, which completed.
   - **`no_wake` through inject (R10454-1, scratch session A `s/711a4c1647dd319f`).** *Idle:* a fabric `no_wake` stayed `queued` with no dispatch while A was idle (cursor unchanged). An inject straight into the idle agent was accepted, and its repeat came back `replayed`. The log gained only `agent/inbox/spliced next-step [live-inject-idle-1]`, and `session/state` showed it as `queue[{placement:'steering', rpcId}]` with `running:false`: no turn after 6 s. The next turn (a user prompt) claimed it at step 1 along with its own message. Both are `user/message` at step 1 of turn 10. In that same turn the driver injected the fabric-held `no_wake` (`deliver_next_step`, `native=accepted`), and step 2 read it. *Running:* during turn 11's `sleep 20` step, a `no_wake` sent 4 s in was spliced into next-step and became step 2's `user/message`. `turn/end` was `completed`, and no further turn started.
   - **Retry after an ambiguous outcome** (`go test -tags dshlive`, real host, the driver's dispatch with a wrapper that makes the first prompt ambiguous). *Response lost inside the window:* the prompt was accepted and the wrapper reported a reset at once, while the turn was taking the item; the driver waited 1 s, found it and acknowledged without re-sending: one `turn/start`, one `user/message` with the id. *Request lost:* the check found nothing, the driver re-sent once and acknowledged: one turn, one `user/message`.
+
+**Antigravity CLI (`crew-agy`, added 2026-11-23).** See
+[antigravity.md](antigravity.md). Registration by SessionStart and every other
+crew hook (agy runs no SessionStart for a resumed conversation); posts through
+each agy process's own language server, which needs agy started with the
+driver's token (`ANTIGRAVITY_SERVER_CSRF_TOKEN`); `no_wake` and in-turn
+`next_step` through the PreInvocation hook; capabilities `deliver_next_step`
+and `deliver_when_idle`; acceptance from the transcript's `SYSTEM_MESSAGE`
+step. Checked live: idle wake, a busy turn not cancelled, `next_turn` held
+until Stop, `no_wake` through PreInvocation, a seat and the board, and resume
+after exit.
 
 ## First slice: gate-failure notices
 

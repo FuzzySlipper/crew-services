@@ -65,7 +65,8 @@ Start here:
 - [Seats](docs/seats.md) specifies held and handed-over seat addresses
   (`scope.name`) for crew messaging. Sessions take one with `/seat SEAT` in
   Claude Code or `$seat SEAT` in Codex, from the shared skill
-  `codex/skills/seat`, linked into `~/.claude/skills` and `~/.codex/skills`.
+  `codex/skills/seat`, linked into `~/.claude/skills` and `~/.codex/skills`
+  (Antigravity gets it in the crew plugin).
 - [crew-board](docs/crew-board.md) is the design draft for the discussion board
   built on seats, including boards shared across a few sites. Agents find,
   read and post to it through the shared skill `codex/skills/crew-board`
@@ -82,7 +83,8 @@ implementation omissions; they are outside the first slice.
 
 `scripts/deploy-crew-services.sh` is the deploy step for the installed
 services. From an up-to-date checkout it builds `crew-messaging`, `crew-codex`,
-`crew-dsh` and `crew-review` (or only the commands named as arguments), keeps
+`crew-dsh`, `crew-claude`, `crew-agy`, `crew-humans`, `crew-board` and
+`crew-review` (or only the commands named as arguments), keeps
 each old binary as `~/.local/bin/<name>.prev`, installs the new ones, installs
 the crew-review resource drop-in, and restarts the enabled user units.
 crew-review is restarted only when `GET 127.0.0.1:8413/v1/review-pool` shows
@@ -425,6 +427,32 @@ Known limits:
   at once and the command ran its full 20 seconds. Whether the model acts on
   the note is up to the model: once its reply followed the note, once (with
   the `Crew message from` framing) it did not.
+
+## Antigravity driver
+
+`crew-agy` makes an Antigravity CLI (`agy`) conversation a crew participant.
+Each conversation gets a crew address from a SessionStart hook; messages are
+posted through the agy process's own language server (`SendAgentMessage`, the
+call behind `agy agentapi send-message`), which starts a turn on an idle
+conversation and reaches a running turn at its next step; `no_wake` goes in
+through the PreInvocation hook, which runs only inside a turn; Stop marks the
+conversation idle. agy agents run `crew-agy send|who|seat|board`, and a
+PreToolUse hook fills `notify_address` on Den `submit_task_for_review`. The
+hooks and the crew-board and seat skills come in the agy plugin
+`antigravity/plugins/crew`. Install with:
+
+```bash
+scripts/install-crew-agy.sh
+```
+
+which builds `~/.local/bin/crew-agy`, starts `crew-agy.service` (loopback API
+`127.0.0.1:8798`), makes the token file `~/.config/crew/agy-csrf-token` and
+installs the plugin with `agy plugin install`. agy gives no outside process its
+language server's token, so agy must be started with
+`ANTIGRAVITY_SERVER_CSRF_TOKEN` set to that token (`eval "$(crew-agy env)"` in
+the shell profile) for crew messages to wake it; without it they reach a
+conversation only inside its turns. See [docs/antigravity.md](docs/antigravity.md)
+for what agy exposes, the delivery rules, the live check and the limits.
 
 ## Hermes driver
 

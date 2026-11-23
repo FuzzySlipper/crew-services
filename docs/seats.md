@@ -3,8 +3,8 @@
 Status: built (2026-10-31, Den task #10519). The fabric core is schema
 migration 10, the store and service operations, the HTTP routes under
 `/v1/seats`, and the proving-slice tests in `internal/sqlite/seat_test.go`. The
-drivers (crew-claude, crew-codex, crew-dsh) claim seat mail and share the
-`seat` commands and `send --as`. A live Claude Code and Codex run is recorded
+drivers (crew-claude, crew-codex, crew-dsh, crew-agy) claim seat mail and share
+the `seat` commands and `send --as`. A live Claude Code and Codex run is recorded
 in [Seats across harnesses](evidence/seats-cross-harness.md). This note is the
 seat part of the [messaging service specification](messaging-service-spec.md),
 which summarizes its core rules, and it keeps the decisions and the reasons
@@ -317,7 +317,7 @@ Errors return `{"code": …}` and, for `seat_held` and `version_conflict`, a
 
 ## Driver and CLI surface
 
-Each driver (crew-claude, crew-codex, crew-dsh) has the same subcommands
+Each driver (crew-claude, crew-codex, crew-dsh, crew-agy) has the same subcommands
 through the shared `crewcli` package, next to `send` and `who`. Hermes can call
 the same HTTP operations. No harness needs more than its driver already does.
 
