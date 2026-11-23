@@ -168,9 +168,10 @@ reach it inside its turns (`next_step` and `no_wake`), but nothing can start a
 turn, so `next_turn` mail waits until agy runs with the token. The
 SessionStart text says so.
 
-On den-agents the binary, unit and token are installed (`--service-only`).
-Adding the plugin to Patch's `~/.gemini/config` and the token line to a shell
-profile is waiting for Patch's go-ahead.
+On den-agents it is installed in full (2026-11-23, with Patch's go-ahead): the
+plugin is in `~/.gemini/config/plugins/crew` and `~/.bashrc` has the token
+line. A plain `agy` started from a new shell got its address and was woken by a
+crew message (posted, then `delivered` 2.0 s later).
 
 ## Live check (2026-11-23, agy 1.5.15, deployed driver)
 
