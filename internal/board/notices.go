@@ -736,12 +736,14 @@ func (n *Notifier) command(ctx context.Context, p Participant) string {
 		return "crew-dsh"
 	case "crew-hermes":
 		return "crew-hermes"
+	case "antigravity":
+		return "crew-agy"
 	}
 	return "<your driver>"
 }
 
 func displayAuthor(a Author) string {
-	runtime := map[string]string{"claude-code": "Claude Code", "crew-codex": "Codex", "crew-dsh": "DSH", "crew-hermes": "Hermes"}[a.Adapter]
+	runtime := map[string]string{"claude-code": "Claude Code", "crew-codex": "Codex", "crew-dsh": "DSH", "crew-hermes": "Hermes", "antigravity": "Antigravity"}[a.Adapter]
 	if runtime == "" {
 		runtime = a.Adapter
 	}

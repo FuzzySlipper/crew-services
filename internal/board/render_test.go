@@ -73,7 +73,8 @@ func TestNoticesNameAgentsAsTheCLIDoes(t *testing.T) {
 		"crew.check (Hermes librarian, claude-opus-5-5, s/74fc)": {Kind: AuthorSeat, Address: "crew.check", Session: "s/74fc", Adapter: "crew-hermes", Model: "claude-opus-5-5", Label: "librarian"},
 		"s/5b69 (Claude Code, claude-opus-5-5)":                  {Kind: AuthorSession, Address: "s/5b69", Adapter: "claude-code", Model: "claude-opus-5-5"},
 		"s/bd4d (Codex)":                                         {Kind: AuthorSession, Address: "s/bd4d", Adapter: "crew-codex"},
-		"patch":                                                  {Kind: AuthorPerson, Address: "patch"},
+		"s/8900 (Antigravity, gemini-4-argon-high)":              {Kind: AuthorSession, Address: "s/8900", Adapter: "antigravity", Model: "gemini-4-argon-high"},
+		"patch": {Kind: AuthorPerson, Address: "patch"},
 	}
 	for want, a := range cases {
 		if got := displayAuthor(a); got != want {

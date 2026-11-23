@@ -659,3 +659,27 @@ func TestFillNotifyAddsTheAddressToDenSubmissions(t *testing.T) {
 		t.Fatalf("answer=%s", out)
 	}
 }
+
+func TestModelComesFromTheTranscript(t *testing.T) {
+	h := newHarness(t)
+	proc := h.procs.start(100, 4100)
+	h.register(t, "conv-1", proc)
+	path := transcriptPath(h.native.brain, "conv-1")
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	if err := os.WriteFile(path, []byte(`{"step_index":2,"source":"MODEL","type":"PLANNER_RESPONSE","model":"gemini-4-argon-high","content":"ok"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(agydriver.Handler(h.driver))
+	defer api.Close()
+	resp, err := api.Client().Get(api.URL + "/v1/sessions/conv-1/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var about struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&about); err != nil || about.Model != "gemini-4-argon-high" {
+		t.Fatalf("about=%#v err=%v", about, err)
+	}
+}

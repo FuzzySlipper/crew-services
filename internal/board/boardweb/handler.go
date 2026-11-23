@@ -205,6 +205,8 @@ func runtimeName(adapter string) string {
 		return "Hermes"
 	case "crew-dsh":
 		return "DSH"
+	case "antigravity":
+		return "Antigravity"
 	}
 	return adapter
 }
