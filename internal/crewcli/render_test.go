@@ -60,3 +60,10 @@ func TestResolveTakesASeatAddressAsIs(t *testing.T) {
 		t.Fatalf("resolve = %q, %v", got, err)
 	}
 }
+
+func TestRenderMessageUsesAnBeforeAVowel(t *testing.T) {
+	got := RenderMessage("s/8900", "m-1", "hi", "crew-claude", &SessionInfo{Runtime: "antigravity", Cwd: "/w"})
+	if !strings.Contains(got, "from s/8900, an Antigravity session in /w") {
+		t.Fatalf("rendered=%q", got)
+	}
+}

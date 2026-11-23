@@ -370,6 +370,14 @@ func Describe(s SessionInfo) string {
 	return name + " session in " + s.Cwd
 }
 
+// article puts "a" or "an" before a description ("an Antigravity session").
+func article(text string) string {
+	if text != "" && strings.ContainsRune("AEIOUaeiou", rune(text[0])) {
+		return "an " + text
+	}
+	return "a " + text
+}
+
 // SystemAddressPrefix marks service-owned origins, which send notices but
 // read no replies.
 const SystemAddressPrefix = "system/"
@@ -423,7 +431,7 @@ func RenderMail(m Mail, sendCommand string, sender *SessionInfo) string {
 		from = "the seat " + m.Sender + ", held by " + m.SenderSession
 	}
 	if sender != nil {
-		from += ", a " + Describe(*sender)
+		from += ", " + article(Describe(*sender))
 	}
 	to := ""
 	if m.Recipient != "" {
