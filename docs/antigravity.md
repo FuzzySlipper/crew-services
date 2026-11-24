@@ -253,6 +253,10 @@ Claude Code session (`s/17b1723ecfcbbacf`) with `crew-claude send`.
   then they had addresses but counted as not running, so `next_turn` mail
   (crew-review's changes-requested notices, crew-board replies) waited and
   never woke them. The hub path is checked against the live hub for discovery
-  and run state, and with unit tests for delivery. A post into a hub
-  conversation was not made by hand, because every hub conversation is one of
-  Patch's; the first one is the queued notices going out.
+  and run state, and with unit tests for delivery. No test message was posted
+  into a hub conversation, since every one is Patch's. The first real ones were
+  the waiting mail of a rusty-dagger hub conversation: once its turn ended, its
+  four queued changes-requested notices (tasks 11015 and 11016) were posted at
+  idle and settled `delivered` from the transcript in 1–2 s each, and its
+  seat's crew-board notices followed (`next_turn` posted, `no_wake` through
+  PreInvocation).
