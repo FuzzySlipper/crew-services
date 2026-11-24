@@ -50,6 +50,8 @@ type Processes interface {
 	Alive(proc Proc) bool
 	ListenPorts(proc Proc) ([]int, error)
 	Resuming() map[string]Proc
+	// HubServer is the hub language server's own address and token.
+	HubServer(proc Proc) (addr, token string, ok bool)
 }
 
 type Config struct {
@@ -76,15 +78,18 @@ type Config struct {
 // and its language server port change whenever agy restarts, so they live
 // here rather than in the fabric binding.
 type Session struct {
-	ConversationID string    `json:"conversation_id"`
-	Proc           Proc      `json:"proc"`
-	LSAddr         string    `json:"ls_addr,omitempty"`
-	Cwd            string    `json:"cwd,omitempty"`
-	Transcript     string    `json:"transcript,omitempty"`
-	Address        string    `json:"address"`
-	Generation     int64     `json:"generation"`
-	Busy           bool      `json:"busy"`
-	SeenAt         time.Time `json:"seen_at"`
+	ConversationID string `json:"conversation_id"`
+	Proc           Proc   `json:"proc"`
+	LSAddr         string `json:"ls_addr,omitempty"`
+	// LSToken is the hub's own CSRF token; an agy CLI process uses the
+	// driver's token file instead.
+	LSToken    string    `json:"ls_token,omitempty"`
+	Cwd        string    `json:"cwd,omitempty"`
+	Transcript string    `json:"transcript,omitempty"`
+	Address    string    `json:"address"`
+	Generation int64     `json:"generation"`
+	Busy       bool      `json:"busy"`
+	SeenAt     time.Time `json:"seen_at"`
 }
 
 // Registration is what a hook reports about a conversation.
@@ -238,10 +243,11 @@ func (d *Driver) RegisterSession(ctx context.Context, r Registration) (Reachable
 	if known && current.Proc == r.Proc {
 		addr := current.LSAddr
 		if addr == "" {
-			if addr, _ = d.locate(ctx, r.Proc, r.ConversationID); addr != "" {
+			var token string
+			if addr, token, _ = d.locate(ctx, r.Proc, r.ConversationID); addr != "" {
 				d.mu.Lock()
 				if s, ok := d.sessions[r.ConversationID]; ok {
-					s.LSAddr = addr
+					s.LSAddr, s.LSToken = addr, token
 				}
 				d.mu.Unlock()
 			}
@@ -249,7 +255,7 @@ func (d *Driver) RegisterSession(ctx context.Context, r Registration) (Reachable
 		d.touch(r)
 		return Reachable{Address: current.Address, Wakeable: addr != "", Seats: d.HeldSeats(current.Address)}, nil
 	}
-	addr, parent := d.locate(ctx, r.Proc, r.ConversationID)
+	addr, token, parent := d.locate(ctx, r.Proc, r.ConversationID)
 	if parent != "" {
 		return Reachable{}, ErrSubagent
 	}
@@ -259,7 +265,7 @@ func (d *Driver) RegisterSession(ctx context.Context, r Registration) (Reachable
 	}
 	d.mu.Lock()
 	delete(d.noWakeHeld, r.ConversationID)
-	s := &Session{ConversationID: r.ConversationID, Proc: r.Proc, LSAddr: addr, Cwd: r.Cwd, Transcript: r.Transcript, Address: binding.Address, Generation: binding.Generation, SeenAt: d.now().UTC()}
+	s := &Session{ConversationID: r.ConversationID, Proc: r.Proc, LSAddr: addr, LSToken: token, Cwd: r.Cwd, Transcript: r.Transcript, Address: binding.Address, Generation: binding.Generation, SeenAt: d.now().UTC()}
 	if known {
 		s.Busy = existing.Busy
 		if s.Cwd == "" {
@@ -293,34 +299,63 @@ func (d *Driver) touch(r Registration) {
 	}
 }
 
-// locate finds the language server of proc that answers for conversationID
-// with the driver's token, and the conversation's parent if it has one. The
-// address is "" when there is none. agy listens on an HTTPS and an HTTP port;
-// only the HTTP one answers a plain request.
-func (d *Driver) locate(ctx context.Context, proc Proc, conversationID string) (addr, parent string) {
-	token := d.token()
-	if proc.PID == 0 || token == "" || d.procs == nil {
-		return "", ""
+// locate finds the language server of proc that answers for conversationID,
+// and the conversation's parent if it has one. The address is "" when there is
+// none. The hub records its own port and token (returned as token); an agy
+// CLI process listens on an HTTPS and an HTTP port, only the HTTP one answers
+// a plain request, and it takes the driver's token (token is then "").
+func (d *Driver) locate(ctx context.Context, proc Proc, conversationID string) (addr, token, parent string) {
+	if proc.PID == 0 || d.procs == nil {
+		return "", "", ""
+	}
+	try := func(addr, token string) (string, bool, error) {
+		callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		state, err := d.native.Conversation(callCtx, addr, token, conversationID)
+		return state.Parent, err == nil, err
+	}
+	if proc.Hub {
+		addr, token, ok := d.procs.HubServer(proc)
+		if !ok {
+			d.log.Warn("no record of the Antigravity hub's language server", "pid", proc.PID)
+			return "", "", ""
+		}
+		parent, ok, err := try(addr, token)
+		if !ok {
+			d.log.Warn("the Antigravity hub's language server did not answer", "pid", proc.PID, "error", err)
+			return "", "", ""
+		}
+		return addr, token, parent
+	}
+	token = d.token()
+	if token == "" {
+		return "", "", ""
 	}
 	ports, err := d.procs.ListenPorts(proc)
 	if err != nil {
-		return "", ""
+		return "", "", ""
 	}
 	for _, port := range ports {
 		addr := "127.0.0.1:" + strconv.Itoa(port)
-		callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		state, err := d.native.Conversation(callCtx, addr, token, conversationID)
-		cancel()
-		if err == nil {
-			return addr, state.Parent
+		parent, ok, err := try(addr, token)
+		if ok {
+			return addr, "", parent
 		}
 		var refused *RefusedError
 		if errors.As(err, &refused) && refused.Code == "unauthenticated" {
 			d.log.Warn("agy was not started with the driver's token; its conversations cannot be woken", "pid", proc.PID, "token_file", d.cfg.TokenPath)
-			return "", ""
+			return "", "", ""
 		}
 	}
-	return "", ""
+	return "", "", ""
+}
+
+// serverToken is the token for s's language server.
+func (d *Driver) serverToken(s Session) string {
+	if s.LSToken != "" {
+		return s.LSToken
+	}
+	return d.token()
 }
 
 // SetBusy records the conversation's turn state from its hooks.
@@ -534,10 +569,10 @@ func (d *Driver) adoptResumed(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		addr, _ := d.locate(ctx, proc, s.ConversationID)
+		addr, token, _ := d.locate(ctx, proc, s.ConversationID)
 		d.mu.Lock()
 		if current, ok := d.sessions[s.ConversationID]; ok && current.Proc == s.Proc {
-			current.Proc, current.LSAddr, current.Busy = proc, addr, false
+			current.Proc, current.LSAddr, current.LSToken, current.Busy = proc, addr, token, false
 			current.SeenAt = d.now().UTC()
 			_ = d.saveLocked()
 		}
@@ -584,6 +619,11 @@ func (d *Driver) availability(s Session) string {
 // a hook more recently: the process's terminal now shows that one, and a
 // message posted to s would run it unseen in the background.
 func (d *Driver) superseded(s Session) bool {
+	if s.Proc.Hub {
+		// The hub runs all of the desktop app's conversations at once, each
+		// in view there.
+		return false
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for id, other := range d.sessions {
@@ -645,7 +685,7 @@ func (d *Driver) deliverOne(ctx context.Context, conversationID string, r route)
 		d.mu.Unlock()
 		return false, release(errors.New("no_wake waits for a PreInvocation hook"))
 	}
-	agyToken := d.token()
+	agyToken := d.serverToken(s)
 	if s.LSAddr == "" || agyToken == "" {
 		return false, release(errors.New("conversation has no reachable language server"))
 	}
@@ -714,7 +754,7 @@ func (d *Driver) forgetServer(s Session, cause error) {
 	}
 	d.mu.Lock()
 	if current, ok := d.sessions[s.ConversationID]; ok && current.LSAddr == s.LSAddr {
-		current.LSAddr = ""
+		current.LSAddr, current.LSToken = "", ""
 		_ = d.saveLocked()
 	}
 	d.mu.Unlock()

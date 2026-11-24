@@ -48,7 +48,16 @@ import (
 const (
 	sendAgentMessagePath = "/exa.language_server_pb.LanguageServerService/SendAgentMessage"
 	getConversationPath  = "/jetski.product.v1.ConversationService/GetConversation"
+	// The Antigravity 2.0 hub (language server 2.35) has no
+	// ConversationService: its HTTP port answers that path with the web app's
+	// HTML. Its run state comes from the trajectory summaries instead.
+	trajectoriesPath = "/exa.language_server_pb.LanguageServerService/GetAllCascadeTrajectories"
+	metadataPath     = "/exa.language_server_pb.LanguageServerService/GetConversationMetadata"
 )
+
+// errNotConnect means the server answered a path with something other than
+// Connect JSON (the hub's web app answers unknown paths with HTML).
+var errNotConnect = errors.New("not a Connect answer")
 
 // Run states GetConversation reports.
 const (
@@ -121,7 +130,12 @@ func (l LanguageServer) Conversation(ctx context.Context, addr, token, conversat
 		conversationJSON
 		Conversation *conversationJSON `json:"conversation"`
 	}
-	if err := l.call(ctx, addr, token, getConversationPath, map[string]string{"conversationId": conversationID}, &out); err != nil {
+	err := l.call(ctx, addr, token, getConversationPath, map[string]string{"conversationId": conversationID}, &out)
+	var refused *RefusedError
+	if errors.Is(err, errNotConnect) || (errors.As(err, &refused) && (refused.Code == "unimplemented" || refused.Code == "http_404")) {
+		return l.hubConversation(ctx, addr, token, conversationID)
+	}
+	if err != nil {
 		return ConversationState{}, err
 	}
 	// The answer is the Conversation itself; accept a wrapped one too.
@@ -134,6 +148,46 @@ func (l LanguageServer) Conversation(ctx context.Context, addr, token, conversat
 		state.RunState = RunStateIdle
 	}
 	return state, nil
+}
+
+// hubConversation reads a conversation's state from a language server without
+// ConversationService: the run status from its trajectory summaries
+// (CASCADE_RUN_STATUS_IDLE, _RUNNING, …), and whether another conversation
+// started it from its metadata's rootConversationId.
+func (l LanguageServer) hubConversation(ctx context.Context, addr, token, conversationID string) (ConversationState, error) {
+	var meta struct {
+		Metadata struct {
+			RootConversationID string `json:"rootConversationId"`
+		} `json:"metadata"`
+	}
+	if err := l.call(ctx, addr, token, metadataPath, map[string]string{"conversationId": conversationID}, &meta); err != nil {
+		return ConversationState{}, err
+	}
+	var all struct {
+		TrajectorySummaries map[string]struct {
+			Status string `json:"status"`
+		} `json:"trajectorySummaries"`
+	}
+	if err := l.call(ctx, addr, token, trajectoriesPath, map[string]string{}, &all); err != nil {
+		return ConversationState{}, err
+	}
+	return hubState(conversationID, meta.Metadata.RootConversationID, all.TrajectorySummaries[conversationID].Status), nil
+}
+
+// hubState maps a trajectory status and root conversation to a
+// ConversationState. A conversation missing from the summaries is idle.
+func hubState(conversationID, root, status string) ConversationState {
+	state := ConversationState{RunState: RunStateIdle}
+	switch {
+	case strings.Contains(status, "RUNNING"):
+		state.RunState = RunStateRunning
+	case strings.Contains(status, "CANCEL"):
+		state.RunState = RunStateCancelling
+	}
+	if root != "" && root != conversationID {
+		state.Parent = root
+	}
+	return state
 }
 
 func (l LanguageServer) Send(ctx context.Context, addr, token, conversationID, content string) error {
@@ -173,6 +227,9 @@ func (l LanguageServer) call(ctx context.Context, addr, token, path string, body
 		// The HTTPS port answers plain HTTP with 400 and text.
 		return &RefusedError{Code: "http_" + strconv.Itoa(resp.StatusCode), Message: strings.TrimSpace(string(raw))}
 	}
+	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
+		return errNotConnect
+	}
 	if target == nil {
 		return nil
 	}
@@ -185,11 +242,21 @@ func (l LanguageServer) call(ctx context.Context, addr, token, path string, body
 type Proc struct {
 	PID   int   `json:"pid"`
 	Start int64 `json:"start"`
+	// Hub marks the Antigravity 2.0 hub's language server, which runs every
+	// conversation of the desktop app at once, rather than an agy process.
+	Hub bool `json:"hub,omitempty"`
 }
+
+// hostComms are the process names that run agy hooks: the agy CLI, and the
+// hub's language_server (its name, cut to 15 characters).
+var hostComms = map[string]bool{"agy": false, "language_server": true}
 
 // Procs reads agy processes from a /proc tree.
 type Procs struct {
 	Root string // "/proc" when empty
+	// DaemonDir holds the hub's ls_<id>.json files ({pid, httpPort,
+	// csrfToken}); ~/.gemini/antigravity/daemon when empty.
+	DaemonDir string
 }
 
 func (p Procs) root() string {
@@ -230,16 +297,17 @@ func parseStat(line string) (comm string, ppid int, start int64, err error) {
 	return comm, ppid, start, err
 }
 
-// FindAgy walks up from pid (a hook's parent) to the agy process that runs
-// the hook. Hooks run under `sh -c`, so agy is usually one or two levels up.
-func (p Procs) FindAgy(pid int) (Proc, bool) {
+// FindHost walks up from pid (a hook's parent) to the process that runs the
+// hook: an agy CLI process, or the Antigravity 2.0 hub's language server.
+// Hooks run under `sh -c`, so it is usually one or two levels up.
+func (p Procs) FindHost(pid int) (Proc, bool) {
 	for i := 0; i < 6 && pid > 1; i++ {
 		comm, ppid, start, err := p.stat(pid)
 		if err != nil {
 			return Proc{}, false
 		}
-		if comm == "agy" {
-			return Proc{PID: pid, Start: start}, true
+		if hub, ok := hostComms[comm]; ok {
+			return Proc{PID: pid, Start: start, Hub: hub}, true
 		}
 		pid = ppid
 	}
@@ -252,7 +320,38 @@ func (p Procs) Alive(proc Proc) bool {
 		return false
 	}
 	comm, _, start, err := p.stat(proc.PID)
-	return err == nil && comm == "agy" && start == proc.Start
+	hub, known := hostComms[comm]
+	return err == nil && known && hub == proc.Hub && start == proc.Start
+}
+
+func (p Procs) daemonDir() string {
+	if p.DaemonDir != "" {
+		return p.DaemonDir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".gemini", "antigravity", "daemon")
+}
+
+// HubServer reads the hub's own record of its language server: the plain
+// HTTP port and CSRF token of the hub process proc. The hub writes it for its
+// keeper as ~/.gemini/antigravity/daemon/ls_<id>.json (mode 0600).
+func (p Procs) HubServer(proc Proc) (addr, token string, ok bool) {
+	files, _ := filepath.Glob(filepath.Join(p.daemonDir(), "ls_*.json"))
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var d struct {
+			PID       int    `json:"pid"`
+			HTTPPort  int    `json:"httpPort"`
+			CSRFToken string `json:"csrfToken"`
+		}
+		if json.Unmarshal(data, &d) == nil && d.PID == proc.PID && d.HTTPPort > 0 && d.CSRFToken != "" {
+			return "127.0.0.1:" + strconv.Itoa(d.HTTPPort), d.CSRFToken, true
+		}
+	}
+	return "", "", false
 }
 
 // ListenPorts lists the loopback TCP ports proc listens on.

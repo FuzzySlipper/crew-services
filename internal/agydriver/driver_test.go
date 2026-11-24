@@ -41,6 +41,7 @@ type post struct{ addr, conversation, content string }
 type fakeNative struct {
 	mu        sync.Mutex
 	token     string
+	tokens    map[string]string // address -> its own token (a hub)
 	posts     []post
 	runState  map[string]string // conversation -> run state
 	parent    map[string]string
@@ -56,7 +57,7 @@ func (f *fakeNative) Conversation(_ context.Context, addr, token, conversationID
 	if f.gone[addr] {
 		return agydriver.ConversationState{}, agydriver.ErrGone
 	}
-	if token != f.token {
+	if token != f.tokenAt(addr) {
 		return agydriver.ConversationState{}, &agydriver.RefusedError{Code: "unauthenticated", Message: "missing CSRF token"}
 	}
 	state := f.runState[conversationID]
@@ -72,7 +73,7 @@ func (f *fakeNative) Send(_ context.Context, addr, token, conversationID, conten
 	if f.gone[addr] {
 		return agydriver.ErrGone
 	}
-	if token != f.token {
+	if token != f.tokenAt(addr) {
 		return &agydriver.RefusedError{Code: "unauthenticated"}
 	}
 	if f.refuse[conversationID] {
@@ -87,6 +88,13 @@ func (f *fakeNative) Send(_ context.Context, addr, token, conversationID, conten
 		writeMessageFile(f.brain, conversationID, len(f.posts), content)
 	}
 	return nil
+}
+
+func (f *fakeNative) tokenAt(addr string) string {
+	if t, ok := f.tokens[addr]; ok {
+		return t
+	}
+	return f.token
 }
 
 func (f *fakeNative) sent() []post {
@@ -107,6 +115,14 @@ type fakeProcs struct {
 	alive    map[agydriver.Proc]bool
 	ports    map[agydriver.Proc][]int
 	resuming map[string]agydriver.Proc
+	hubs     map[agydriver.Proc][2]string // hub -> address, token
+}
+
+func (p *fakeProcs) HubServer(proc agydriver.Proc) (string, string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	h, ok := p.hubs[proc]
+	return h[0], h[1], ok
 }
 
 func (p *fakeProcs) Alive(proc agydriver.Proc) bool {
@@ -222,8 +238,8 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	h := &harness{ctx: ctx, svc: svc, fabric: fabric, clock: &clock{now: time.Now()}, dir: dir, tokenPath: tokenPath,
-		native: &fakeNative{token: "tok", runState: map[string]string{}, parent: map[string]string{}, gone: map[string]bool{}, refuse: map[string]bool{}, behaviour: map[string]string{}, brain: filepath.Join(dir, "brain")},
-		procs:  &fakeProcs{alive: map[agydriver.Proc]bool{}, ports: map[agydriver.Proc][]int{}, resuming: map[string]agydriver.Proc{}},
+		native: &fakeNative{token: "tok", tokens: map[string]string{}, runState: map[string]string{}, parent: map[string]string{}, gone: map[string]bool{}, refuse: map[string]bool{}, behaviour: map[string]string{}, brain: filepath.Join(dir, "brain")},
+		procs:  &fakeProcs{alive: map[agydriver.Proc]bool{}, ports: map[agydriver.Proc][]int{}, resuming: map[string]agydriver.Proc{}, hubs: map[agydriver.Proc][2]string{}},
 	}
 	h.driver = h.newDriver(t)
 	if err := h.driver.Start(ctx); err != nil {
@@ -681,5 +697,55 @@ func TestModelComesFromTheTranscript(t *testing.T) {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&about); err != nil || about.Model != "gemini-4-argon-high" {
 		t.Fatalf("about=%#v err=%v", about, err)
+	}
+}
+
+func TestHubConversationsAreWokenThroughTheHubsOwnServer(t *testing.T) {
+	h := newHarness(t)
+	// The Antigravity 2.0 hub runs every desktop conversation in one
+	// language_server, with its own port and token, not the crew token.
+	hub := agydriver.Proc{PID: 300, Start: 30000, Hub: true}
+	h.procs.mu.Lock()
+	h.procs.alive[hub] = true
+	h.procs.hubs[hub] = [2]string{"127.0.0.1:5300", "hub-token"}
+	h.procs.mu.Unlock()
+	h.native.set(func(f *fakeNative) { f.tokens["127.0.0.1:5300"] = "hub-token" })
+	first := h.register(t, "hub-1", hub)
+	second := h.register(t, "hub-2", hub)
+	if !first.Wakeable || !second.Wakeable {
+		t.Fatalf("reach=%#v %#v", first, second)
+	}
+	// Both stay current: the hub shows every conversation, so a later one
+	// does not take over the process as /new does in a terminal.
+	h.native.set(func(f *fakeNative) { f.runState["hub-1"] = agydriver.RunStateRunning })
+	h.send(t, "review", first.Address, "changes requested", "next_step")
+	h.send(t, "turn", second.Address, "hello", "next_turn")
+	h.driver.Pump(h.ctx)
+	sent := h.native.sent()
+	if len(sent) != 2 || sent[0].addr != "127.0.0.1:5300" || sent[1].addr != "127.0.0.1:5300" {
+		t.Fatalf("posts=%#v", sent)
+	}
+	if got := h.states(t, first.Address) + " " + h.states(t, second.Address); got != "delivered delivered" {
+		t.Fatalf("states=%v", got)
+	}
+	// A hub restart is a new process; the next hook finds its new server.
+	h.procs.mu.Lock()
+	delete(h.procs.alive, hub)
+	h.procs.mu.Unlock()
+	h.send(t, "later", second.Address, "after restart", "next_turn")
+	h.driver.Pump(h.ctx)
+	if n := len(h.native.sent()); n != 2 {
+		t.Fatalf("posted to a stopped hub (%d posts)", n)
+	}
+	restarted := agydriver.Proc{PID: 301, Start: 30100, Hub: true}
+	h.procs.mu.Lock()
+	h.procs.alive[restarted] = true
+	h.procs.hubs[restarted] = [2]string{"127.0.0.1:5301", "new-token"}
+	h.procs.mu.Unlock()
+	h.native.set(func(f *fakeNative) { f.tokens["127.0.0.1:5301"] = "new-token" })
+	h.hook(t, "hub-2", "idle", restarted)
+	h.driver.Pump(h.ctx)
+	if got := h.states(t, second.Address); got != "delivered,delivered" {
+		t.Fatalf("states after hub restart=%v", got)
 	}
 }

@@ -88,9 +88,9 @@ func hook(args []string) {
 	if json.Unmarshal(data, &in) != nil {
 		return
 	}
-	// The hook runs under the agy process (through sh -c); the driver reaches
-	// that process's language server.
-	proc, _ := agydriver.Procs{}.FindAgy(os.Getppid())
+	// The hook runs (through sh -c) under an agy process or the Antigravity
+	// hub; the driver reaches that process's language server.
+	proc, _ := agydriver.Procs{}.FindHost(os.Getppid())
 	out := agydriver.RunHook(context.Background(), driverURL(), args[0], in, proc, opts)
 	if len(out) > 0 {
 		_, _ = os.Stdout.Write(out)

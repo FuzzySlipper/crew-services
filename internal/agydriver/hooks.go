@@ -94,12 +94,13 @@ type registrationJSON struct {
 	ConversationID string `json:"conversation_id"`
 	PID            int    `json:"pid"`
 	Start          int64  `json:"start"`
+	Hub            bool   `json:"hub,omitempty"`
 	Cwd            string `json:"cwd"`
 	Transcript     string `json:"transcript"`
 }
 
 func (r registrationJSON) registration() Registration {
-	return Registration{ConversationID: r.ConversationID, Proc: Proc{PID: r.PID, Start: r.Start}, Cwd: r.Cwd, Transcript: r.Transcript}
+	return Registration{ConversationID: r.ConversationID, Proc: Proc{PID: r.PID, Start: r.Start, Hub: r.Hub}, Cwd: r.Cwd, Transcript: r.Transcript}
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -149,7 +150,7 @@ func RunHook(ctx context.Context, driverURL, event string, in HookInput, proc Pr
 			Wakeable bool     `json:"wakeable"`
 			Seats    []string `json:"seats"`
 		}
-		err := client.do(ctx, http.MethodPost, "/v1/sessions", registrationJSON{ConversationID: in.ConversationID, PID: proc.PID, Start: proc.Start, Cwd: in.Cwd, Transcript: in.TranscriptPath}, &out)
+		err := client.do(ctx, http.MethodPost, "/v1/sessions", registrationJSON{ConversationID: in.ConversationID, PID: proc.PID, Start: proc.Start, Hub: proc.Hub, Cwd: in.Cwd, Transcript: in.TranscriptPath}, &out)
 		return out, err
 	}
 	switch event {

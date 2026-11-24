@@ -2,6 +2,9 @@ package agydriver
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,7 +19,7 @@ func TestParseStatHandlesSpacesInTheCommandName(t *testing.T) {
 	}
 }
 
-func TestFindAgyWalksUpThroughTheShell(t *testing.T) {
+func TestFindHostWalksUpThroughTheShell(t *testing.T) {
 	root := t.TempDir()
 	write := func(pid, stat string) {
 		dir := filepath.Join(root, pid)
@@ -27,12 +30,67 @@ func TestFindAgyWalksUpThroughTheShell(t *testing.T) {
 	write("10", "10 (agy) S 1"+rest)
 	write("20", "20 (sh) S 10"+rest)
 	procs := Procs{Root: root}
-	proc, ok := procs.FindAgy(20)
+	proc, ok := procs.FindHost(20)
 	if !ok || proc != (Proc{PID: 10, Start: 555}) {
 		t.Fatalf("proc=%#v ok=%v", proc, ok)
 	}
 	if !procs.Alive(proc) || procs.Alive(Proc{PID: 10, Start: 1}) {
 		t.Fatal("Alive does not check the start time")
+	}
+	write("30", "30 (language_server) S 1"+rest)
+	write("40", "40 (sh) S 30"+rest)
+	hub, ok := procs.FindHost(40)
+	if !ok || hub != (Proc{PID: 30, Start: 555, Hub: true}) || !procs.Alive(hub) {
+		t.Fatalf("hub=%#v ok=%v", hub, ok)
+	}
+}
+
+func TestHubServerReadsTheHubsDaemonRecord(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "ls_abc.json"), []byte(`{"pid":30,"httpsPort":1,"httpPort":35125,"lspPort":0,"lsVersion":"2.35.0","csrfToken":"secret"}`), 0o600)
+	procs := Procs{DaemonDir: dir}
+	if addr, token, ok := procs.HubServer(Proc{PID: 30, Hub: true}); !ok || addr != "127.0.0.1:35125" || token != "secret" {
+		t.Fatalf("addr=%q token=%q ok=%v", addr, token, ok)
+	}
+	if _, _, ok := procs.HubServer(Proc{PID: 31, Hub: true}); ok {
+		t.Fatal("found a server for another pid")
+	}
+}
+
+func TestConversationFallsBackToTrajectoriesOnTheHub(t *testing.T) {
+	// The hub's HTTP port answers ConversationService with its web app's HTML.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-antigravity-csrf-token") != "tok" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"code":"unauthenticated","message":"missing CSRF token"}`))
+			return
+		}
+		switch r.URL.Path {
+		case getConversationPath:
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte("<!doctype html><html></html>"))
+		case metadataPath:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"metadata":{"rootConversationId":"root-1"}}`))
+		case trajectoriesPath:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"trajectorySummaries":{"child-1":{"status":"CASCADE_RUN_STATUS_RUNNING"}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+	state, err := LanguageServer{}.Conversation(t.Context(), addr, "tok", "child-1")
+	if err != nil || !state.Running() || state.Parent != "root-1" {
+		t.Fatalf("state=%#v err=%v", state, err)
+	}
+	var refused *RefusedError
+	if _, err := (LanguageServer{}).Conversation(t.Context(), addr, "wrong", "child-1"); !errors.As(err, &refused) || refused.Code != "unauthenticated" {
+		t.Fatalf("wrong token err=%v", err)
+	}
+	if got := hubState("root-1", "root-1", "CASCADE_RUN_STATUS_IDLE"); got.Running() || got.Parent != "" {
+		t.Fatalf("idle root=%#v", got)
 	}
 }
 
