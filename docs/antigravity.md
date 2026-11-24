@@ -61,10 +61,19 @@ changelog, and live probes in scratch sessions:
   one step per line (`source`, `type`, `content`, `model`, …); hooks get its
   path as `transcriptPath`. A hook-injected message is a `SYSTEM_MESSAGE` step
   from `SYSTEM_SDK` ("…injected by a PreInvocation hook: <text>").
-- Not used: `agy acp` (an ACP server the driver would have to start and own),
-  `agy remote-control` (through Google's web channel), and the Antigravity 2.0
-  hub's long-running language server (`~/.antigravity-hub-server`), whose
-  conversations are not `agy` sessions.
+- **The Antigravity 2.0 hub** (the desktop app's long-running
+  `language_server`, 2.35 in `~/.antigravity-hub-server`) runs all of its
+  conversations in one process and keeps them under
+  `~/.gemini/antigravity/brain/`. It loads the same user config, so the crew
+  plugin's hooks run there too, under that `language_server`. It writes its
+  own HTTP port and CSRF token to `~/.gemini/antigravity/daemon/ls_<id>.json`
+  (0600, `{pid, httpPort, csrfToken}`). It has no `ConversationService` (its
+  HTTP port answers that path with the web app's HTML), but
+  `LanguageServerService/GetAllCascadeTrajectories` gives each conversation's
+  `status` (`CASCADE_RUN_STATUS_IDLE`, `_RUNNING`) and
+  `GetConversationMetadata` its `rootConversationId`.
+- Not used: `agy acp` (an ACP server the driver would have to start and own)
+  and `agy remote-control` (through Google's web channel).
 
 These are agy's internal RPCs, not a published API. They are read from the
 current release; when agy updates, re-check them rather than pinning a version.
@@ -81,13 +90,18 @@ reattaches a known conversation to the new process before its first turn. A
 conversation another conversation started (a subagent) is refused, so it never
 takes over its parent's process.
 
-**Process and server.** The hook walks up from its parent to the `agy`
-process and reports its pid and start time. The driver reads that process's
-listening loopback ports from `/proc` and keeps the one that answers
-`GetConversation` with the token in `~/.config/crew/agy-csrf-token`. The pid and
+**Process and server.** The hook walks up from its parent to the process that
+runs it, an `agy` process or the hub's `language_server`, and reports its pid,
+start time and which of the two it is. For `agy`, the driver reads that
+process's listening loopback ports from `/proc` and keeps the one that answers
+`GetConversation` with the token in `~/.config/crew/agy-csrf-token`. For the
+hub, it takes the port and token from the hub's own daemon record (the token is
+kept in the driver's 0600 state file) and reads run state from the trajectory
+summaries. The pid and
 start time decide whether the process is still running. If a newer
-conversation has run a hook in the same process (after `/new`), the older one
-counts as not running: a post would run it unseen in the background.
+conversation has run a hook in the same `agy` process (after `/new`), the older
+one counts as not running: a post would run it unseen in the background. That
+rule does not apply to the hub, whose app shows every conversation.
 
 **Busy or idle.** The PreInvocation hook marks the conversation busy; Stop marks
 it idle. Just before a post the driver reads `runState` again, which is what
@@ -235,7 +249,10 @@ Claude Code session (`s/17b1723ecfcbbacf`) with `crew-claude send`.
 - A subagent is told apart from a main conversation only through the
   language server, so without the token a subagent's hooks could register it.
 - `decision: "ask"` was checked only in agy's default permission mode.
-- Antigravity 2.0 desktop conversations (the hub language server) are not
-  covered. The hub writes its port and token to
-  `~/.gemini/antigravity/daemon/ls_*.json`, so the same driver could reach
-  them; that is a follow-up.
+- Antigravity 2.0 hub conversations were reached only from 2026-11-24. Until
+  then they had addresses but counted as not running, so `next_turn` mail
+  (crew-review's changes-requested notices, crew-board replies) waited and
+  never woke them. The hub path is checked against the live hub for discovery
+  and run state, and with unit tests for delivery. A post into a hub
+  conversation was not made by hand, because every hub conversation is one of
+  Patch's; the first one is the queued notices going out.

@@ -430,7 +430,8 @@ Known limits:
 
 ## Antigravity driver
 
-`crew-agy` makes an Antigravity CLI (`agy`) conversation a crew participant.
+`crew-agy` makes an Antigravity conversation a crew participant, both in the
+`agy` CLI and in the Antigravity 2.0 desktop app's hub.
 Each conversation gets a crew address from a SessionStart hook; messages are
 posted through the agy process's own language server (`SendAgentMessage`, the
 call behind `agy agentapi send-message`), which starts a turn on an idle
@@ -451,7 +452,8 @@ installs the plugin with `agy plugin install`. agy gives no outside process its
 language server's token, so agy must be started with
 `ANTIGRAVITY_SERVER_CSRF_TOKEN` set to that token (`eval "$(crew-agy env)"` in
 the shell profile) for crew messages to wake it; without it they reach a
-conversation only inside its turns. See [docs/antigravity.md](docs/antigravity.md)
+conversation only inside its turns. The hub needs nothing extra: the driver
+reads the hub's own port and token from `~/.gemini/antigravity/daemon/`. See [docs/antigravity.md](docs/antigravity.md)
 for what agy exposes, the delivery rules, the live check and the limits.
 
 ## Hermes driver
