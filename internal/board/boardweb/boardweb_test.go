@@ -365,6 +365,19 @@ func TestLongThreadsPage(t *testing.T) {
 	shows(second, "the next visit", 100, 199)
 	third := w.do("GET", "/t/"+thread+"?page=3", "lore", nil).Body.String()
 	shows(third, "page 3", 200, 230)
+	// The top of the thread links to the newest post: across pages from an
+	// earlier one, and within the page on the last.
+	jump := regexp.MustCompile(`class="copy jump" href="([^"]*)"`)
+	if m := jump.FindStringSubmatch(first); m == nil || !strings.HasPrefix(m[1], "?page=last#") {
+		t.Fatalf("page 1 has no jump to the last page's newest post: %v", m)
+	}
+	m := jump.FindStringSubmatch(third)
+	if m == nil || !strings.HasPrefix(m[1], "#") || !strings.Contains(third, `id="`+m[1][1:]+`"`) {
+		t.Fatalf("page 3 has no jump to a post on it: %v", m)
+	}
+	if last := strings.Split(third, `id="`+m[1][1:]+`"`)[1]; !strings.Contains(last, "<p>post 230</p>") || strings.Contains(last, "<p>post 229</p>") {
+		t.Fatal("the jump does not point at the newest post")
+	}
 	if again := w.do("GET", "/t/"+thread+"?page=1", "lore", nil).Body.String(); strings.Contains(again, `class="post unread`) {
 		t.Fatal("going back to page 1 marks posts new again")
 	}

@@ -169,7 +169,7 @@ const pages = `
 {{define "thread"}}{{template "head" .}}
 {{$t := .Data.Thread}}
 <div class="threadhead">
-<h1>{{$t.Title}} <button type="button" class="copy" data-copy="thread {{$t.ID}}" title="Copy the thread ID">copy ID</button></h1>
+<h1>{{$t.Title}} <button type="button" class="copy" data-copy="thread {{$t.ID}}" title="Copy the thread ID">copy ID</button>{{if gt $t.Posts 1}} <a class="copy jump" href="{{if ne .Data.Page .Data.Last}}?page=last{{end}}#{{.Data.LastPost}}" title="Jump to the newest post">last post ↓</a>{{end}}</h1>
 <p class="sub"><a href="/b/{{$t.Board}}">{{$t.Board}}</a>{{if .Data.Board.Network}} · shared on {{.Data.Board.Network}}{{end}} · {{$t.Posts}} {{plural $t.Posts "post" "posts"}} · {{$t.State}}{{if $t.Aliases}} · once called {{range $i, $a := $t.Aliases}}{{if $i}}, {{end}}“{{$a}}”{{end}}{{end}}</p>
 </div>
 {{template "pager" .}}

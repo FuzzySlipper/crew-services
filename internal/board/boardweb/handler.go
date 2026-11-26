@@ -512,8 +512,13 @@ func (h *Handler) thread(w http.ResponseWriter, r *http.Request) {
 			numbers = append(numbers, n)
 		}
 	}
+	// The newest post, for the jump link at the top of the thread.
+	lastPost := ""
+	if len(all) > 0 {
+		lastPost = all[len(all)-1].ID
+	}
 	b, _ := h.svc.GetBoard(r.Context(), read.Thread.Board)
-	h.render(w, "thread", page{Title: read.Thread.Title, Person: person, Nav: h.nav(r.Context(), person, read.Thread.Board, read.Thread.ID), Data: map[string]any{"Thread": read.Thread, "Board": b, "Posts": posts, "Page": number, "Pages": numbers, "Last": pages}}, http.StatusOK)
+	h.render(w, "thread", page{Title: read.Thread.Title, Person: person, Nav: h.nav(r.Context(), person, read.Thread.Board, read.Thread.ID), Data: map[string]any{"Thread": read.Thread, "Board": b, "Posts": posts, "Page": number, "Pages": numbers, "Last": pages, "LastPost": lastPost}}, http.StatusOK)
 }
 
 // pageOf is the thread page that shows post id, or 0.
